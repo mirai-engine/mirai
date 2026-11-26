@@ -1563,6 +1563,13 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	maps := p.frame.sun_maps.z != 0
 	tiles := t.direct_tiles
 	tiles_across := [2]u32{groups(points.x, DIRECT_TILE), groups(points.y, DIRECT_TILE)}
+	// What the samples leave at each point and what the window of the pattern
+	// gives it: while the view draws maps, direct_maps.comp writes the points,
+	// and the window takes only the tiles that take samples, into the other
+	// two, and gives them back.
+	samples, sun := t.direct_samples, t.direct_sun
+	windowed, sun_windowed := t.direct_points, t.direct_sun_points
+	if maps {samples, sun, windowed, sun_windowed = windowed, sun_windowed, samples, sun}
 	if maps {
 		rhi.cmd_timestamp(cmd, "direct tiles")
 		header := [DIRECT_TILES_HEADER]u32{DIRECT_TILES_SAMPLES + 1 = 1, DIRECT_TILES_SAMPLES + 2 = 1, DIRECT_TILES_RAYS + 1 = 1, DIRECT_TILES_RAYS + 2 = 1, DIRECT_TILES_SPREAD + 1 = DIRECT_SPREAD_RUN, DIRECT_TILES_SPREAD + 2 = 1}
@@ -1579,11 +1586,11 @@ pass_direct :: proc(p: ^Pass) -> bool {
 		set_params(cmd, &params)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct_samples)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS2, samples)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.albedo)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_depth)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS6, grid)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_sun)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS7, sun)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS8, atlas)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS9, table)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS4, tiles)
@@ -1611,13 +1618,13 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	set_params(cmd, &params)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct_samples)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS2, samples)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.albedo)
 	rhi.cmd_bind_texture(cmd, SLOT_DIRECT_BLOCKERS, t.direct_blockers)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, tiles)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_depth)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, grid)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_sun)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS7, sun)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS8, atlas)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, table)
 	if maps {
@@ -1627,17 +1634,24 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	}
 	// What the window of the pattern gives each point.
 	rhi.cmd_timestamp(cmd, "direct points")
-	Window :: struct {scale, samples, pad0, pad1: u32}
-	window := Window{scale = scale, samples = params.samples}
+	Window :: struct {scale, samples, back, pad1: u32}
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Direct_Points])
-	set_params(cmd, &window)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.direct_samples)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_sun)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.direct_points)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_sun_points)
-	rhi.cmd_dispatch(cmd, groups(points.x, 8), groups(points.y, 8))
+	for back in u32(0) ..= (1 if maps else 0) {
+		window := Window{scale = scale, samples = params.samples, back = back}
+		set_params(cmd, &window)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, tiles)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS4, windowed if back != 0 else samples)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS5, sun_windowed if back != 0 else sun)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS6, samples if back != 0 else windowed)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS7, sun if back != 0 else sun_windowed)
+		if maps {
+			rhi.cmd_dispatch_indirect(cmd, tiles, DIRECT_TILES_SAMPLES * size_of(u32))
+		} else {
+			rhi.cmd_dispatch(cmd, groups(points.x, 8), groups(points.y, 8))
+		}
+	}
 	rhi.cmd_timestamp(cmd, "direct spread")
 	Spread :: struct {axis, scale, samples, even: u32}
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Direct_Spread])

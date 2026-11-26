@@ -153,8 +153,10 @@ The `direct` pass ([frame graph](frame-graph.md#passes)) distributes `direct_sam
   their 3x3 neighbours (whose blockers `direct_samples` reads) and the 64x64 spread blocks with a
   radius of a point or more plus the neighbour block within `DIRECT_SPREAD_MAX` of their border;
   rays, samples and spread run by indirect dispatch over those alone, bit-exact with all tiles
-  (`Renderer.direct_every` lists every tile for the tests). A point without a surface leaves
-  `direct_points.a = -1`, as the spread does, so a block it skips needs no write.
+  (`Renderer.direct_every` lists every ray tile and block for the tests). `direct_maps` writes
+  `direct_points` itself; `direct_points` filters only the sampled tiles, into `direct_samples`,
+  and copies them back: a point the maps alone light keeps its exact, unfiltered part. A point
+  without a surface leaves `direct_points.a = -1`, as the spread does.
 - **Shadow maps (`render/shadow_maps.odin`):** Built for large-screen local lights (cube faces
   or single spot cone) and sun cascades. Culled by map texel detail (`shadow_map_detail`,
   `shadow_map_unseen`, `shadow_culled` by eye cell), drawing opaque and masked clusters

@@ -22,7 +22,7 @@
 #define MIRAI_GROUP_Z 1
 
 // Those of direct_samples.comp.
-// every: list every tile (render.Renderer.direct_every).
+// every: list every tile of rays and block (render.Renderer.direct_every).
 struct Params_Block { uint every; uint samples; float sun_radius; uint scale; uint hard; uint pad1; uint pad2; uint pad3; float3 grid_origin; float grid_cell; uint3 grid_size; uint cells;
     uint shadow_on; uint shadow_rows; uint shadow_maps; uint shadow_sun; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
@@ -121,8 +121,9 @@ uint maps_point(int2 p) {
     int2 source = p * scale;
     float depth = g_depth.Load(int3(source, 0)).r;
     if (depth_empty(depth)) {
+        // As direct_points.comp and direct_spread.comp leave a point without a surface.
         out_depth[p] = float4(0.0);
-        out_samples[p] = float4(0.0, 0.0, 0.0, 1.0);
+        out_samples[p] = float4(0.0, 0.0, 0.0, -1.0);
         out_sun[p] = -1.0;
         return 0u;
     }
@@ -265,7 +266,7 @@ void direct_tiles_list(int2 tile, uint asks, uint part) {
         uint entry;
         InterlockedAdd(out_tiles[DIRECT_TILES_SAMPLES], 1u, entry);
         out_tiles[direct_tiles_region(DIRECT_TILES_SAMPLES_LIST, scale) + entry] = uint(tile.x) | (uint(tile.y) << 16u);
-    } else if (part >= 1u && part <= 4u && sampled) {
+    } else if (part >= 1u && part <= 4u && (sampled || params.every != 0u)) {
         int2 low = max(tile - 1, int2(0)) / 2, high = min(tile + 1, across - 1) / 2;
         int2 at = low + int2(int((part - 1u) & 1u), int((part - 1u) >> 1u));
         if (all(at <= high)) tiles_add(DIRECT_TILES_RAYS_LISTED, DIRECT_TILES_RAYS_LIST, DIRECT_TILES_RAYS, at, (across.x + 1) / 2, scale);
@@ -292,5 +293,5 @@ void main(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID, uint index :
     uint asks = WaveActiveBitOr(maps_point(int2(group.xy * uint(DIRECT_TILE) + local.xy)));
     if (WaveIsFirstLane() && asks != 0u) InterlockedOr(group_asks, asks);
     GroupMemoryBarrierWithGroupSync();
-    if (group_asks != 0u || params.every != 0u) direct_tiles_list(int2(group.xy), params.every != 0u ? POINT_SAMPLED : group_asks, index);
+    if (group_asks != 0u || params.every != 0u) direct_tiles_list(int2(group.xy), group_asks, index);
 }

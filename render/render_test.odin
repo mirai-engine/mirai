@@ -327,7 +327,7 @@ render_soft_shadow_leaves_with_its_caster :: proc(t: ^testing.T) {
 
 // The passes of the direct light after direct_maps.comp take only the tiles it
 // lists: in each case the image, the points and the light of the pixels are
-// those of every tile listed, bit for bit, the same frame after frame, with
+// those of every tile of rays and block listed, bit for bit, the same frame after frame, with
 // the tiles the case asks for listed; the frame of a view without maps, of
 // two views side by side and of a view made again at another size too.
 @(test)
