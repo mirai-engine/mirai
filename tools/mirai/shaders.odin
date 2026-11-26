@@ -246,7 +246,7 @@ package_test_shaders :: proc(root,folder:string) -> bool {
     lock:=shaders_lock(root)
     defer workspace.lock_release(&lock)
     // The tests draw their programs every way.
-    result:=shaders.generate({root=root,sources=sources[:],output=output,cache=fmt.tprintf("%s-stamp",output),every={.Opaque,.Blend,.Overlay,.Particle_Sprite,.Particle_Mesh,.Preview,.Impostor}})
+    result:=shaders.generate({root=root,sources=sources[:],output=output,cache=fmt.tprintf("%s-stamp",output),every={.Opaque,.Blend,.Overlay,.Particle_Sprite,.Mesh,.Preview,.Impostor}})
     defer shaders.result_destroy(&result)
     if result.warnings!="" {fmt.eprint(result.warnings)}
     if result.error!="" {fmt.eprintfln("mirai test: the shaders of the tests of %s could not be generated: %s",name,result.error);return false}

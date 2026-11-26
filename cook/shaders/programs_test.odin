@@ -6,6 +6,7 @@ import "core:log"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "mirai:project"
 import "mirai:render/abi"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -897,5 +898,28 @@ vfx_variants_are_selected_for_the_programs_that_use_them :: proc(t:^testing.T) {
     for c in cases {
         used,rays:=vfx_stage_uses(c.stage,c.variant,c.uses)
         testing.expectf(t,used==c.present && rays==c.rays,"%s %s",c.stage,c.variant)
+    }
+}
+
+// The micro layers of a pcg graph (foliage) and the meshes of an effect (vfx)
+// draw the Surface programs of their meshes with gbuffer.frag: each kind
+// declares a use that stage is compiled for, or a program draws as the
+// standard model of its material.
+@(test)
+gbuffer_frag_is_compiled_for_the_kinds_that_draw_program_meshes_into_the_g_buffer :: proc(t:^testing.T) {
+    data,read_error:=os.read_entire_file(ENGINE_ROOT+"/shaders/gbuffer.frag.slang",context.temp_allocator)
+    if !testing.expectf(t,read_error==nil,"gbuffer.frag.slang: %v",read_error) {return}
+    stage:=surface_variant_uses(string(data),"")
+    for kind in ([]struct{plugin,extension:string}{{"pcg",".pcg"},{"vfx",".particle"}}) {
+        manifest,error:=project.plugin_read(fmt.tprintf("%s/plugins/%s/%s",ENGINE_ROOT,kind.plugin,project.PLUGIN_FILE))
+        if !testing.expectf(t,error.code==.None,"%s: %v",kind.plugin,error) {continue}
+        declared:abi.Program_Uses
+        for &k in manifest.asset_kinds {
+            if base.text_get(k.extension[:])!=kind.extension {continue}
+            for &name in k.program_uses {
+                if use,known:=abi.program_use_named(base.text_get(name[:]));known {declared+={use}}
+            }
+        }
+        testing.expectf(t,declared&stage!={},"%s draws its programs with gbuffer.frag (%v) and declares %v",kind.extension,stage,declared)
     }
 }

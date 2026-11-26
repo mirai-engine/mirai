@@ -131,7 +131,7 @@ void render(
   `include/ui_programs.slang` (`ui.frag`). No program alpha include: `alpha_probe` flags
   `coverage` in catalog, and masked materials whose program writes alpha error with `Coverage`.
 - **Stage expansion:** `//! per surface program <uses>` (`abi.Program_Use`: `opaque`, `blend`,
-  `overlay`, `particle_mesh`, `particle_sprite`, `preview`, `impostor`, `decal`; `<variant>=<use>`,
+  `overlay`, `mesh`, `particle_sprite`, `preview`, `impostor`, `decal`; `<variant>=<use>`,
   `only`) emits `<root>__<Program>[_<variant>]<suffix>` for matching programs;
   `//! per vertex program` emits `surface_vertices.comp` for vertex-moving programs only.
   Editing a program recompiles only its domain stages (never tracing, visibility, or shadows).
