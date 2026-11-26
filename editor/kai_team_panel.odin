@@ -156,7 +156,7 @@ kai_team_build :: proc(s:^Session) {
     }
     v:=&t.view
     f:=&t.fields
-    kai_head(ctx,"THIS MACHINE",0)
+    kai_head(ctx,"THIS MACHINE",-1)
     if t.team.name=="" {
         kai_line(ctx,"Name yourself and this machine: every org you make or join shows them.")
         kai_field(ctx,"kai_name",f.name[:],&f.name_length,"Your name")
@@ -175,7 +175,7 @@ kai_team_build :: proc(s:^Session) {
     }
     for p in v.peer_lines {kai_row_names(ctx,p.name,p.rest,ui.tone(ctx,"text"))}
 
-    kai_head(ctx,"JOIN AN ORG",0)
+    kai_head(ctx,"JOIN AN ORG",-1)
     kai_field(ctx,"kai_invite_in",f.invite[:],&f.invite_length,"Paste an invite: kai2...")
     invite:=kai_typed(f.invite[:],f.invite_length)
     if kai_buttons(s,"kai_join",{"Join"},accent=0,disabled=invite=="")==0 {kai_ask(s,"kai.join",`{{"invite":%s}}`,kai_quote(invite))}
@@ -191,13 +191,13 @@ kai_team_build :: proc(s:^Session) {
         ui.id_pop(ctx)
     }
 
-    kai_head(ctx,"NEW ORG",0)
+    kai_head(ctx,"NEW ORG",-1)
     kai_field(ctx,"kai_org_name",f.org[:],&f.org_length,"Name of the org")
     org:=kai_typed(f.org[:],f.org_length)
     if kai_buttons(s,"kai_org_new",{"Make org"},disabled=org=="")==0 {kai_ask(s,"kai.org",`{{"new":%s}}`,kai_quote(org))}
 
     if len(v.orgs)>0 {
-        kai_head(ctx,"WEB SIGN-IN",0)
+        kai_head(ctx,"WEB SIGN-IN",-1)
         kai_line(ctx,"A Kai server of your org shows its repositories on the web: set the name and password this machine signs in with there.")
         kai_field(ctx,"kai_server",f.server[:],&f.server_length,"Server host:port")
         kai_field(ctx,"kai_login",f.login[:],&f.login_length,"Name: a-z, 0-9, . _ -")
@@ -226,14 +226,19 @@ kai_invite_build :: proc(s:^Session,o:^ka.Org_View) {
         ui.checkbox(ctx,ui.id(ctx,"kai_invite_mine"),&f.mine)
         ui.label(ctx,"For another machine of mine",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
     }
-    kai_field(ctx,"kai_invite_at",f.at[:],&f.at_length,"External host:port, when the other machine is on another network (optional)")
+    kai_line(ctx,"On another network, the other machine reaches this one where the router forwards its port:","text_faint")
+    kai_field(ctx,"kai_invite_at",f.at[:],&f.at_length,"External host:port (optional)")
     if kai_buttons(s,"kai_invite",{"Make invite"},accent=0)==0 {
         kai_ask(s,"kai.invite",`{{"org":%s,"role":%s,"mine":%v,"at":%s}}`,kai_quote(org_hex(o.id)),kai_quote(ka.role_text(f.role)),f.mine,kai_quote(kai_typed(f.at[:],f.at_length)))
     }
     if t.invite_length==0 {return}
     text:=string(t.invite[:t.invite_length])
     kai_line(ctx,"One machine joins with this invite, within 3 days, while this editor runs:","text_faint")
-    kai_line(ctx,text,"text")
+    // One word of some 200 letters: on one line, cut at the panel's edge, so it never widens the tab.
+    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={KAI_ROW_PAD,2,KAI_ROW_PAD,2}}) {
+        size:=ui.metric(ctx,"font_small")
+        ui.text(ctx,text,{size=size,color=ui.tone(ctx,"text"),align_y=.Center,ellipsis=true},ui.GROW,ui.fixed(size+6))
+    }
     if kai_buttons(s,"kai_invite_copy",{"Copy invite"})==0 && s.app!=nil && s.app.platform!=nil {platform.clipboard_set(s.app.platform,text)}
 }
 

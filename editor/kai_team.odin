@@ -138,7 +138,9 @@ kai_team_open :: proc(s:^Session) {
         host:[128]u8
         name:=os.get_env("USER",context.temp_allocator)
         t.fields.name_length=copy(t.fields.name[:],name)
-        t.fields.device_length=copy(t.fields.device[:],kai_host_name(host[:]))
+        device:=vcs.host_name(host[:])
+        if cut:=strings.index_byte(device,'.');cut>0 {device=device[:cut]}
+        t.fields.device_length=copy(t.fields.device[:],device)
     }
     if len(vcs.team_org_ids(&t.team))>0 {kai_agent_start(s)}
     kai_team_read(s)
@@ -352,13 +354,4 @@ kai_clone_folder :: proc(s:^Session,name:string) -> string {
     location:=strings.trim_space(string(p.location[:p.location_length]))
     if location=="" || name=="" {return ""}
     return project.path(location,name,allocator=context.temp_allocator)
-}
-
-@(private)
-kai_host_name :: proc(buffer:[]u8) -> string {
-    name:=os.get_env("HOSTNAME",context.temp_allocator)
-    if name=="" {name=os.get_env("COMPUTERNAME",context.temp_allocator)}
-    if name=="" {name="this machine"}
-    if cut:=strings.index_byte(name,'.');cut>0 {name=name[:cut]}
-    return string(buffer[:copy(buffer,name)])
 }

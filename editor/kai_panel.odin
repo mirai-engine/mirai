@@ -101,13 +101,16 @@ kai_panel_build :: proc(s:^Session,width,room:f32) {
 
 // A title and its count; with check, a checkbox before it: changed when clicked.
 @(private)
+// A head of a list, with its count; count<0 shows none.
 kai_head :: proc(ctx:^ui.Context,title:string,count:int,check:^bool=nil) -> (changed:bool) {
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(KAI_HEAD),gap=check!=nil?8:4,align_y=.Center,padding={check!=nil?KAI_ROW_PAD:0,0,KAI_ROW_PAD,0}}) {
         if check!=nil {changed=ui.checkbox(ctx,ui.id(ctx,"kai_check_all"),check)}
         ui.label(ctx,title,ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_caption"))
         ui.spacer(ctx)
-        text:[16]u8
-        ui.label(ctx,fmt.bprintf(text[:],"%d",count),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
+        if count>=0 {
+            text:[16]u8
+            ui.label(ctx,fmt.bprintf(text[:],"%d",count),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
+        }
     }
     return
 }

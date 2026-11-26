@@ -80,7 +80,6 @@ broadcasts4 :: proc(out:^[dynamic][4]u8) {
 }
 
 // This machine's host name, in buffer; empty when the system gives none.
-@(private)
 host_name :: proc(buffer:[]u8) -> string {
     name,found:=os.lookup_env("COMPUTERNAME",context.temp_allocator)
     if !found {return ""}

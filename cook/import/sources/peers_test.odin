@@ -52,8 +52,8 @@ until :: proc(seconds:f64,data:rawptr,done:proc(data:rawptr) -> bool) -> bool {
 
 // A cook takes what a writer of its org built: Alice's cache keeps a texture
 // and publishes it, Bob's miss asks the connected machines and takes it
-// whole, and a server of the org keeps it, so Bob takes the next one from it
-// while Alice is off. What Alice kept before she shared is published once
+// whole, and a server of the org keeps it, also what Alice built before the
+// server joined, so Bob takes the next one from it while Alice is off. What Alice kept before she shared is published once
 // when her cook finds it; what nobody built is a miss.
 @(test)
 a_cook_takes_derived_data_a_peer_built :: proc(t:^testing.T) {
@@ -66,13 +66,6 @@ a_cook_takes_derived_data_a_peer_built :: proc(t:^testing.T) {
     defer peer_close(&server)
     org,_:=vcs.team_org_create(&alice.team,"studio")
     address:=fmt.tprintf("127.0.0.1:%d",vcs.agent_port(&alice.agent))
-    for x in ([]struct{m:^Peer_Machine,role:vcs.Role}{{&server,.Node},{&bob,.Writer}}) {
-        text,_:=vcs.team_invite(&alice.team,org,x.role,"",{address},context.temp_allocator)
-        _,e:=vcs.agent_join(&x.m.agent,text)
-        if !testing.expectf(t,e==.None,"%s joins: %s",x.m.team.name,x.m.agent.team.why) {return}
-    }
-    for m in ([]^Peer_Machine{&alice,&bob}) {m.mesh={team=&m.team,agent=&m.agent,org=org}}
-
     types:asset.Types
     asset.types_init(&types)
     defer asset.types_destroy(&types)
@@ -87,6 +80,16 @@ a_cook_takes_derived_data_a_peer_built :: proc(t:^testing.T) {
         return bytes
     }
     KEY,VERSION :: 0x5eed,3
+    // What alice built before the org had a server reaches the server once it joins.
+    alice.mesh={team=&alice.team,agent=&alice.agent,org=org}
+    early_build:=cache.Cache{store=&alice.s,source=ka.mesh_source(&alice.mesh)}
+    testing.expect(t,cache.put(early_build,"textures",KEY+5,VERSION,texture(t,&types,KEY+5)),"alice builds before the server joins")
+    for x in ([]struct{m:^Peer_Machine,role:vcs.Role}{{&server,.Node},{&bob,.Writer}}) {
+        text,_:=vcs.team_invite(&alice.team,org,x.role,"",{address},context.temp_allocator)
+        _,e:=vcs.agent_join(&x.m.agent,text)
+        if !testing.expectf(t,e==.None,"%s joins: %s",x.m.team.name,x.m.agent.team.why) {return}
+    }
+    bob.mesh={team=&bob.team,agent=&bob.agent,org=org}
     built:=cache.Cache{store=&alice.s,source=ka.mesh_source(&alice.mesh)}
     testing.expect(t,cache.put(built,"textures",KEY,VERSION,texture(t,&types,KEY)),"alice's cook keeps and publishes its result")
     taken:=cache.Cache{store=&bob.s,source=ka.mesh_source(&bob.mesh)}
@@ -114,7 +117,7 @@ a_cook_takes_derived_data_a_peer_built :: proc(t:^testing.T) {
         s,_:=vcs.team_store(x.team,x.org)
         ns:[len(vcs.DDC_PREFIX)+32]u8
         refs,e:=store.ref_list(s,vcs.ddc_namespace(x.org,&ns),context.temp_allocator)
-        if e!=.None || len(refs)<3 {return false}
+        if e!=.None || len(refs)<4 {return false}
         records:=make([dynamic]vcs.DDC_Record,context.temp_allocator)
         lacking:=make([dynamic]store.Hash,context.temp_allocator)
         for ref in refs {

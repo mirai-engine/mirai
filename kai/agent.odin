@@ -464,7 +464,8 @@ agent_knows :: proc(a:^Agent,key:Key) -> bool {
 }
 
 // The heads of every org this machine holds whose member key is: its record,
-// and its repositories' shared bookmarks.
+// its repositories' shared bookmarks and, for a server of the org (or every
+// one, key zero), the derived data sets it holds, which a server keeps.
 @(private)
 agent_heads :: proc(a:^Agent,key:Key,out:^[dynamic]Tell_Entry) {
     for id in team_org_ids(&a.team) {
@@ -472,7 +473,16 @@ agent_heads :: proc(a:^Agent,key:Key,out:^[dynamic]Tell_Entry) {
         if e!=.None {continue}
         o,address,he:=org_head(s,id,context.temp_allocator)
         if he!=.None {continue}
-        if key!={} && org_member(&o,key)<0 {continue}
+        role,member:=org_role(&o,key)
+        if key!={} && !member {continue}
+        if key=={} || role==.Node {
+            ns:[len(DDC_PREFIX)+32]u8
+            refs,_:=store.ref_list(s,ddc_namespace(id,&ns),context.temp_allocator)
+            for ref in refs {
+                k,ok:=store.parse_hex(ref.name)
+                if ok {append(out,Tell_Entry{kind=.Ddc,org=id,id=k,address=ref.hash})}
+            }
+        }
         append(out,Tell_Entry{kind=.Org,org=id,address=address})
         for r in o.repos {
             _,refs,re:=repo_refs_head(s,id,r.id,context.temp_allocator)
@@ -1311,7 +1321,8 @@ agent_tell_changes :: proc(a:^Agent) {
     for p in peers {
         theirs:=make([dynamic]Tell_Entry,context.temp_allocator)
         for m in moved {
-            if _,ok:=agent_role(a,m.org,p.conn.peer);ok {append(&theirs,m)}
+            // Derived data goes to the org's servers alone: a member asks for what it needs.
+            if role,ok:=agent_role(a,m.org,p.conn.peer);ok && (m.kind!=.Ddc || role==.Node) {append(&theirs,m)}
         }
         if len(theirs)>0 {peer_tell(p,theirs[:])}
     }
