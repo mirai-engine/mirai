@@ -317,7 +317,9 @@ agent_reach :: proc(a:^Agent,allocator:=context.allocator) -> (reach:Reach,at:st
     case .Mapped:
         if status.external.kind!=.IP4 {break}
         ip:=status.external.ip
-        return .Online,fmt.aprintf("%d.%d.%d.%d:%d",ip[0],ip[1],ip[2],ip[3],status.external.port,allocator=allocator)
+        bytes:[ADDRESS_MAX]u8
+        text,e:=strings.clone(fmt.bprintf(bytes[:],"%d.%d.%d.%d:%d",ip[0],ip[1],ip[2],ip[3],status.external.port),allocator)
+        return .Online,e==nil?text:""
     }
     return .Local,""
 }
