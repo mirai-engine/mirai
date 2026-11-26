@@ -1324,11 +1324,15 @@ particle_programs_read_the_bones_of_a_skeleton :: proc(t: ^testing.T) {
 	camera := gpu.Camera{position = {0, 1, 5}, forward = {0, -0.5, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	program := erender.program_find(&f.assets, "Bone_Probe", .Vfx)
 	if !testing.expect(t, program != nil && len(program.resources) == 1 && program.resources[0].kind == .Bones, "testdata has the Vfx program Bone_Probe, which reads bones") {return}
-	// A root, a spine turned about z and a hand twice as large, 2 m higher after half a second.
+	// A root, a mirrored spine turned about z, and a negatively scaled hand moved +2 m in 0.5 s.
 	rig := core.Entity(7)
 	bones: Particle_Bones
 	defer particle_bones_free(&bones)
-	pose := [3]mm.Transform{{{0, 1, 0}, 1, {1, 1, 1}}, {{0, 2, 0}, mm.quat_axis_angle({0, 0, 1}, 0.5), {1, 1, 1}}, {{1, 1, 0}, 1, {2, 2, 2}}}
+	pose := [3]mm.Transform{
+		{{0, 1, 0}, 1, {1, 1, 1}},
+		{{0, 2, 0}, mm.quat_axis_angle({0, 0, 1}, 0.5), {-1.5, 2, 1}},
+		{{1, 1, 0}, 1, {2, -2.5, -3}},
+	}
 	for frame in 0 ..< 2 {
 		if frame == 1 {pose[2].position.y += 2}
 		bones_begin(&bones)
@@ -1362,7 +1366,7 @@ particle_programs_read_the_bones_of_a_skeleton :: proc(t: ^testing.T) {
 	seen: [3]bool
 	missing := 0
 	for p in mem.slice_data_cast([]Gpu_Particle, read[0]) {
-		if p.lifetime != 100 {continue}
+		if p.lifetime < 50 {continue}
 		if p.rotation == -2 {
 			testing.expectf(t, p.position == {0, 5, 0} && p.spin == 3 || p.position == {10, 0, 0}, "a bone past those of the resource or of none is not valid: %v", p)
 			missing += 1
@@ -1372,15 +1376,111 @@ particle_programs_read_the_bones_of_a_skeleton :: proc(t: ^testing.T) {
 		if !testing.expectf(t, i >= 0 && i < 3 && !seen[i], "bone %v once", p.spin) {continue}
 		seen[i] = true
 		uploaded := f.sync.bones[i]
-		at := [3]f32{uploaded.world[0][3], uploaded.world[1][3], uploaded.world[2][3]}
-		testing.expectf(t, linalg.length(p.position - at) < 1e-4 && at == pose[i].position, "bone %d is at %v, uploaded at %v", i, p.position, at)
+		testing.expectf(t, linalg.length(p.position - uploaded.position) < 1e-4 && uploaded.position == pose[i].position, "bone %d is at %v, uploaded at %v", i, p.position, uploaded.position)
 		testing.expectf(t, linalg.length(p.velocity - uploaded.velocity) < 1e-4, "bone %d moves at %v, uploaded %v", i, p.velocity, uploaded.velocity)
 		testing.expect_value(t, p.rotation, uploaded.parent == max(u32) ? f32(-1) : f32(uploaded.parent))
-		testing.expectf(t, abs(p.size - pose[i].scale.y) < 1e-4 && abs(p.age - 1 - pose[i].rotation.z) < 1e-4, "bone %d: scale %v and turn %v", i, p.size, p.age - 1)
+		scale := [3]f32{transmute(f32)p.seed, p.size - 10, p.lifetime - 100}
+		testing.expectf(t, linalg.length(scale - pose[i].scale) < 1e-4 && abs(p.age - 1 - pose[i].rotation.z) < 1e-4, "bone %d: scale %v (want %v) and turn.z %v (want %v)", i, scale, pose[i].scale, p.age - 1, pose[i].rotation.z)
 	}
 	testing.expect_value(t, seen, [3]bool{true, true, true})
 	testing.expect_value(t, missing, 3)
 	testing.expect(t, linalg.length(f.sync.bones[2].velocity - {0, 4, 0}) < 1e-4)
+	expect_clean(t, f.device)
+}
+
+// A program reads a transform resource directly and interpolated at t in [0, 1]
+// (shortest-hemisphere rotation between previous and current), returns valid=false
+// when unbound, and never produces NaN from particle_turn_of when Y is degenerate
+// and X lies along +Z or -Z (testdata/transform_probe.slang).
+@(test)
+particle_programs_read_transform_resources_and_degenerate_turns :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 96, 64, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	camera := gpu.Camera{position = {0, 1, 5}, forward = {0, -0.5, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	program := erender.program_find(&f.assets, "Transform_Probe", .Vfx)
+	if !testing.expect(t, program != nil && len(program.resources) == 1 && program.resources[0].kind == .Transform, "testdata has the Vfx program Transform_Probe, which reads a transform") {return}
+	probe_emitter :: proc(t: ^testing.T, f: ^Gpu_Fixture, id: u64, at: [3]f32) -> (desc: Emitter_Desc, ok: bool) {
+		desc = test_emitter(id, at)
+		desc.info.lifetime = {100, 100}
+		base.text_set(desc.info.program[:], "Transform_Probe")
+		return desc, testing.expect_value(t, particle_program_check(&f.assets, &desc.info, nil, nil, &desc.program), "")
+	}
+	interpolated, ok0 := probe_emitter(t, f, 1, {0, 5, 0})
+	degenerate, ok1 := probe_emitter(t, f, 2, {5, 5, 0})
+	unbound, ok2 := probe_emitter(t, f, 3, {10, 0, 0})
+	if !ok0 || !ok1 || !ok2 {return}
+	// +150 deg to -150 deg around +Y crosses 180 deg by shortest arc (60 deg), not 0 deg.
+	prev_tr := mm.Transform{position = {1, 2, 3}, rotation = mm.quat_axis_angle({0, 1, 0}, 150 * mm.RAD_PER_DEG), scale = {1, 2, 3}}
+	curr_tr := mm.Transform{position = {5, 6, 7}, rotation = mm.quat_axis_angle({0, 1, 0}, -150 * mm.RAD_PER_DEG), scale = {3, 6, 9}}
+	// Degenerate Y column with X along +Z (world) and -Z (previous): previously produced NaN in particle_turn_of.
+	pos_z, neg_z: matrix[4, 4]f32
+	pos_z[2, 0], pos_z[1, 2], pos_z[0, 3], pos_z[1, 3], pos_z[3, 3] = 1, 1, 2, 1, 1
+	neg_z[2, 0], neg_z[1, 2], neg_z[0, 3], neg_z[1, 3], neg_z[3, 3] = -1, 1, -2, 1, 1
+	DT :: f32(1.0 / 60)
+	for i in 0 ..< 4 {
+		clear(&f.sync.resources)
+		interpolated.resources = test_resources(&f.sync, {}, Resource_Desc{kind = .Transform, transform = mm.transform_matrix(curr_tr), previous = mm.transform_matrix(prev_tr)})
+		degenerate.resources = test_resources(&f.sync, {}, Resource_Desc{kind = .Transform, transform = pos_z, previous = neg_z})
+		interpolated.spawns = test_burst(5) if i == 0 else {}
+		degenerate.spawns = test_burst(5) if i == 0 else {}
+		unbound.spawns = test_burst(2) if i == 0 else {}
+		testing.expect(t, frame_emitters(f, &f.sync, {interpolated, degenerate, unbound}, DT))
+		testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = f32(i) * DT}), r.error)
+	}
+	read := test_frame_read(t, f, {interpolated, degenerate, unbound}, DT, camera, 4 * DT, {pool_buffer(&f.sync.pool, .Particles), {}})
+	if read[0] == nil {return}
+	interp_slot := u32(pool_slot_find(&f.sync.pool, 1))
+	degen_slot := u32(pool_slot_find(&f.sync.pool, 2))
+	unbound_slot := u32(pool_slot_find(&f.sync.pool, 3))
+	seen_interp, seen_degen: [5]bool
+	seen_unbound := 0
+	quat_close :: proc(a: [4]f32, b: mm.Quat) -> bool {
+		dot := a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w
+		return abs(abs(dot) - 1) < 1e-4
+	}
+	for p in mem.slice_data_cast([]Gpu_Particle, read[0]) {
+		if p.lifetime != 100 {continue}
+		switch p.emitter {
+		case unbound_slot:
+			testing.expectf(t, p.rotation == -2 && p.position == {10, 0, 0}, "unbound transform must be invalid: %v", p)
+			seen_unbound += 1
+		case interp_slot:
+			slot := int(p.seed)
+			if !testing.expectf(t, slot >= 0 && slot < 5 && !seen_interp[slot], "interp slot %d once", slot) {continue}
+			seen_interp[slot] = true
+			rot := [4]f32{p.age - 10, p.size - 10, p.rotation - 10, p.spin - 10}
+			want_positions := [5][3]f32{{1, 2, 3}, {3, 4, 5}, {5, 6, 7}, {5, 6, 7}, {1, 2, 3}}
+			want_scales := [5][3]f32{{1, 2, 3}, {2, 4, 6}, {3, 6, 9}, {3, 6, 9}, {1, 2, 3}}
+			want_rots := [5]mm.Quat{prev_tr.rotation, mm.quat_axis_angle({0, 1, 0}, mm.PI), curr_tr.rotation, curr_tr.rotation, prev_tr.rotation}
+			want_pos := want_positions[slot]
+			want_scale := want_scales[slot]
+			want_rot := want_rots[slot]
+			testing.expectf(t, linalg.length(p.position - want_pos) < 1e-4, "slot %d pos %v, want %v", slot, p.position, want_pos)
+			testing.expectf(t, linalg.length(p.velocity - want_scale) < 1e-4, "slot %d scale %v, want %v", slot, p.velocity, want_scale)
+			testing.expectf(t, quat_close(rot, want_rot), "slot %d rot %v, want %v", slot, rot, want_rot)
+		case degen_slot:
+			slot := int(p.seed)
+			if !testing.expectf(t, slot >= 0 && slot < 5 && !seen_degen[slot], "degen slot %d once", slot) {continue}
+			seen_degen[slot] = true
+			rot := [4]f32{p.age - 10, p.size - 10, p.rotation - 10, p.spin - 10}
+			finite := !math.is_nan(rot.x) && !math.is_nan(rot.y) && !math.is_nan(rot.z) && !math.is_nan(rot.w)
+			testing.expectf(t, finite && abs(linalg.length(rot) - 1) < 1e-4, "degenerate slot %d produced non-unit/NaN quat %v", slot, rot)
+			q := quaternion(w = rot.w, x = rot.x, y = rot.y, z = rot.z)
+			if slot == 2 || slot == 3 {
+				testing.expectf(t, linalg.length(mm.quat_rotate(q, {1, 0, 0}) - {0, 0, 1}) < 1e-4, "degenerate +Z slot %d axis %v", slot, mm.quat_rotate(q, {1, 0, 0}))
+			} else if slot == 0 || slot == 4 {
+				testing.expectf(t, linalg.length(mm.quat_rotate(q, {1, 0, 0}) - {0, 0, -1}) < 1e-4, "degenerate -Z slot %d axis %v", slot, mm.quat_rotate(q, {1, 0, 0}))
+			}
+		}
+	}
+	testing.expect_value(t, seen_interp, [5]bool{true, true, true, true, true})
+	testing.expect_value(t, seen_degen, [5]bool{true, true, true, true, true})
+	testing.expect_value(t, seen_unbound, 2)
 	expect_clean(t, f.device)
 }
 

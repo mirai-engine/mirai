@@ -154,7 +154,8 @@ struct Particle_Event {
 #define PARTICLE_RESOURCE_CHANNEL 2u
 #define PARTICLE_RESOURCE_GRID 3u
 #define PARTICLE_RESOURCE_BONES 4u
-#define PARTICLE_BONE_BYTES 64u // vfx.Gpu_Bone: the rows of its transform, its velocity and its parent
+#define PARTICLE_RESOURCE_TRANSFORM 5u
+#define PARTICLE_BONE_BYTES 64u // vfx.Gpu_Bone: position+parent, rotation (xyzw), scale, velocity
 // The stages of an emitter after its resources (vfx.Gpu_Stage).
 #define PARTICLE_STAGES 32u
 #define PARTICLE_STAGE_BYTES 32u
@@ -529,8 +530,19 @@ float4 particle_quat_of(float3 x, float3 y, float3 z) {
 float4 particle_turn_of(float4 rows[3]) {
     float3 x = particle_unit(float3(rows[0].x, rows[1].x, rows[2].x), float3(1.0, 0.0, 0.0));
     float3 y = float3(rows[0].y, rows[1].y, rows[2].y);
-    y = particle_unit(y - x * dot(x, y), abs(x.y) < 0.99 ? normalize(cross(float3(0.0, 0.0, 1.0), x)) : float3(0.0, 0.0, 1.0));
+    float3 fallback = normalize(cross(abs(x.z) < 0.99 ? float3(0.0, 0.0, 1.0) : float3(0.0, 1.0, 0.0), x));
+    y = particle_unit(y - x * dot(x, y), fallback);
     return particle_quat_of(x, y, cross(x, y));
+}
+
+// The scale of an affine transform given by its rows; mirrors along z to match particle_turn_of.
+float3 particle_scale_of(float4 rows[3]) {
+    float3 x = float3(rows[0].x, rows[1].x, rows[2].x);
+    float3 y = float3(rows[0].y, rows[1].y, rows[2].y);
+    float3 z = float3(rows[0].z, rows[1].z, rows[2].z);
+    float3 s = float3(length(x), length(y), length(z));
+    if (dot(cross(x, y), z) < 0.0) s.z = -s.z;
+    return s;
 }
 
 // The axes of a turn: the columns of its rotation.

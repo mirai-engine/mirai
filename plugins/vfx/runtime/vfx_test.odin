@@ -28,6 +28,7 @@ Emitters_World :: struct {
     hidden:core.Table(erender.Hidden),
     parents:core.Table(core.Parent),
     bindings:core.Table(Particle_Bindings),
+    resource_bindings:core.Table(Particle_Binding),
     listeners:core.Table(Particle_Channel),
     grids:core.Table(Particle_Grid),
     volumes:core.Table(Particle_Volume),
@@ -85,7 +86,7 @@ fixture_tick :: proc(f:^Emitters_Fixture,time:core.Time,frame:=FRAME) {
 
 @(private="file")
 fixture_sync :: proc(f:^Emitters_Fixture,id:core.World_Id,time:core.Time,frame:=FRAME) {
-    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.bindings),nil,core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{},{},{},{})
+    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.bindings),core.read(&f.resource_bindings),core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{},{},{},{})
 }
 
 @(private="file")
@@ -1418,4 +1419,65 @@ mesh_particles_blend_as_the_alpha_mode_of_their_material :: proc(t:^testing.T) {
         d,_:=emitter_desc(&spec,&assets,nil,1,0)
         testing.expectf(t,d.blended==blended,"a mesh of a material %v blends: %v",mode,d.blended)
     }
+}
+
+// A transform resource resolves the bound entity's World_Transform with previous
+// frame history (previous == world on frame 1, previous == last frame's world on
+// frame 2+), returns kind None when unbound or missing, and allocates nothing on
+// steady frames.
+@(test)
+transform_resources_track_previous_frame_and_handle_unbound :: proc(t:^testing.T) {
+    f:Emitters_Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
+    emitter:=fixture_emitter(&f,Particle_Emitter{active=true})
+    target:=core.create(&f.entities)
+    t0:=mm.Transform{position={1,2,3},rotation=1,scale={1,1,1}}
+    core.add(&f.worlds,target,core.World_Transform{transform=t0,previous=t0})
+    binding:=Particle_Binding{emitter=emitter,entity=target}
+    base.text_set(binding.resource[:],"blade")
+    core.add(&f.resource_bindings,emitter,binding)
+    fixture_settle(&f)
+
+    shown:Emitter_Shown
+    shown.needs.resources[0]={name=base.name_hash("blade"),kind=.Transform}
+    shown.needs.resources[1]={name=base.name_hash("missing"),kind=.Transform}
+    no_surface:Particle_Bindings
+    bindings_sync(&f.sync,core.read(&f.resource_bindings),&f.problems)
+
+    // Frame 1: previous equals current; unbound stays None.
+    rows1:=emitter_resources(&f.sync,&shown,&no_surface,core.read(&f.resource_bindings),nil,emitter,nil,nil,core.read(&f.meshes),core.read(&f.worlds),{0,1},{dt=1.0/60,alpha=0.5},nil,nil)
+    testing.expect_value(t,rows1[1].kind,Resource_Kind.Transform)
+    testing.expect_value(t,rows1[1].transform,mm.transform_matrix(t0))
+    testing.expect_value(t,rows1[1].previous,mm.transform_matrix(t0))
+    testing.expect_value(t,rows1[2].kind,Resource_Kind.None)
+
+    // Frame 2: interpolates with alpha and keeps frame 1 as previous.
+    t1:=mm.Transform{position={5,2,3},rotation=1,scale={1,1,1}}
+    core.edit(&f.worlds,target)^=core.World_Transform{transform=t1,previous=t0}
+    rows2:=emitter_resources(&f.sync,&shown,&no_surface,core.read(&f.resource_bindings),nil,emitter,nil,nil,core.read(&f.meshes),core.read(&f.worlds),{0,1},{dt=1.0/60,alpha=0.5},nil,nil)
+    mid:=mm.Transform{position={3,2,3},rotation=1,scale={1,1,1}}
+    testing.expect_value(t,rows2[1].kind,Resource_Kind.Transform)
+    testing.expect_value(t,rows2[1].transform,mm.transform_matrix(mid))
+    testing.expect_value(t,rows2[1].previous,mm.transform_matrix(t0))
+
+    // Steady frame 3: zero allocations, previous equals frame 2's drawn transform.
+    tracker:mem.Tracking_Allocator
+    mem.tracking_allocator_init(&tracker,context.allocator)
+    defer mem.tracking_allocator_destroy(&tracker)
+    {
+        context.allocator=mem.tracking_allocator(&tracker)
+        rows3:=emitter_resources(&f.sync,&shown,&no_surface,core.read(&f.resource_bindings),nil,emitter,nil,nil,core.read(&f.meshes),core.read(&f.worlds),{0,1},{dt=1.0/60,alpha=1},nil,nil)
+        testing.expect_value(t,rows3[1].kind,Resource_Kind.Transform)
+        testing.expect_value(t,rows3[1].transform,mm.transform_matrix(t1))
+        testing.expect_value(t,rows3[1].previous,rows2[1].transform)
+    }
+    testing.expect_value(t,tracker.total_allocation_count,i64(0))
+
+    // Target loses its transform: resource goes None and clears placed history.
+    core.remove(&f.worlds,target)
+    fixture_settle(&f)
+    rows4:=emitter_resources(&f.sync,&shown,&no_surface,core.read(&f.resource_bindings),nil,emitter,nil,nil,core.read(&f.meshes),core.read(&f.worlds),{0,1},{dt=1.0/60,alpha=1},nil,nil)
+    testing.expect_value(t,rows4[1].kind,Resource_Kind.None)
+    testing.expect(t,!shown.resource_placed[1])
 }
