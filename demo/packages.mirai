@@ -40,6 +40,7 @@
     {"id": "0964d5141215cea8462119f07a904e49", "manifest": "372a3768627ac9cacf733dd242c54360aa621ec01f9c2c6c654193d9f66bff98", "folder": "surfaces/wood", "assets": [], "written": []},
     {"id": "81dd55e2e057dae790850f4a006dce86", "manifest": "a8d5d054ba85c7c23bc8bb2c151a144c8f3253f585edc71cbf1d77561265c099", "folder": "foliage_extreme/tree_broad", "assets": [], "written": [{"id": "73668be537ffad086162e2c98e1c79f6", "hash": "f9d209fcefe6c1bc"}]},
     {"id": "9c80ffb4545f5d74f0a1ccf6acedba6b", "manifest": "7839bf7fe8f17f5a6537696c38a61707228b1b6e9a268aa03b13d8adf6a8ea99", "folder": "foliage_extreme/tree_bush", "assets": [], "written": [{"id": "317c6ad95fead4485707ae3231936f9b", "hash": "cdedda2359e30e26"}]},
-    {"id": "2dbac73486cbcaad3569e05ecd01bb4f", "manifest": "d9637bb4f099fde4a9f41acea3d2a351d0e7819c5d12d67a696d59239a8bb60e", "folder": "foliage_extreme/tree_tall", "assets": [], "written": [{"id": "10f19381013cd286f491234605c5ca3a", "hash": "e2670abb34e3f478"}]}
+    {"id": "2dbac73486cbcaad3569e05ecd01bb4f", "manifest": "d9637bb4f099fde4a9f41acea3d2a351d0e7819c5d12d67a696d59239a8bb60e", "folder": "foliage_extreme/tree_tall", "assets": [], "written": [{"id": "10f19381013cd286f491234605c5ca3a", "hash": "e2670abb34e3f478"}]},
+    {"id": "1eb877125887ff7d13cb780b769d233d", "manifest": "c19c77b0b2a9afd2e674c9d4af0d01b03318996075f48719ca3a61eccbb75e53", "folder": "foliage_extreme", "assets": [], "written": [{"id": "7edce02a8669c981ea0121c992fb07bd", "hash": "ad6052a9f54e8005"}]}
   ]
 }

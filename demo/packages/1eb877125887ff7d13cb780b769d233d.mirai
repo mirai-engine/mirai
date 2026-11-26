@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "id": "1eb877125887ff7d13cb780b769d233d",
+  "name": "grass_clump",
+  "catalog_path": "Demo/foliage_extreme",
+  "documents": "grass_clump",
+  "origin": {"path": "assets/foliage_extreme/grass_clump.obj", "folder": false, "importer": "OBJ"},
+  "identity": "28989f770829d9b239afcb8cdb15d9a1512953a1bfdafb26f2fc3c8005211e09",
+  "inputs": ["grass_clump.mtl"],
+  "assets": [
+    {"kind": "SCEN", "name": "grass_clump", "index": 0, "id": "7edce02a8669c981ea0121c992fb07bd"},
+    {"kind": "MAT", "name": "grass", "index": 0, "id": "992c9f6c5fc8cf70e71649d997846ec2"},
+    {"kind": "MESH", "name": "grass_clump", "index": 0, "id": "374b3b2f25960502a33f4bbe7a9724c7", "part": true, "owner": "7edce02a8669c981ea0121c992fb07bd", "dependencies": ["992c9f6c5fc8cf70e71649d997846ec2"]}
+  ]
+}
