@@ -121,10 +121,9 @@ density_paint :: proc(source:^pcg.Pcg_Source,a:Paint_Area,value,strength:f32) ->
             }}
             full:=true
             for v in painted.density {if v!=255 {full=false;break}}
-            if full && len(painted.ecotopes)==0 {
-                at:=pcg.coord_lower(source.cells[:],{x,z})
-                delete(source.cells[at].density);delete(source.cells[at].ecotopes)
-                ordered_remove(&source.cells,at)
+            if full {
+                clear(&painted.density)
+                pcg.source_cell_prune(source,pcg.coord_lower(source.cells[:],{x,z}))
             }
         }
     }

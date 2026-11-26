@@ -139,7 +139,9 @@ issue_text :: proc(issue:pcg.Pcg_Issue,allocator:=context.temp_allocator) -> str
     case .Grammar:
         if issue.grammar.kind==.Unexpected_End && issue.grammar.offset==0 {return fmt.aprintf("Grammar layer %d needs a grammar and its symbols",issue.layer,allocator=allocator)}
         return fmt.aprintf("the grammar of layer %d does not compile at byte %d: %v",issue.layer,issue.grammar.offset,issue.grammar.kind,allocator=allocator)
-    case .Cell:   return "a painted cell is out of range or of another size"
+    case .Cell:
+        if issue.layer!=0 {return fmt.aprintf("an authored point of layer %d is not valid: only a Macro or Meso Scatter layer holds points, each in the cell of its x and z with a finite place, a unit rotation and a scale above 0",issue.layer,allocator=allocator)}
+        return "a painted cell is out of range or of another size, or holds more authored points than it can or an id of one twice"
     }
     return ""
 }
@@ -628,15 +630,22 @@ pcg_document :: proc(s:^editor.Session,tool:^Pcg_Tool,assets:^host.Assets,alloca
             }
             source:=&doc.source
             kit.section(ctx,"Source",fmt.tprintf("revision %d",source.info.revision),100)
-            info_defaults:=pcg.Pcg_Info{cell_size=pcg.CELL_SIZE_DEFAULT,next_layer=1}
+            info_defaults:=pcg.Pcg_Info{cell_size=pcg.CELL_SIZE_DEFAULT,next_layer=1,next_point=1}
             held:=source.info
             h:=editor.Held_Values{key=u64(PANEL_SCOPE)<<32|0xffff_0000,info=type_info_of(pcg.Pcg_Info),value=&held,defaults=&info_defaults}
             changed:=false
             for field in ([?]string{"seed","cell_size","ecotopes"}) {changed|=editor.held_field_row(s,h,field)}
             if changed {
-                source.info.seed,source.info.cell_size,source.info.ecotopes=held.seed,held.cell_size,held.ecotopes
-                pcg.source_compiled_free(source)
-                doc.dirty=true
+                resized:=held.cell_size!=source.info.cell_size
+                if resized && !pcg.source_rechunk_points(source,held.cell_size) {
+                    resized=false
+                    editor.notify(s,fmt.tprintf("The cell size stays: at %v m a cell would hold more than %d authored points, or one would fall out of range",held.cell_size,pcg.POINTS_CELL_MAX))
+                }
+                if resized || held.seed!=source.info.seed || held.ecotopes!=source.info.ecotopes {
+                    source.info.seed,source.info.ecotopes=held.seed,held.ecotopes
+                    pcg.source_compiled_free(source)
+                    doc.dirty=true
+                }
             }
             result:=layers_rows(s,tool,source,u64(d.id[0])|2,&doc.dirty)
             label:=result.label

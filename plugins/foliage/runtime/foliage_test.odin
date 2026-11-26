@@ -553,3 +553,26 @@ marks_of_play_are_one_entry_for_each_instance_of_their_cell :: proc(t:^testing.T
     marks,hash=marked_cell(marked_owner(&w.marks,wood),plant.coord)
     testing.expect(t,len(marks)==0 && hash==0)
 }
+
+// Authored points are never thinned by quality/filler and expand their layer's
+// Look scale/height bounds so culling reach covers them.
+@(test)
+authored_points_expand_look_scale_and_survive_filler_thinning :: proc(t:^testing.T) {
+    s:pcg.Pcg_Source
+    pcg.source_init(&s)
+    defer pcg.source_destroy(&s)
+    l:=pcg.source_layer_add(&s,.Scatter,.Macro)
+    l.asset,l.density,l.filler,l.scale,l.height={0xaa,0xbb},0.05,true,{0.8,1.2},{1,1}
+    _,id,ok:=pcg.source_point_add(&s,l.id,{5,0,5},1,{4.0,12.0,3.0})
+    testing.expect(t,ok && pcg.point_authored(id))
+    looks:=make([dynamic]Look)
+    defer delete(looks)
+    testing.expect(t,looks_make(&looks,&s,FOLIAGE_DEFAULT,nil))
+    testing.expect_value(t,len(looks),1)
+    testing.expectf(t,looks[0].scale[1]==4.0 && looks[0].height[1]==3.0,"got scale=%v height=%v",looks[0].scale,looks[0].height)
+    testing.expect(t,filler_kept(looks[0],id,0.4),"authored point stays at Low detail")
+    testing.expect(t,!filler_kept(looks[0],pcg_lib_id_tail(l.id),0.4),"high generated filler id still thins at Low detail")
+}
+
+@(private="file")
+pcg_lib_id_tail :: proc "contextless" (layer:u32) -> u64 {return u64(layer)<<32|99999}

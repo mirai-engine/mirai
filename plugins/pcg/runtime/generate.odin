@@ -621,32 +621,54 @@ grammar_place :: proc(cin:^Pcg_Cell_Input,scratch:^Pcg_Scratch,layer:int,out:^[d
     return true
 }
 
+// The authored points of a cell, appended to out regardless of ground, paint,
+// field, rule, zones or spacing.
+@(private)
+points_place :: proc(cin:^Pcg_Cell_Input,out:^[dynamic]Placed) -> bool {
+    if cin.paint==nil || len(cin.paint.points)==0 {return true}
+    s:=cin.source
+    if !room(out,len(cin.paint.points)) {return false}
+    for pt in cin.paint.points {
+        l,_:=source_layer(s,pt.layer)
+        if l==nil || l.kind!=.Scatter || l.tier==.Micro {continue}
+        append(out,Placed{position=pt.position,rotation=pt.rotation,scale=pt.scale,id=authored_id(l.id,pt.point),asset=l.asset,layer=l.id,tier=l.tier,collides=l.collides,filler=l.filler})
+    }
+    return true
+}
+
 // What a cell places, appended to out: Macro then Meso units and cascades,
-// then grammars, without what is suppressed; with Micro layers, the
-// occupancy of what stood before that in scratch.occupied. False without memory or when a
-// program does not run, with nothing appended.
+// then grammars (all gated on ground), then authored points of the cell
+// regardless of ground, without what is suppressed; with Micro layers, the
+// occupancy of what stood before that in scratch.occupied. False without
+// memory or when a program does not run, with nothing appended.
 cell_generate :: proc(cin:^Pcg_Cell_Input,scratch:^Pcg_Scratch,out:^[dynamic]Placed) -> bool {
     s:=cin.source
     first:=len(out)
     scratch.occupied,scratch.occupied_hash={},0
-    if s==nil || len(s.compiled)!=len(s.layers) || cin.ground.absent || cin.ground.samples<2 {return true}
+    if s==nil || len(s.compiled)!=len(s.layers) {return true}
     context.allocator=scratch.allocator
     clear(&scratch.stood);clear(&scratch.stood_spacing);clear(&scratch.fresh)
-    margin:=f32(0)
-    for u in s.units {margin=max(margin,2*u.reach)}
-    for l in s.layers {if l.kind==.Cascade {margin=max(margin,2*l.radius*l.scale[1])}}
-    if !pcg_lib.spacing_grid_reset(&scratch.stood_grid,s.info.cell_size,max(margin,2*OCCUPANCY_REACH)) {return false}
+    has_ground:=!cin.ground.absent && cin.ground.samples>=2
     ok:=true
-    for tier in Pcg_Tier.Macro..=Pcg_Tier.Meso {
-        for u in s.units {if ok && u.tier==tier {ok=unit_place(cin,scratch,u,margin)}}
-        for l,i in s.layers {if ok && l.kind==.Cascade && l.tier==tier {ok=cascade_place(cin,scratch,i)}}
+    if has_ground {
+        margin:=f32(0)
+        for u in s.units {margin=max(margin,2*u.reach)}
+        for l in s.layers {if l.kind==.Cascade {margin=max(margin,2*l.radius*l.scale[1])}}
+        if !pcg_lib.spacing_grid_reset(&scratch.stood_grid,s.info.cell_size,max(margin,2*OCCUPANCY_REACH)) {return false}
+        for tier in Pcg_Tier.Macro..=Pcg_Tier.Meso {
+            for u in s.units {if ok && u.tier==tier {ok=unit_place(cin,scratch,u,margin)}}
+            for l,i in s.layers {if ok && l.kind==.Cascade && l.tier==tier {ok=cascade_place(cin,scratch,i)}}
+        }
     }
     // Before anything is suppressed: what is taken out keeps its ground.
-    if ok && source_micro(s) {scratch.occupied_hash=occupancy_raster(&scratch.occupied,s.info.cell_size,scratch.stood[:])}
-    if ok && room(out,len(scratch.stood)) {
-        for st in scratch.stood {if st.middle {append(out,placed_of(cin,st))}}
-    } else {ok=false}
-    for l,i in s.layers {if ok && l.kind==.Grammar && l.tier!=.Micro {ok=grammar_place(cin,scratch,i,out)}}
+    if ok && source_micro(s) {scratch.occupied_hash=occupancy_raster(&scratch.occupied,s.info.cell_size,scratch.stood[:],s,cin.coord)}
+    if has_ground {
+        if ok && room(out,len(scratch.stood)) {
+            for st in scratch.stood {if st.middle {append(out,placed_of(cin,st))}}
+        } else {ok=false}
+        for l,i in s.layers {if ok && l.kind==.Grammar && l.tier!=.Micro {ok=grammar_place(cin,scratch,i,out)}}
+    }
+    if ok {ok=points_place(cin,out)}
     if !ok {
         base.truncate(out,first)
         return false

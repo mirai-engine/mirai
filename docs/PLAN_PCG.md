@@ -35,15 +35,23 @@ programs, not authored node spaghetti):
      epoch change** (never re-scattered per frame/per view) and **1-phase Hi-Z cull in `Gbuffer`**.
      All drawing lives in `plugins/foliage` so wind, `Foliage_Bender`, and shaders are never
      duplicated; `plugins/pcg` has **no `shaders/` folder**.
-3. **Manual Editing: Suppress + Promote Only (World Rows, Not Asset State):**
-   - One suppression mechanism for both Editor edits and Play removals: replicated **World rows**
-     owned by `plugins/pcg`, keyed by `(graph_entity_id, cell_coord, stable_id)`—saved with the
-     scene (authored) or save/network (Play), rolled back natively, and undone by the editor's
-     native journal. Zero `suppressed_ids` in `.pcg` assets.
-   - Promoting/editing an instance or Grammar lot suppresses its `stable_id` and spawns normal
-     Mirai scene entities/prefabs/`Shape`s (inheriting native gizmo, undo, inspector, prefabs).
-   - Deletes all per-instance transform overrides (`Foliage_Override` `Moved`/`Replaced`), `manual`
-     lists inside scatter files, `orphans`, and the custom batch gizmo in `plugins/foliage`.
+3. **Manual Editing: Suppress + Promote + Authored Points (Zero Overrides, Zero Gizmo):**
+   - One suppression mechanism for both Editor edits of generated points and Play removals:
+     replicated **World rows** owned by `plugins/pcg`, keyed by `(graph_entity_id, cell_coord,
+     stable_id)`—saved with the scene (authored) or save/network (Play), rolled back natively, and
+     undone by the editor's native journal. Zero `suppressed_ids` in `.pcg` assets.
+   - Promoting/editing a generated instance or Grammar lot suppresses its `stable_id` and spawns
+     normal Mirai scene entities/prefabs/`Shape`s (inheriting native gizmo, undo, inspector,
+     prefabs).
+   - **Authored points in `Pcg_Cell.points` (`pcg.points`, `pcg.absorb`):** Macro/Meso `Scatter`
+     layers (including `density = 0` layers for exact port placements) can hold explicit transforms
+     per cell in `.pcg`, emitted regardless of ground and rasterized into Micro occupancy. An
+     authored point never references a generated id (`AUTHORED_POINT_BIT | next_point`), so there
+     are no transform overrides, no orphans, and no custom foliage gizmo. In the editor, promoting
+     or suppressing an authored point removes it directly from `.pcg` (zero `Pcg_Suppressed`
+     residue, exact inverse of `pcg.absorb`).
+   - Deletes all per-instance transform overrides (`Foliage_Override` `Moved`/`Replaced`),
+     `orphans`, and the custom batch gizmo in `plugins/foliage`.
 
 ---
 
@@ -85,7 +93,8 @@ and Mirai's own codebase.
   GPU clipmaps are `@(storage, host, by_world)` uploads of `Pcg_Ground` + micro density tiles by
   revision; `volume.Zone` + `volume.gpu_volume` handle spatial masks without reinventing `Pcg_Mask`;
   `scene.resident` is the sole residency ordering (no 100 ms priority heap or wall-clock scheduler).
-- **No `Foliage_Override` (`Moved`/`Replaced`), `manual` lists, `orphans`, or custom batch gizmo.**
+- **No `Foliage_Override` (`Moved`/`Replaced`), `orphans`, or custom batch gizmo.** Authored points
+  in `Pcg_Cell.points` never reference generated IDs.
 - **No MarkovJunior / WFC in core** (tracked separately in GitHub issue `#120` as optional
   `plugins/pcg_grid`).
 
@@ -122,7 +131,8 @@ Layer 8  plugins/pcg            First-party plugin, ZERO plugin dependencies, NO
                                 - Mask/density brush (F) & Edit_Follow_Provider live regen
                                 - 1-click Suppress + Promote (spawns normal entities/prefabs)
                                 - pcg.* JSON-RPC / MCP API (pcg.create, pcg.layer, pcg.grammar,
-                                  pcg.suppress, pcg.promote, pcg.sample, pcg.inspect)
+                                  pcg.suppress, pcg.promote, pcg.points, pcg.absorb, pcg.sample,
+                                  pcg.inspect)
 
 Layer 8  plugins/foliage        Depends on: pcg, physics (SOLE rendering & physics sink):
            runtime/             - Tier 1 (Macro/Meso): render.batch_set, octahedral impostors,

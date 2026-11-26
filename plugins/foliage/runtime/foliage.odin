@@ -111,6 +111,18 @@ looks_make :: proc(out:^[dynamic]Look,s:^pcg.Pcg_Source,f:Foliage,assets:^host.A
         }
         append(out,look)
     }
+    // Authored points can sit outside the layer's scatter scale range; expand
+    // the look's scale/height bounds so culling reach covers them.
+    for &cell in s.cells {
+        for pt in cell.points {
+            if _,idx:=pcg.source_layer(s,pt.layer);idx>=0 {
+                look:=&out[idx]
+                horiz:=max(pt.scale.x,pt.scale.z)
+                look.scale[1]=max(look.scale[1],horiz)
+                if horiz>0 {look.height[1]=max(look.height[1],pt.scale.y/horiz)}
+            }
+        }
+    }
     return true
 }
 
@@ -133,7 +145,7 @@ look_index :: proc "contextless" (ids:[][2]u32,layer:u32) -> int {
 // of the points of its filler: the first of its points, so a lower detail
 // takes the last ones away and keeps the others where they were.
 filler_kept :: proc "contextless" (look:Look,id:u64,thin:f32) -> bool {
-    if !look.filler || thin>=1 || !(look.span>0) {return true}
+    if pcg.point_authored(id) || !look.filler || thin>=1 || !(look.span>0) {return true}
     return f32(u32(id))<look.span*max(thin,0)
 }
 

@@ -273,14 +273,16 @@ pcg_update :: proc(
             tile,revision:=ground_cell(owner,cell.coord)
             ids_gone,hash:=suppressed_cell(gone,cell.coord)
             if cell.built && cell.key==key && cell.ground==revision && cell.suppressed==hash {continue}
-            if tile.absent {
-                // No ground known yet: it waits for its tile, and places nothing.
+            paint:=source_cell(s,cell.coord)
+            has_points:=paint!=nil && len(paint.points)>0
+            if tile.absent && !has_points {
+                // No ground known yet and no authored points: it waits for its tile, and places nothing.
                 if cell.built && (len(cell.placed)>0 || cell.occupied_hash!=0) {clear(&cell.placed);cell.revision+=1;graph.revision+=1}
                 cell.occupied,cell.occupied_hash={},0
                 cell.built,cell.key,cell.ground,cell.suppressed=true,key,revision,hash
                 continue
             }
-            input:=Pcg_Cell_Input{source=s,seed=seed,coord=cell.coord,ground=tile,paint=source_cell(s,cell.coord),frame=frame_world,domain=domain,zones=z.zones[:],spans=spans,suppressed=ids_gone,share=share}
+            input:=Pcg_Cell_Input{source=s,seed=seed,coord=cell.coord,ground=tile,paint=paint,frame=frame_world,domain=domain,zones=z.zones[:],spans=spans,suppressed=ids_gone,share=share}
             append(&builds,Build{graph=index,cell=k,input=input,ground=revision,suppressed=hash,near=near})
         }
         if share<1 {

@@ -4,15 +4,18 @@ import volume "mirai:engine/volume"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
-// Procedural content generation without stored placements: a Pcg_Graph shows
-// what the layers of a .pcg asset place, cell by cell, again from its seed
-// wherever it is resident (generate.odin). The cells are square, of the cell
-// size of the source, in the frame of the graph: its entity, or the world
-// for a world-anchored graph, whose points stay where they are when the
-// entity moves. A Volume on the graph entity bounds where it places; without
-// one, it places around the streaming sources. Pcg_Zone entities say where
-// it places more, less or nothing. What the game or the editor takes out is a
-// Pcg_Suppressed entity (suppressed.odin), never an edit of the asset.
+// Procedural content generation with optional authored points: a Pcg_Graph
+// shows what the layers of a .pcg asset place, cell by cell, from its seed
+// wherever it is resident (generate.odin), plus any explicit points stored in
+// its cells (which never reference generated ids, so there are no overrides,
+// orphans or custom gizmo). The cells are square, of the cell size of the
+// source, in the frame of the graph: its entity, or the world for a
+// world-anchored graph, whose points stay where they are when the entity
+// moves. A Volume on the graph entity bounds where it places; without one, it
+// places around the streaming sources. Pcg_Zone entities say where it places
+// more, less or nothing. What the game or the editor takes out of generated
+// points is a Pcg_Suppressed entity (suppressed.odin), never an edit of the
+// asset.
 
 @(component,far,description="Places what the layers of a .pcg asset generate in the cells of this entity, or of the world when world anchored, within its Volume; without a Volume, around the streaming sources.")
 Pcg_Graph :: struct {

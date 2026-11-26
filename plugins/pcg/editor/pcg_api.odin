@@ -10,6 +10,7 @@ import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
 import erender "mirai:engine/render"
+import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -66,6 +67,7 @@ Inspect_Layer :: struct {
     grammar_hash:u64 `mirai:"label=Of its compiled grammar; 0 for a layer of another kind"`,
     grammar_error:string `mirai:"optional"`,
     grammar_offset:int `mirai:"optional,label=The byte of grammar_expr where it fails"`,
+    points:int `mirai:"label=Authored points placed by this layer"`,
 }
 
 Inspect_Result :: struct {
@@ -79,6 +81,7 @@ Inspect_Result :: struct {
     issue:string `mirai:"optional,label=Why the source is not valid"`,
     layers:[]Inspect_Layer,
     painted_cells:int `mirai:"label=Cells a brush painted"`,
+    authored_points:int `mirai:"label=Authored points stored in the cells of the source"`,
     wanted_cells:int `mirai:"label=Cells the graph places in now, near the streaming sources or the view"`,
     built_cells:int `mirai:"label=Of them, those whose placements are made"`,
     placed:int `mirai:"label=What the built cells place"`,
@@ -204,6 +207,56 @@ Sample_Result :: struct {
     fields:[]Sample_Field `mirai:"optional"`,
 }
 
+POINTS_API_MAX :: 256
+ABSORB_API_MAX :: 64
+
+Point_Item :: struct {
+    position:[3]f32 `mirai:"label=In the world, or in the frame of the graph when space is local"`,
+    rotation:[4]f32 `mirai:"optional,label=x, y, z, w; omitted: no turn"`,
+    scale:[3]f32 `mirai:"optional,label=Along x, y and z; omitted: [1, 1, 1]"`,
+}
+
+Point_Ref :: struct {
+    coord:[2]i32 `mirai:"label=The cell of the point"`,
+    id:u64 `mirai:"label=Its stable authored id"`,
+}
+
+Points_Params :: struct {
+    entity:editor.Api_Entity_Text `mirai:"text,entity,label=The entity of the Pcg_Graph"`,
+    op:[8]u8 `mirai:"text,label=add, remove or clear"`,
+    layer:u32 `mirai:"optional,label=Scatter layer id; omitted on add: first layer placing asset, or a new density-0 layer"`,
+    asset:base.Asset_Id `mirai:"optional,label=Prefab or mesh when layer is omitted on add"`,
+    space:[8]u8 `mirai:"text,optional,label=world (default) or local (graph frame) for add"`,
+    points:[POINTS_API_MAX]Point_Item `mirai:"optional,label=Points to add (up to 256 per call)"`,
+    remove:[POINTS_API_MAX]Point_Ref `mirai:"optional,label=Authored points to remove (up to 256 per call)"`,
+}
+
+Point_Placed :: struct {
+    coord:[2]i32,
+    id:u64,
+    layer:u32,
+}
+
+Points_Result :: struct {
+    layer:u32,
+    added:int,
+    removed:int,
+    points:int `mirai:"label=Authored points held in the source after this call"`,
+    placed:[]Point_Placed `mirai:"optional"`,
+}
+
+Absorb_Params :: struct {
+    entity:editor.Api_Entity_Text `mirai:"text,entity,label=The entity of the Pcg_Graph"`,
+    entities:[ABSORB_API_MAX]editor.Api_Entity_Text `mirai:"text,entity,label=Scene entities to move into authored points of the graph (prefab roots without overrides, or childless plain Mesh_Renderer entities)"`,
+    layer:u32 `mirai:"optional,label=Scatter layer id; omitted: first layer placing each asset, or a new density-0 layer"`,
+}
+
+Absorb_Result :: struct {
+    absorbed:int,
+    layers_added:int,
+    placed:[]Point_Placed,
+}
+
 @(private)
 pcg_api_register :: proc(s:^editor.Session) {
     editor.tool_entry(s,TOOL,"PCG",.Sparkle)
@@ -214,8 +267,10 @@ pcg_api_register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="pcg.inspect",summary="The layers of the source of a Pcg_Graph with whether their field and grammar compile and the hashes of their programs, and what it paints, places and takes out.",params=type_info_of(Entity_Params),flags={.Read_Only},result=type_info_of(Inspect_Result),run=api_inspect})
     editor.api_method_register(s,{name="pcg.layer",summary="Adds, sets or removes a layer of the source of a Pcg_Graph as one step of undo, refusing a field or grammar that does not compile with the byte where it fails.",params=type_info_of(Layer_Params),result=type_info_of(Layer_Result),run=api_layer})
     editor.api_method_register(s,{name="pcg.density",summary="Moves the density the cells of a Pcg_Graph keep toward a value over a disc or a box of the world, as one stroke of the brush and one step of undo.",params=type_info_of(Density_Params),defaults=&density_defaults,result=type_info_of(Density_Result),run=api_density})
-    editor.api_method_register(s,{name="pcg.suppress",summary="Takes a point out of a Pcg_Graph, or puts it back, as a Pcg_Suppressed row of the scene and one step of undo.",params=type_info_of(Point_Params),result=type_info_of(Suppress_Result),run=api_suppress})
-    editor.api_method_register(s,{name="pcg.promote",summary="Takes a point out of a Pcg_Graph and places its prefab or mesh as a scene entity where it stood, both in one step of undo.",params=type_info_of(Point_Params),result=type_info_of(Promote_Result),run=api_promote})
+    editor.api_method_register(s,{name="pcg.suppress",summary="Takes a point out of a Pcg_Graph (removing an authored point from the .pcg, or adding a Pcg_Suppressed row for a generated one), or restores a generated one, as one step of undo.",params=type_info_of(Point_Params),result=type_info_of(Suppress_Result),run=api_suppress})
+    editor.api_method_register(s,{name="pcg.promote",summary="Takes a point out of a Pcg_Graph (removing an authored point from the .pcg, or suppressing a generated one) and places its prefab or mesh as a scene entity where it stood, both in one step of undo.",params=type_info_of(Point_Params),result=type_info_of(Promote_Result),run=api_promote})
+    editor.api_method_register(s,{name="pcg.points",summary="Adds, removes or clears authored points stored in the cells of a Pcg_Graph source in bulk, as one step of undo.",params=type_info_of(Points_Params),result=type_info_of(Points_Result),run=api_points})
+    editor.api_method_register(s,{name="pcg.absorb",summary="Converts prefab-root or childless Mesh_Renderer entities into authored points of a Pcg_Graph and deletes those entities, in one step of undo.",params=type_info_of(Absorb_Params),result=type_info_of(Absorb_Result),run=api_absorb})
     editor.api_method_register(s,{name="pcg.sample",summary="What a Pcg_Graph places in a box of the world, in a stable order with a hash, and the field of a layer over a grid of it.",params=type_info_of(Sample_Params),defaults=&sample_defaults,flags={.Read_Only},result=type_info_of(Sample_Result),run=api_sample})
 }
 
@@ -326,8 +381,10 @@ api_inspect :: proc(s:^editor.Session,call:^api.Call) {
                 pcg_lib.grammar_destroy(&program)
             }
         }
+        o.points=pcg.source_point_count(source,l.id)
     }
     for cell in source.cells {if len(cell.density)>0 {r.painted_cells+=1}}
+    r.authored_points=pcg.source_point_count(source)
     ground:=core.world_storage_of(world,pcg.Pcg_Ground)
     if owner:=pcg.ground_owner(ground,e);owner!=nil {r.wanted_cells,r.ground_bytes=len(owner.cells),pcg.ground_owner_bytes(owner)}
     r.ground_total_bytes=pcg.ground_bytes(ground)
@@ -407,6 +464,10 @@ api_layer :: proc(s:^editor.Session,call:^api.Call) {
         if l==nil {fail(s,t,call,fmt.tprintf("The source has no layer %d: pcg.inspect lists them",id));return}
         if has_kind {l.kind=kind}
         if has_tier {l.tier=tier}
+        if held:=pcg.source_point_count(source,id);held>0 && (l.kind!=.Scatter || l.tier==.Micro) {
+            fail(s,t,call,fmt.tprintf("Layer %d holds %d authored points, which only a Macro or Meso Scatter layer places: take them out first with pcg.points and op clear",id,held))
+            return
+        }
     }
     if op!=.Remove {
         l,at:=pcg.source_layer(source,id)
@@ -627,8 +688,26 @@ cell_settled :: proc(s:^editor.Session,e:core.Entity,coord:[2]i32) -> ^pcg.Gener
 @(private)
 api_suppress :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Point_Params)
-    _,world,e,_,ok:=api_graph(s,call,p.entity[:])
+    t,world,e,_,ok:=api_graph(s,call,p.entity[:])
     if !ok {return}
+    // By what the source holds, not by AUTHORED_POINT_BIT: the id of a grammar module is a hash that may have it.
+    if _,authored:=pcg.source_point_find(&t.edit.source,p.coord,p.id);authored {
+        if p.restore {api.call_failf(call,api.INVALID_PARAMS,"Point %d of cell %v is an authored point the .pcg holds, so nothing took it out: one that pcg.suppress removed comes back by undo, or by pcg.points",p.id,p.coord);return}
+        if !edit_baseline(t) {api.call_fail(call,api.SERVER_ERROR,"There is no memory to keep the PCG history: free memory and call again");return}
+        pcg.source_point_remove(&t.edit.source,p.coord,p.id)
+        s.toast_length=0
+        if !edit_commit(s,t,world,s.app.assets,"Remove PCG point") {editor.tool_call_fail(s,call,"The point could not be removed");return}
+        r:=api.call_result(call,Suppress_Result)
+        r.suppressed=true
+        if graph_id:=core.id_of(core.world_table_of(world,core.Id),e);graph_id!=0 {
+            pages:=core.world_table_of(world,pcg.Pcg_Suppressed)
+            for page_e in pages_of(world,graph_id,p.coord) {
+                page,_:=core.get(pages,page_e)
+                r.in_cell+=int(min(page.count,pcg.SUPPRESSED_PAGE))
+            }
+        }
+        return
+    }
     if !p.restore {
         cell:=cell_settled(s,e,p.coord)
         world=editor.edited_world(s)
@@ -664,14 +743,17 @@ point_taken :: proc(w:core.World_Ref,e:core.Entity,coord:[2]i32,id:u64) -> bool 
 api_promote :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Point_Params)
     if p.restore {api.call_fail(call,api.INVALID_PARAMS,"restore belongs to pcg.suppress: a promoted point comes back by undo, or by deleting its entity and pcg.suppress with restore");return}
-    _,world,e,graph,ok:=api_graph(s,call,p.entity[:])
+    t,world,e,graph,ok:=api_graph(s,call,p.entity[:])
     if !ok {return}
-    if point_taken(world,e,p.coord,p.id) {api.call_failf(call,api.INVALID_PARAMS,"Point %d of cell %v is already taken out: pcg.suppress with restore puts it back first",p.id,p.coord);return}
+    // By what the source holds, not by AUTHORED_POINT_BIT: the id of a grammar module is a hash that may have it.
+    _,authored:=pcg.source_point_find(&t.edit.source,p.coord,p.id)
+    if !authored && point_taken(world,e,p.coord,p.id) {api.call_failf(call,api.INVALID_PARAMS,"Point %d of cell %v is already taken out: pcg.suppress with restore puts it back first",p.id,p.coord);return}
     cell:=cell_settled(s,e,p.coord)
     world=editor.edited_world(s)
     if cell==nil {api.call_failf(call,api.INVALID_PARAMS,"Cell %v of the Pcg_Graph is not placed: only the cells near the streaming sources and the view are; pcg.sample says which are",p.coord);return}
     placed,found:=pcg.placed_find(cell.placed[:],p.id)
     if !found {api.call_failf(call,api.INVALID_PARAMS,"Cell %v places no point %d: pcg.sample lists what it places",p.coord,p.id);return}
+    if authored && !edit_baseline(t) {api.call_fail(call,api.SERVER_ERROR,"There is no memory to keep the PCG history: free memory and call again");return}
     if placed.asset=={} {api.call_failf(call,api.INVALID_PARAMS,"Layer %d places no asset, so point %d has nothing to promote: give the layer a prefab or a mesh with pcg.layer",placed.layer,p.id);return}
     a:=s.app.assets
     file,known:=asset.registry_find(&a.registry,placed.asset)
@@ -680,7 +762,9 @@ api_promote :: proc(s:^editor.Session,call:^api.Call) {
     world_place:=core.get(core.world_table_of(world,core.World_Transform),e) or_else core.World_Transform{transform=mm.TRANSFORM_IDENTITY}
     at:=mm.transform_compose(pcg.graph_frame(graph,world_place.transform),mm.Transform{position=placed.position,rotation=placed.rotation,scale=placed.scale})
     if !editor.api_edit_begin(s,call,"Promote PCG point") {return}
-    if _,problem:=suppress_write(s,world,e,p.coord,p.id,false);problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);editor.api_edit_end(s,call,false);return}
+    if !authored {
+        if _,problem:=suppress_write(s,world,e,p.coord,p.id,false);problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);editor.api_edit_end(s,call,false);return}
+    }
     spawned:=core.NONE
     if prefab {
         rotation:=[4]f32{at.rotation.x,at.rotation.y,at.rotation.z,at.rotation.w}
@@ -695,10 +779,334 @@ api_promote :: proc(s:^editor.Session,call:^api.Call) {
         }
     }
     if spawned==core.NONE {api.call_fail(call,api.SERVER_ERROR,"The promoted entity could not be made");editor.api_edit_end(s,call,false);return}
+    if authored {
+        // Removing the point writes to disk outside the journal, so it runs last.
+        pcg.source_point_remove(&t.edit.source,p.coord,p.id)
+        s.toast_length=0
+        if !edit_commit(s,t,world,a,"Promote PCG point") {editor.tool_call_fail(s,call,"The authored point could not be removed");editor.api_edit_end(s,call,false);return}
+    }
     if !editor.api_edit_end(s,call,true) {return}
     r:=api.call_result(call,Promote_Result)
     r.entity=editor.api_entity_id(world,spawned)
     r.position,r.rotation,r.scale=at.position,{at.rotation.x,at.rotation.y,at.rotation.z,at.rotation.w},at.scale
+}
+
+// Expresses a world-space transform in the graph's cell frame; refuses non-positive
+// scale, non-finite values, reflections and shear.
+@(private)
+transform_into_frame :: proc(to_frame:mm.Mat4,world_tr:mm.Transform) -> (pos:[3]f32,rot:mm.Quat,scale:[3]f32,problem:string) {
+    finite :: proc "contextless" (v:f32) -> bool {return v-v==0}
+    for v in world_tr.position {if !finite(v) {return {},1,{},"has a non-finite position"}}
+    for v in world_tr.scale {if !finite(v) || v<=0 || v>1000 {return {},1,{},"has non-positive or out-of-range scale (must be > 0 and <= 1000)"}}
+    q:=[4]f32{world_tr.rotation.x,world_tr.rotation.y,world_tr.rotation.z,world_tr.rotation.w}
+    for v in q {if !finite(v) {return {},1,{},"has a non-finite rotation"}}
+    if linalg.dot(q,q)<1e-8 {return {},1,{},"has a zero rotation quaternion"}
+    tr:=world_tr
+    tr.rotation=linalg.normalize(tr.rotation)
+    m:=to_frame*mm.transform_matrix(tr)
+    cx,cy,cz:=m[0].xyz,m[1].xyz,m[2].xyz
+    pos=m[3].xyz
+    for v in pos {if !finite(v) || abs(v)>pcg.POSITION_MAX {return {},1,{},"lies outside POSITION_MAX in the frame of the Pcg_Graph"}}
+    sx,sy,sz:=linalg.length(cx),linalg.length(cy),linalg.length(cz)
+    if !(sx>1e-6 && sy>1e-6 && sz>1e-6) || !finite(sx) || !finite(sy) || !finite(sz) || sx>1000 || sy>1000 || sz>1000 {
+        return {},1,{},"has degenerate or out-of-range scale in the frame of the Pcg_Graph"
+    }
+    ux,uy,uz:=cx/sx,cy/sy,cz/sz
+    if abs(linalg.dot(ux,uy))>1e-3 || abs(linalg.dot(ux,uz))>1e-3 || abs(linalg.dot(uy,uz))>1e-3 {
+        return {},1,{},"leaves shear in the frame of the Pcg_Graph (avoid non-uniform scale combined with rotation)"
+    }
+    if linalg.dot(linalg.cross(ux,uy),uz)<0 {return {},1,{},"flips handedness (negative scale) in the frame of the Pcg_Graph"}
+    rot_m:=matrix[3,3]f32{
+        ux.x,uy.x,uz.x,
+        ux.y,uy.y,uz.y,
+        ux.z,uy.z,uz.z,
+    }
+    rot=linalg.normalize(linalg.quaternion_from_matrix3(rot_m))
+    scale={sx,sy,sz}
+    return pos,rot,scale,""
+}
+
+// Finds the first Macro/Meso Scatter layer placing what, or 0 if none exists.
+@(private)
+layer_for_asset :: proc "contextless" (s:^pcg.Pcg_Source,what:base.Asset_Id) -> u32 {
+    if what=={} {return 0}
+    for &l in s.layers {if l.kind==.Scatter && l.tier!=.Micro && l.asset==what {return l.id}}
+    return 0
+}
+
+@(private)
+api_points :: proc(s:^editor.Session,call:^api.Call) {
+    p:=api.call_params(call,Points_Params)
+    Op :: enum u8 {Add,Remove,Clear}
+    op:Op
+    switch named:=base.text_get(p.op[:]);{
+    case strings.equal_fold(named,"add"):    op=.Add
+    case strings.equal_fold(named,"remove"): op=.Remove
+    case strings.equal_fold(named,"clear"):  op=.Clear
+    case: api.call_fail(call,api.INVALID_PARAMS,"op is add, remove or clear");return
+    }
+    local_space:=false
+    if editor.tool_call_given(call,"space") {
+        switch named:=base.text_get(p.space[:]);{
+        case strings.equal_fold(named,"world"): local_space=false
+        case strings.equal_fold(named,"local"): local_space=true
+        case: api.call_fail(call,api.INVALID_PARAMS,"space is world or local");return
+        }
+    }
+    t,world,e,graph,ok:=api_graph(s,call,p.entity[:])
+    if !ok {return}
+    a:=s.app.assets
+    source:=&t.edit.source
+    place,placed_ok:=core.get(core.world_table_of(world,core.World_Transform),e)
+    if !placed_ok {api.call_fail(call,api.INVALID_PARAMS,"The Pcg_Graph has no place in the world: give its entity a Transform");return}
+    frame,to_frame,inverted:=graph_frames(graph,place.transform)
+    if !inverted {api.call_fail(call,api.INVALID_PARAMS,"The frame of the cells of the Pcg_Graph cannot be inverted: give its entity a scale above 0");return}
+    _,_,domain,_:=pcg.graph_domain(where_of(world),e,to_frame)
+    r:=api.call_result(call,Points_Result)
+    switch op {
+    case .Clear:
+        if p.layer!=0 {
+            if l,_:=pcg.source_layer(source,p.layer);l==nil {api.call_failf(call,api.INVALID_PARAMS,"The source has no layer %d: pcg.inspect lists them",p.layer);return}
+        }
+        if pcg.source_point_count(source,p.layer)==0 {
+            r.layer,r.points=p.layer,pcg.source_point_count(source)
+            return
+        }
+        if !edit_baseline(t) {api.call_fail(call,api.SERVER_ERROR,"There is no memory to keep the PCG history: free memory and call again");return}
+        removed:=pcg.source_points_clear(source,p.layer)
+        s.toast_length=0
+        if !edit_commit(s,t,world,a,"Clear PCG points") {editor.tool_call_fail(s,call,"The points could not be cleared");return}
+        r.layer,r.removed,r.points=p.layer,removed,pcg.source_point_count(&t.edit.source)
+    case .Remove:
+        count,has:=api.params_array_count(call,"remove")
+        if !has || count<=0 || count>POINTS_API_MAX {api.call_failf(call,api.INVALID_PARAMS,"remove takes between 1 and %d authored point refs",POINTS_API_MAX);return}
+        for i in 0..<count {
+            ref:=p.remove[i]
+            if !pcg.point_authored(ref.id) {api.call_failf(call,api.INVALID_PARAMS,"remove[%d] id %d is not an authored point: use pcg.suppress for generated points",i,ref.id);return}
+            if _,found:=pcg.source_point_find(source,ref.coord,ref.id);!found {api.call_failf(call,api.INVALID_PARAMS,"remove[%d]: cell %v holds no authored point %d",i,ref.coord,ref.id);return}
+            for j in 0..<i {if p.remove[j]==ref {api.call_failf(call,api.INVALID_PARAMS,"remove[%d] duplicates remove[%d]",i,j);return}}
+        }
+        if !edit_baseline(t) {api.call_fail(call,api.SERVER_ERROR,"There is no memory to keep the PCG history: free memory and call again");return}
+        for i in 0..<count {pcg.source_point_remove(source,p.remove[i].coord,p.remove[i].id)}
+        s.toast_length=0
+        if !edit_commit(s,t,world,a,"Remove PCG points") {editor.tool_call_fail(s,call,"The points could not be removed");return}
+        r.removed,r.points=count,pcg.source_point_count(&t.edit.source)
+    case .Add:
+        count,has:=api.params_array_count(call,"points")
+        if !has || count<=0 || count>POINTS_API_MAX {api.call_failf(call,api.INVALID_PARAMS,"points takes between 1 and %d items per call",POINTS_API_MAX);return}
+        target_layer:=p.layer
+        create_layer:=false
+        if target_layer!=0 {
+            l,_:=pcg.source_layer(source,target_layer)
+            if l==nil {api.call_failf(call,api.INVALID_PARAMS,"The source has no layer %d: pcg.inspect lists them",target_layer);return}
+            if l.kind!=.Scatter || l.tier==.Micro {api.call_failf(call,api.INVALID_PARAMS,"Layer %d cannot hold authored points: only Macro or Meso Scatter layers can",target_layer);return}
+        } else {
+            if p.asset=={} {api.call_fail(call,api.INVALID_PARAMS,"Give layer, or asset (a prefab or mesh) to match or create a density-0 Scatter layer");return}
+            file,known:=asset.registry_find(&a.registry,p.asset)
+            if !known || !asset.registry_prefab(file) && file.kind!=asset.KIND_MESH {api.call_fail(call,api.INVALID_PARAMS,"asset must be a prefab or mesh of the project");return}
+            target_layer=layer_for_asset(source,p.asset)
+            if target_layer==0 {
+                if len(source.layers)>=pcg.LAYERS_MAX {api.call_failf(call,api.INVALID_PARAMS,"The source already has %d layers, as many as it can",pcg.LAYERS_MAX);return}
+                create_layer=true
+            }
+        }
+        if pcg.source_point_count(source)+count>pcg.POINTS_MAX {api.call_failf(call,api.INVALID_PARAMS,"The source holds %d authored points and takes %d at most: remove some with pcg.points",pcg.source_point_count(source),pcg.POINTS_MAX);return}
+        Prepared :: struct {pos:[3]f32,rot:mm.Quat,scale:[3]f32}
+        prepared,prepared_error:=make([]Prepared,count,context.temp_allocator)
+        out,out_error:=make([]Point_Placed,count,call.allocator)
+        if prepared_error!=nil || out_error!=nil {api.call_fail(call,api.SERVER_ERROR,"There is no memory for the points: free memory and call again");return}
+        raw_items,_:=api.json_elements(api.json_member(call.raw,"points"))
+        for i in 0..<count {
+            item:=p.points[i]
+            raw_item:=raw_items[i] if i<len(raw_items) else ""
+            rot:=mm.Quat(quaternion(x=item.rotation.x,y=item.rotation.y,z=item.rotation.z,w=item.rotation.w))
+            if raw_item!="" && api.json_member(raw_item,"rotation")=="" {rot=1}
+            sc:=item.scale
+            if raw_item!="" && api.json_member(raw_item,"scale")=="" {sc={1,1,1}}
+            pos:[3]f32
+            if local_space {
+                pos=item.position
+                for v in pos {if v-v!=0 || abs(v)>pcg.POSITION_MAX {api.call_failf(call,api.INVALID_PARAMS,"points[%d] position is non-finite or past POSITION_MAX",i);return}}
+                for v in sc {if v-v!=0 || v<=0 || v>1000 {api.call_failf(call,api.INVALID_PARAMS,"points[%d] scale must be finite, > 0 and <= 1000",i);return}}
+                q:=[4]f32{rot.x,rot.y,rot.z,rot.w}
+                for v in q {if v-v!=0 {api.call_failf(call,api.INVALID_PARAMS,"points[%d] rotation is non-finite",i);return}}
+                if linalg.dot(q,q)<1e-8 {api.call_failf(call,api.INVALID_PARAMS,"points[%d] rotation quaternion is zero",i);return}
+                rot=linalg.normalize(rot)
+                world_pos:=mm.transform_point(frame,pos)
+                if !pcg.region_holds(domain,world_pos) {api.call_failf(call,api.INVALID_PARAMS,"points[%d] lies outside the Volume of the Pcg_Graph",i);return}
+            } else {
+                problem:string
+                pos,rot,sc,problem=transform_into_frame(to_frame,{position=item.position,rotation=rot,scale=sc})
+                if problem!="" {api.call_failf(call,api.INVALID_PARAMS,"points[%d] %s",i,problem);return}
+                if !pcg.region_holds(domain,item.position) {api.call_failf(call,api.INVALID_PARAMS,"points[%d] lies outside the Volume of the Pcg_Graph",i);return}
+            }
+            coord,_:=pcg.cell_of(source.info.cell_size,pos.xz)
+            if abs(coord.x)>pcg.COORD_MAX || abs(coord.y)>pcg.COORD_MAX {api.call_failf(call,api.INVALID_PARAMS,"points[%d] cell %v exceeds COORD_MAX",i,coord);return}
+            prepared[i]={pos,rot,sc}
+        }
+        if !edit_baseline(t) {api.call_fail(call,api.SERVER_ERROR,"There is no memory to keep the PCG history: free memory and call again");return}
+        if create_layer {
+            l:=pcg.source_layer_add(source,.Scatter,.Macro)
+            if l==nil {edit_cancel(s,t,a);api.call_fail(call,api.SERVER_ERROR,"Could not add layer for authored points");return}
+            l.asset,l.density=p.asset,0
+            target_layer=l.id
+        }
+        for item,i in prepared {
+            coord,id,added:=pcg.source_point_add(source,target_layer,item.pos,item.rot,item.scale)
+            if !added {edit_cancel(s,t,a);api.call_failf(call,api.INVALID_PARAMS,"points[%d] could not be added: its cell holds %d points already, or there is no memory",i,pcg.POINTS_CELL_MAX);return}
+            out[i]={coord=coord,id=id,layer=target_layer}
+        }
+        s.toast_length=0
+        if !edit_commit(s,t,world,a,"Add PCG points") {editor.tool_call_fail(s,call,"The points could not be kept");return}
+        r.layer,r.added,r.points,r.placed=target_layer,count,pcg.source_point_count(&t.edit.source),out
+    }
+}
+
+@(private)
+api_absorb :: proc(s:^editor.Session,call:^api.Call) {
+    p:=api.call_params(call,Absorb_Params)
+    count,has:=api.params_array_count(call,"entities")
+    if !has || count<=0 || count>ABSORB_API_MAX {api.call_failf(call,api.INVALID_PARAMS,"entities takes between 1 and %d entities per call",ABSORB_API_MAX);return}
+    t,world,e,graph,ok:=api_graph(s,call,p.entity[:])
+    if !ok {return}
+    a:=s.app.assets
+    source:=&t.edit.source
+    place,placed_ok:=core.get(core.world_table_of(world,core.World_Transform),e)
+    if !placed_ok {api.call_fail(call,api.INVALID_PARAMS,"The Pcg_Graph has no place in the world: give its entity a Transform");return}
+    _,to_frame,inverted:=graph_frames(graph,place.transform)
+    if !inverted {api.call_fail(call,api.INVALID_PARAMS,"The frame of the cells of the Pcg_Graph cannot be inverted: give its entity a scale above 0");return}
+    _,_,domain,_:=pcg.graph_domain(where_of(world),e,to_frame)
+    if p.layer!=0 {
+        l,_:=pcg.source_layer(source,p.layer)
+        if l==nil {api.call_failf(call,api.INVALID_PARAMS,"The source has no layer %d: pcg.inspect lists them",p.layer);return}
+        if l.kind!=.Scatter || l.tier==.Micro {api.call_failf(call,api.INVALID_PARAMS,"Layer %d cannot hold authored points: only Macro or Meso Scatter layers can",p.layer);return}
+    }
+    Absorb_Item :: struct {
+        entity:core.Entity,
+        asset:base.Asset_Id,
+        pos:[3]f32,
+        rot:mm.Quat,
+        scale:[3]f32,
+    }
+    if pcg.source_point_count(source)+count>pcg.POINTS_MAX {api.call_failf(call,api.INVALID_PARAMS,"The source holds %d authored points and takes %d at most: remove some with pcg.points",pcg.source_point_count(source),pcg.POINTS_MAX);return}
+    items,items_error:=make([]Absorb_Item,count,context.temp_allocator)
+    targets,targets_error:=make([]core.Entity,count,context.temp_allocator)
+    out,out_error:=make([]Point_Placed,count,call.allocator)
+    if items_error!=nil || targets_error!=nil || out_error!=nil {api.call_fail(call,api.SERVER_ERROR,"There is no memory for the points: free memory and call again");return}
+    parents:=core.world_table_of(world,core.Parent)
+    renderers:=core.world_table_of(world,erender.Mesh_Renderer)
+    transforms:=core.world_table_of(world,core.Transform)
+    for i in 0..<count {
+        given:=base.text_get(p.entities[i][:])
+        target,found:=editor.api_call_entity(call,world,p.entities[i][:])
+        if !found {return}
+        if target==e {api.call_failf(call,api.INVALID_PARAMS,"entities[%d] (%s) is the Pcg_Graph itself",i,given);return}
+        for j in 0..<i {if targets[j]==target {api.call_failf(call,api.INVALID_PARAMS,"entities[%d] (%s) duplicates entities[%d]",i,given,j);return}}
+        // What the delete below would leave in place is refused here, before the source takes its point.
+        if editor.entity_under(world,e,target) {api.call_failf(call,api.INVALID_PARAMS,"entities[%d] (%s) holds the Pcg_Graph under it: deleting it would delete the graph",i,given);return}
+        if reason:=editor.section_lock_text(s,world,target,true);reason!="" {api.call_failf(call,api.INVALID_PARAMS,"entities[%d]: %s",i,reason);return}
+        if editor.prefab_member_locked(s,world,target) {api.call_failf(call,api.INVALID_PARAMS,"entities[%d] (%s) is a member of a prefab instance: pass the prefab root instead",i,given);return}
+        tr,has_tr:=core.world_of(transforms,parents,target)
+        if !has_tr {api.call_failf(call,api.INVALID_PARAMS,"entities[%d] (%s) has no Transform",i,given);return}
+        asset_id:base.Asset_Id
+        if instance,is_prefab:=scene.prefab_instance(world,target);is_prefab {
+            overrides,known:=editor.prefab_overrides_of(s,target)
+            if !known {api.call_failf(call,api.INVALID_PARAMS,"entities[%d] (%s): its prefab base is not loaded",i,given);return}
+            root_id:=editor.api_entity_id(world,target)
+            for &ov in overrides {
+                // Allow a root name difference (e.g. duplicated promoted instance); refuse any other override.
+                if ov.entity==root_id && ov.component==0 && ov.kind==.Field && base.text_get(ov.path[:])=="name" {continue}
+                api.call_failf(call,api.INVALID_PARAMS,"entities[%d] (%s) has prefab overrides: revert or apply them before absorbing into foliage",i,given)
+                return
+            }
+            file,asset_known:=asset.registry_find(&a.registry,instance.prefab)
+            if !asset_known || !asset.registry_prefab(file) {api.call_failf(call,api.INVALID_PARAMS,"entities[%d] (%s) references a missing prefab",i,given);return}
+            asset_id=instance.prefab
+        } else if _,is_member:=scene.prefab_member(world,target);is_member {
+            api.call_failf(call,api.INVALID_PARAMS,"entities[%d] (%s) is a member of a prefab instance: pass the prefab root instead",i,given)
+            return
+        } else {
+            // Plain entity: must be childless and carry only a bare Mesh_Renderer with no material overrides or extra components.
+            if parents!=nil {
+                for parent in parents.values[:core.count(parents)] {
+                    if parent.entity==target {api.call_failf(call,api.INVALID_PARAMS,"entities[%d] (%s) has children: only a prefab root or a childless Mesh_Renderer entity can be absorbed",i,given);return}
+                }
+            }
+            mr,has_mr:=core.get(renderers,target)
+            if !has_mr || mr.mesh=={} || mr.shape!=.None {api.call_failf(call,api.INVALID_PARAMS,"entities[%d] (%s) has no plain Mesh_Renderer with a mesh asset",i,given);return}
+            if mr.materials!={} {api.call_failf(call,api.INVALID_PARAMS,"entities[%d] (%s) has Mesh_Renderer material overrides: turn it into a prefab to preserve custom materials",i,given);return}
+            for &tbl in world.info.tables {
+                // A derived component is what code adds, as the outline of the selection: nobody authored it.
+                if tbl.place!=world.place || tbl.derived || core.raw_row(core.world_table_at(world,&tbl),target)<0 {continue}
+                switch tbl.type {
+                case core.Id,core.Name,core.Transform,core.Parent,core.World_Transform,erender.Mesh_Renderer:
+                case:
+                    api.call_failf(call,api.INVALID_PARAMS,"entities[%d] (%s) has extra component %s: make it a prefab or remove the component before absorbing",i,given,tbl.name)
+                    return
+                }
+            }
+            file,asset_known:=asset.registry_find(&a.registry,mr.mesh)
+            if !asset_known || file.kind!=asset.KIND_MESH {api.call_failf(call,api.INVALID_PARAMS,"entities[%d] (%s) references a missing mesh",i,given);return}
+            asset_id=mr.mesh
+        }
+        if p.layer!=0 {
+            l,_:=pcg.source_layer(source,p.layer)
+            if l.asset!=asset_id {api.call_failf(call,api.INVALID_PARAMS,"entities[%d] (%s) places a different asset than layer %d",i,given,p.layer);return}
+        }
+        pos,rot,sc,problem:=transform_into_frame(to_frame,tr)
+        if problem!="" {api.call_failf(call,api.INVALID_PARAMS,"entities[%d] (%s) %s",i,given,problem);return}
+        if !pcg.region_holds(domain,tr.position) {api.call_failf(call,api.INVALID_PARAMS,"entities[%d] (%s) lies outside the Volume of the Pcg_Graph",i,given);return}
+        coord,_:=pcg.cell_of(source.info.cell_size,pos.xz)
+        if abs(coord.x)>pcg.COORD_MAX || abs(coord.y)>pcg.COORD_MAX {api.call_failf(call,api.INVALID_PARAMS,"entities[%d] (%s) cell %v exceeds COORD_MAX",i,given,coord);return}
+        items[i]={target,asset_id,pos,rot,sc}
+        targets[i]=target
+    }
+    if !edit_baseline(t) {api.call_fail(call,api.SERVER_ERROR,"There is no memory to keep the PCG history: free memory and call again");return}
+    if !editor.api_edit_begin(s,call,"Absorb entities into PCG") {return}
+    // Delete scene entities first; edit_commit writes the .pcg to disk last.
+    editor.entities_delete(s,targets)
+    for target,i in targets {
+        if !core.alive(core.world_entities(world),target) {continue}
+        api.call_failf(call,api.INVALID_PARAMS,"entities[%d] could not be deleted, so nothing is absorbed",i)
+        editor.api_edit_end(s,call,false)
+        return
+    }
+    layers_added:=0
+    for item,i in items {
+        layer_id:=p.layer
+        if layer_id==0 {
+            layer_id=layer_for_asset(source,item.asset)
+            if layer_id==0 {
+                l:=pcg.source_layer_add(source,.Scatter,.Macro)
+                if l==nil {
+                    edit_cancel(s,t,a)
+                    api.call_failf(call,api.INVALID_PARAMS,"The source already has %d layers, as many as it can",pcg.LAYERS_MAX)
+                    editor.api_edit_end(s,call,false)
+                    return
+                }
+                l.asset,l.density=item.asset,0
+                layer_id=l.id
+                layers_added+=1
+            }
+        }
+        coord,id,added:=pcg.source_point_add(source,layer_id,item.pos,item.rot,item.scale)
+        if !added {
+            edit_cancel(s,t,a)
+            api.call_failf(call,api.INVALID_PARAMS,"entities[%d] could not be added: its cell holds %d points already, or there is no memory",i,pcg.POINTS_CELL_MAX)
+            editor.api_edit_end(s,call,false)
+            return
+        }
+        out[i]={coord=coord,id=id,layer=layer_id}
+    }
+    s.toast_length=0
+    if !edit_commit(s,t,world,a,"Absorb entities into PCG") {
+        editor.tool_call_fail(s,call,"The absorbed points could not be kept")
+        editor.api_edit_end(s,call,false)
+        return
+    }
+    if !editor.api_edit_end(s,call,true) {return}
+    r:=api.call_result(call,Absorb_Result)
+    r.absorbed,r.layers_added,r.placed=count,layers_added,out
 }
 
 @(private)

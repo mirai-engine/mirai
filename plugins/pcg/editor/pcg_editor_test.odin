@@ -30,6 +30,8 @@ Pcg_Test_World :: struct {
     zones:core.Table(pcg.Pcg_Zone),
     volumes:core.Table(volume.Volume),
     splines:core.Table(volume.Spline),
+    references:core.Table(scene.Scene_Reference),
+    highlights:core.Table(erender.Highlight),
     suppressed:core.Table(pcg.Pcg_Suppressed),
     renderers:core.Table(erender.Mesh_Renderer),
     pendings:core.Table(scene.Prefab_Pending),
@@ -492,6 +494,71 @@ promoting_a_point_places_its_mesh_and_takes_it_out_in_one_step :: proc(t:^testin
     testing.expect_value(t,core.count(&f.world.renderers),1)
 }
 
+// The id of a grammar module is a hash, which has AUTHORED_POINT_BIT as
+// often as not: such a module is still a generated point, which pcg.suppress
+// takes out and puts back by a Pcg_Suppressed row and pcg.promote places,
+// the .pcg as it was.
+@(test)
+a_grammar_module_with_the_authored_bit_in_its_id_is_a_generated_point :: proc(t:^testing.T) {
+    f:=new(Fixture);defer free(f)
+    if !fixture_open(t,f,"pcg-grammar-bit") {return}
+    defer fixture_close(f)
+    ROCK :: base.Asset_Id{0x70c6,0x33}
+    mesh_write(t,f,ROCK)
+    _,source_id,_,made:=forest_make(t,f,ROCK)
+    if !made {return}
+    fence:=Layer_Params{grammar_expr="[post, [rail, post]*]",asset=ROCK}
+    entity_named(&fence,"Forest");base.text_set(fence.op[:],"add");base.text_set(fence.kind[:],"grammar")
+    fence.symbols[0]={unit_size=0.2};base.text_set(fence.symbols[0].name[:],"post")
+    fence.symbols[1]={unit_size=2,scalable=true};base.text_set(fence.symbols[1].name[:],"rail")
+    added:=call_run(f,api_layer,&fence,Layer_Result,`{"entity":"Forest","op":"add","kind":"grammar","grammar_expr":"x","asset":"x","symbols":[{"name":"post","unit_size":0.2},{"name":"rail","unit_size":2,"scalable":true}]}`)
+    if !testing.expectf(t,!f.call.failed,"%s",f.call.error.message) {return}
+    commit(t,f)
+    line:=editor.entity_create(&f.s,{name="Fence",transform={position={0,0,5},rotation=1,scale={1,1,1}}})
+    core.add(&f.world.zones,line,pcg.PCG_ZONE_DEFAULT)
+    core.add(&f.world.splines,line,volume.Spline{count=2,points={0={position={-12,0,0},width=1},1={position={12,0,0},width=1}}})
+    places_settle(f)
+    commit(t,f)
+    runtime_step(f)
+    box:=Sample_Params{min={-40,-10,-40},max={40,10,40},limit=4096}
+    entity_named(&box,"Forest")
+    sampled:=call_run(f,api_sample,&box,Sample_Result,`{"entity":"Forest","min":[-40,-10,-40],"max":[40,10,40],"limit":4096}`)
+    if !testing.expectf(t,!f.call.failed,"%s",f.call.error.message) {return}
+    chosen:Sample_Instance
+    modules:=0
+    for inst in sampled.instances {
+        if inst.layer!=added.layer {continue}
+        modules+=1
+        if pcg.point_authored(inst.id) {chosen=inst}
+    }
+    if !testing.expectf(t,chosen.id!=0,"none of the %d modules of the fence has the bit in its id",modules) {return}
+    revision:=f.editor_world.tool.edit.revision
+
+    point:=Point_Params{coord=chosen.coord,id=chosen.id}
+    entity_named(&point,"Forest")
+    taken:=call_run(f,api_suppress,&point,Suppress_Result,`{"entity":"Forest","coord":[0,0],"id":1}`)
+    if !testing.expectf(t,!f.call.failed && taken.suppressed && taken.in_cell==1,"%s",f.call.error.message) {return}
+    test_world_settle(&f.world)
+    testing.expect_value(t,core.count(&f.world.suppressed),1)
+    point.restore=true
+    back:=call_run(f,api_suppress,&point,Suppress_Result,`{"entity":"Forest","coord":[0,0],"id":1,"restore":true}`)
+    testing.expectf(t,!f.call.failed && !back.suppressed && back.in_cell==0,"%s",f.call.error.message)
+    test_world_settle(&f.world)
+    testing.expect_value(t,core.count(&f.world.suppressed),0)
+
+    runtime_step(f)
+    point.restore=false
+    promoted:=call_run(f,api_promote,&point,Promote_Result,`{"entity":"Forest","coord":[0,0],"id":1}`)
+    if !testing.expectf(t,!f.call.failed,"%s",f.call.error.message) {return}
+    test_world_settle(&f.world)
+    renderer,shown:=core.get(&f.world.renderers,core.entity_of(&f.world.entities,promoted.entity))
+    testing.expect(t,shown && renderer.mesh==ROCK,"the module is placed as an entity")
+    testing.expect_value(t,core.count(&f.world.suppressed),1)
+    held:=held_source(t,f,source_id)
+    testing.expect(t,held.info.revision==revision && pcg.source_point_count(&held)==0,"the .pcg is as it was")
+    pcg.source_destroy(&held)
+}
+
 // An edit that moves a Pcg_Zone asks the ground of the cells it left and
 // reached again, those of the graph under it alone; one far from the graph
 // asks nothing, and the first follow only learns where the zones are.
@@ -534,4 +601,180 @@ moving_a_zone_asks_the_cells_under_it_again :: proc(t:^testing.T) {
     clear(&w.ground_requests.cells.items)
     pcg_follow(&f.s)
     testing.expect_value(t,len(asked(w)),0)
+}
+
+// pcg.points bulk adds/removes/clears authored points; pcg.absorb converts
+// plain entities into authored points and deletes them in one undo step;
+// pcg.promote and pcg.suppress on authored points edit the .pcg directly with
+// zero Pcg_Suppressed residue; painting full density preserves authored points.
+@(test)
+authored_points_absorb_promote_suppress_and_undo_leave_zero_residue :: proc(t:^testing.T) {
+    f:=new(Fixture);defer free(f)
+    if !fixture_open(t,f,"pcg-points-absorb") {return}
+    defer fixture_close(f)
+    ROCK :: base.Asset_Id{0x70c6,0x22}
+    mesh_write(t,f,ROCK)
+    create:=Create_Params{at={0,0,0},bounds={30,20,30},cell_size=32,seed=11}
+    base.text_set(create.name[:],"Forest")
+    made:=call_run(f,api_create,&create,Create_Result,`{"name":"Forest","at":[0,0,0],"bounds":[30,20,30],"cell_size":32,"seed":11}`)
+    if !testing.expectf(t,!f.call.failed,"%s",f.call.error.message) {return}
+    places_settle(f)
+    source_id:=made.source
+
+    // 1. Bulk add via pcg.points auto-creates a density-0 Scatter layer for ROCK.
+    pts:Points_Params
+    entity_named(&pts,"Forest")
+    base.text_set(pts.op[:],"add")
+    pts.asset=ROCK
+    pts.points[0]={position={4,1,6}}
+    pts.points[1]={position={-5,2,-3},scale={2,3,2}}
+    add_res:=call_run(f,api_points,&pts,Points_Result,`{"entity":"Forest","op":"add","points":[{"position":[4,1,6]},{"position":[-5,2,-3],"scale":[2,3,2]}]}`)
+    if !testing.expectf(t,!f.call.failed && add_res.added==2 && add_res.points==2,"%s",f.call.error.message) {return}
+    commit(t,f)
+    layer_id:=add_res.layer
+    src:=held_source(t,f,source_id)
+    testing.expect(t,len(src.layers)==1 && src.layers[0].density==0 && src.layers[0].asset==ROCK)
+    pcg.source_destroy(&src)
+
+    // 2. Painting full density back over the cell does NOT delete authored points.
+    paint:=Density_Params{value=0,strength=1,center={4,0,6},radius=4}
+    entity_named(&paint,"Forest")
+    call_run(f,api_density,&paint,Density_Result,`{"entity":"Forest","value":0,"strength":1,"center":[4,0,6],"radius":4}`)
+    testing.expect(t,!f.call.failed)
+    commit(t,f)
+    paint.value=1
+    call_run(f,api_density,&paint,Density_Result,`{"entity":"Forest","value":1,"strength":1,"center":[4,0,6],"radius":4}`)
+    testing.expect(t,!f.call.failed)
+    commit(t,f)
+    src=held_source(t,f,source_id)
+    testing.expect_value(t,pcg.source_point_count(&src),2)
+    pcg.source_destroy(&src)
+
+    // 3. Promoting an authored point spawns an entity and removes it from .pcg with ZERO Pcg_Suppressed!
+    runtime_step(f)
+    first:=add_res.placed[0]
+    prom:=Point_Params{coord=first.coord,id=first.id}
+    entity_named(&prom,"Forest")
+    prom_res:=call_run(f,api_promote,&prom,Promote_Result,`{"entity":"Forest","coord":[0,0],"id":1}`)
+    if !testing.expectf(t,!f.call.failed,"%s",f.call.error.message) {return}
+    test_world_settle(&f.world)
+    testing.expect_value(t,core.count(&f.world.suppressed),0)
+    src=held_source(t,f,source_id)
+    testing.expect_value(t,pcg.source_point_count(&src),1)
+    pcg.source_destroy(&src)
+    spawned:=core.entity_of(&f.world.entities,prom_res.entity)
+    testing.expect(t,core.has(&f.world.renderers,spawned))
+
+    // Single undo deletes the spawned entity and puts the authored point back.
+    undo(t,f)
+    testing.expect(t,!core.has(&f.world.renderers,spawned))
+    src=held_source(t,f,source_id)
+    testing.expect_value(t,pcg.source_point_count(&src),2)
+    pcg.source_destroy(&src)
+    undo(t,f,redo=true)
+    test_world_settle(&f.world)
+    spawned=core.entity_of(&f.world.entities,prom_res.entity)
+    testing.expect(t,core.has(&f.world.renderers,spawned))
+
+    // 4. Move the promoted entity (without settling World_Transform!) and absorb it back:
+    // zero Pcg_Suppressed, entity gone, moved point in .pcg at [10, 3, 12].
+    // The outline of the selection it has, a derived component, does not keep it out.
+    core.edit(&f.world.transforms,spawned).position={10,3,12}
+    core.add(&f.world.highlights,spawned,erender.Highlight{level=1})
+    test_world_settle(&f.world)
+    abs:Absorb_Params
+    entity_named(&abs,"Forest")
+    base.text_set(abs.entities[0][:],fmt.tprintf("0x%x",u64(prom_res.entity)))
+    abs_res:=call_run(f,api_absorb,&abs,Absorb_Result,`{"entity":"Forest","entities":["moved"]}`)
+    if !testing.expectf(t,!f.call.failed && abs_res.absorbed==1 && abs_res.layers_added==0,"%s",f.call.error.message) {return}
+    test_world_settle(&f.world)
+    testing.expect(t,!core.alive(&f.world.entities,spawned))
+    testing.expect_value(t,core.count(&f.world.suppressed),0)
+    testing.expect_value(t,abs_res.placed[0].layer,layer_id)
+    src=held_source(t,f,source_id)
+    testing.expect_value(t,pcg.source_point_count(&src),2)
+    moved_pt,found_moved:=pcg.source_point_find(&src,abs_res.placed[0].coord,abs_res.placed[0].id)
+    testing.expect(t,found_moved && linalg.length(moved_pt.position-[3]f32{10,3,12})<1e-4)
+    pcg.source_destroy(&src)
+
+    // Undo of absorb restores the moved entity and removes the absorbed point.
+    undo(t,f)
+    test_world_settle(&f.world)
+    testing.expect_value(t,core.count(&f.world.renderers),1)
+    src=held_source(t,f,source_id)
+    testing.expect_value(t,pcg.source_point_count(&src),1)
+    pcg.source_destroy(&src)
+    undo(t,f,redo=true)
+
+    // 5. pcg.suppress on an authored point removes it from .pcg (no Pcg_Suppressed), restore is refused.
+    sup:=Point_Params{coord=abs_res.placed[0].coord,id=abs_res.placed[0].id,restore=true}
+    entity_named(&sup,"Forest")
+    call_run(f,api_suppress,&sup,Suppress_Result,`{"entity":"Forest","coord":[0,0],"id":1,"restore":true}`)
+    testing.expect(t,f.call.failed)
+    sup.restore=false
+    call_run(f,api_suppress,&sup,Suppress_Result,`{"entity":"Forest","coord":[0,0],"id":1}`)
+    testing.expect(t,!f.call.failed && core.count(&f.world.suppressed)==0)
+    src=held_source(t,f,source_id)
+    testing.expect_value(t,pcg.source_point_count(&src),1)
+    pcg.source_destroy(&src)
+
+    // 6. pcg.absorb refuses entities with extra components, negative scale, material overrides, or outside Volume.
+    bad_e:=editor.entity_create(&f.s,{name="BadProp",transform={position={2,0,2},rotation=1,scale={-1,1,1}}})
+    bad_mr:=erender.Mesh_Renderer{mesh=ROCK,shape=.None,shadows=true}
+    editor.component_add(&f.s,bad_e,editor.component_table(&f.s,"Mesh_Renderer"),&bad_mr)
+    places_settle(f)
+    bad_abs:Absorb_Params
+    entity_named(&bad_abs,"Forest")
+    base.text_set(bad_abs.entities[0][:],"BadProp")
+    call_run(f,api_absorb,&bad_abs,Absorb_Result,`{"entity":"Forest","entities":["BadProp"]}`)
+    testing.expect(t,f.call.failed && strings.contains(f.call.error.message,"scale"))
+    core.edit(&f.world.transforms,bad_e).scale={1,1,1}
+    core.edit(&f.world.transforms,bad_e).position={100,0,100} // outside bounds {30,20,30}
+    places_settle(f)
+    call_run(f,api_absorb,&bad_abs,Absorb_Result,`{"entity":"Forest","entities":["BadProp"]}`)
+    testing.expect(t,f.call.failed && strings.contains(f.call.error.message,"Volume"))
+    core.edit(&f.world.transforms,bad_e).position={2,0,2}
+    core.edit(&f.world.renderers,bad_e).materials[0]={9,9}
+    places_settle(f)
+    call_run(f,api_absorb,&bad_abs,Absorb_Result,`{"entity":"Forest","entities":["BadProp"]}`)
+    testing.expect(t,f.call.failed && strings.contains(f.call.error.message,"material"))
+    core.edit(&f.world.renderers,bad_e).materials={}
+    core.add(&f.world.zones,bad_e,pcg.PCG_ZONE_DEFAULT)
+    places_settle(f)
+    call_run(f,api_absorb,&bad_abs,Absorb_Result,`{"entity":"Forest","entities":["BadProp"]}`)
+    testing.expect(t,f.call.failed && strings.contains(f.call.error.message,"component"))
+
+    // What the delete would leave in place is refused before the source takes a point: an entity
+    // the graph hangs from, and one of a section that is not the one edited.
+    core.remove(&f.world.zones,bad_e)
+    forest:=core.entity_of(&f.world.entities,made.entity)
+    core.add(&f.world.parents,forest,core.Parent{entity=bad_e})
+    places_settle(f)
+    before:=held_source(t,f,source_id)
+    call_run(f,api_absorb,&bad_abs,Absorb_Result,`{"entity":"Forest","entities":["BadProp"]}`)
+    testing.expectf(t,f.call.failed && strings.contains(f.call.error.message,"under it"),"%s",f.call.error.message)
+    core.remove(&f.world.parents,forest)
+    section:=editor.entity_create(&f.s,{name="Section",transform={position={0,0,0},rotation=1,scale={1,1,1}}})
+    core.add(&f.world.references,section,scene.Scene_Reference{})
+    core.add(&f.world.parents,bad_e,core.Parent{entity=section})
+    places_settle(f)
+    call_run(f,api_absorb,&bad_abs,Absorb_Result,`{"entity":"Forest","entities":["BadProp"]}`)
+    testing.expectf(t,f.call.failed && strings.contains(f.call.error.message,"section"),"%s",f.call.error.message)
+    testing.expect(t,core.alive(&f.world.entities,bad_e) && core.has(&f.world.renderers,bad_e),"the entity stays")
+    after:=held_source(t,f,source_id)
+    testing.expect(t,after.info.revision==before.info.revision && pcg.source_point_count(&after)==pcg.source_point_count(&before),"the .pcg is as it was")
+    pcg.source_destroy(&before);pcg.source_destroy(&after)
+
+    // A layer that holds authored points stays a Macro or Meso Scatter layer, and the call says why.
+    micro:=Layer_Params{layer=layer_id}
+    entity_named(&micro,"Forest");base.text_set(micro.op[:],"set");base.text_set(micro.tier[:],"micro")
+    call_run(f,api_layer,&micro,Layer_Result,`{"entity":"Forest","op":"set","layer":1,"tier":"micro"}`)
+    testing.expectf(t,f.call.failed && strings.contains(f.call.error.message,"authored points"),"%s",f.call.error.message)
+
+    // 7. pcg.points clear removes remaining authored points.
+    clr:Points_Params
+    entity_named(&clr,"Forest")
+    base.text_set(clr.op[:],"clear")
+    clr_res:=call_run(f,api_points,&clr,Points_Result,`{"entity":"Forest","op":"clear"}`)
+    testing.expect(t,!f.call.failed && clr_res.removed==1 && clr_res.points==0)
 }

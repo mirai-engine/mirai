@@ -771,3 +771,146 @@ the_ground_cache_copies_with_the_world_and_spares_reading_it_again :: proc(t:^te
         testing.expectf(t,slice.equal(after[:],before[:]),"%s: %d placed, %d before",c.name,len(after),len(before))
     }
 }
+
+// A ground probe that finds no terrain anywhere: authored points must still
+// appear while generated layers wait for ground.
+@(private="file")
+no_ground_open :: proc(w:core.World_Read) -> (core.Ground_Query,bool) {
+    probe :: proc(user:rawptr,origin,down:[3]f32) -> (hit:core.Ground_Hit,found:core.Ground_Found) {
+        return {},.None
+    }
+    return {user=w.data,probe=probe,spacing=1},true
+}
+
+// Authored points round-trip through .pcg v2, validate strictly against
+// hostile data, survive absent terrain, rasterize into Micro occupancy across
+// cell borders, re-bucket on cell_size changes, and drop on layer removal.
+@(test)
+authored_points_round_trip_emit_without_ground_and_occupy_micro :: proc(t:^testing.T) {
+    s:Pcg_Source
+    source_init(&s)
+    defer source_destroy(&s)
+    l:=source_layer_add(&s,.Scatter,.Macro)
+    l.asset,l.density,l.radius={0xaa,0xbb},0,2.5
+    m:=source_layer_add(&s,.Scatter,.Micro)
+    m.asset,m.density={0xcc,0xdd},0.5
+    // Near the right border of cell (0,0) so its radius reaches into cell (1,0).
+    rot:=linalg.normalize(mm.Quat(quaternion(x=0,y=0.3826834,z=0,w=0.9238795)))
+    c0,id0,ok0:=source_point_add(&s,l.id,{31.0,4.5,16.0},rot,{1.5,2.0,1.5})
+    testing.expect(t,ok0 && c0=={0,0} && point_authored(id0) && point_layer(id0)==l.id && point_ordinal(id0)==1)
+    // Hostile adds are refused without mutating state.
+    _,_,bad_micro:=source_point_add(&s,m.id,{2,0,2},1,{1,1,1})
+    _,_,bad_scale:=source_point_add(&s,l.id,{2,0,2},1,{0,1,1})
+    _,_,bad_neg:=source_point_add(&s,l.id,{2,0,2},1,{-1,1,1})
+    _,_,bad_nan:=source_point_add(&s,l.id,{math.nan_f32(),0,2},1,{1,1,1})
+    _,_,bad_rot:=source_point_add(&s,l.id,{2,0,2},0,{1,1,1})
+    testing.expect(t,!bad_micro && !bad_scale && !bad_neg && !bad_nan && !bad_rot)
+    testing.expect_value(t,source_point_count(&s),1)
+
+    // Round-trip through binary .pcg v2 bytes.
+    types:asset.Types
+    asset.types_init(&types)
+    defer asset.types_destroy(&types)
+    bytes,err:=source_bytes(&s,{0x12,0x34},&types)
+    if !testing.expect_value(t,err,asset.Error.None) {return}
+    defer delete(bytes)
+    file:asset.Asset
+    if !testing.expect_value(t,asset.asset_open(&file,bytes),asset.Error.None) {return}
+    defer asset.asset_close(&file)
+    read:Pcg_Source
+    source_init(&read)
+    defer source_destroy(&read)
+    rid,issue:=source_read(&read,&file,&types)
+    if !testing.expect(t,issue.kind==.None && rid=={0x12,0x34}) {return}
+    testing.expect_value(t,source_point_count(&read),1)
+    pt,found:=source_point_find(&read,{0,0},id0)
+    testing.expect(t,found && pt.position=={31.0,4.5,16.0} && pt.scale=={1.5,2.0,1.5})
+
+    // Hostile corruption: point moved outside its cell is rejected.
+    corrupt:Pcg_Source
+    testing.expect(t,source_copy(&corrupt,&read))
+    defer source_destroy(&corrupt)
+    corrupt.cells[0].points[0].position.x=99
+    testing.expect_value(t,source_issue(&corrupt).kind,Pcg_Issue_Kind.Cell)
+    // A rotation that is not of length 1, and an id given twice, are too.
+    corrupt.cells[0].points[0]=read.cells[0].points[0]
+    testing.expect_value(t,source_issue(&corrupt).kind,Pcg_Issue_Kind.None)
+    corrupt.cells[0].points[0].rotation=2
+    testing.expect_value(t,source_issue(&corrupt).kind,Pcg_Issue_Kind.Cell)
+    corrupt.cells[0].points[0]=read.cells[0].points[0]
+    append(&corrupt.cells[0].points,read.cells[0].points[0])
+    testing.expect_value(t,source_issue(&corrupt).kind,Pcg_Issue_Kind.Cell)
+
+    // Re-bucketing on cell_size change keeps all points valid, and the paint of its cells.
+    rechunk:Pcg_Source
+    testing.expect(t,source_copy(&rechunk,&read))
+    defer source_destroy(&rechunk)
+    painted:=source_cell(&rechunk,{5,5},true)
+    resize(&painted.density,PAINT_SAMPLES*PAINT_SAMPLES)
+    testing.expect(t,source_rechunk_points(&rechunk,16) && source_valid(&rechunk))
+    testing.expect_value(t,rechunk.info.cell_size,f32(16))
+    _,moved_found:=source_point_find(&rechunk,{1,1},id0)
+    testing.expect(t,moved_found,"31,16 moved from cell (0,0) at 32m to cell (1,1) at 16m")
+    painted=source_cell(&rechunk,{5,5})
+    testing.expect(t,painted!=nil && len(painted.density)==PAINT_SAMPLES*PAINT_SAMPLES,"the painted cell stays")
+
+    // A cell size that puts more than POINTS_CELL_MAX points in one cell, or
+    // that is no cell size, is refused with the source as it was.
+    crowded:Pcg_Source
+    testing.expect(t,source_copy(&crowded,&read))
+    defer source_destroy(&crowded)
+    for k in 0..<POINTS_CELL_MAX/2+1 {
+        _,_,left:=source_point_add(&crowded,l.id,{10,0,10},1,{1,1,1})
+        _,_,right:=source_point_add(&crowded,l.id,{40,0,10},1,{1,1,1})
+        if !testing.expectf(t,left && right,"point %d",k) {break}
+    }
+    held:Pcg_Source
+    testing.expect(t,source_copy(&held,&crowded))
+    defer source_destroy(&held)
+    for size in ([?]f32{64,2,math.nan_f32()}) {
+        testing.expectf(t,!source_rechunk_points(&crowded,size),"cell size %v",size)
+        same:=crowded.info==held.info && len(crowded.cells)==len(held.cells)
+        for &cell,k in crowded.cells {
+            if !same {break}
+            same=cell.coord==held.cells[k].coord && slice.equal(cell.points[:],held.cells[k].points[:])
+        }
+        testing.expectf(t,same && source_valid(&crowded),"cell size %v leaves the source as it was",size)
+    }
+
+    // Removing the layer removes its authored points and prunes the empty cell.
+    testing.expect(t,source_layer_remove(&rechunk,l.id))
+    testing.expect_value(t,source_point_count(&rechunk),0)
+    testing.expect(t,len(rechunk.cells)==1 && rechunk.cells[0].coord=={5,5},"only the painted cell is left")
+
+    // Runtime with a probe that returns .None everywhere: authored point still emits,
+    // and its radius (2.5 * 1.5 = 3.75m at x=31) occupies cell (1,0) across the border!
+    f:=new(Pcg_Test);defer free(f)
+    if !test_init(t,f) {return}
+    defer test_destroy(f)
+    f.queries.open=no_ground_open
+    graph:=test_graph(f,&read,{0x55,0x66})
+    core.add(&f.volumes,graph,volume.box({64,20,64}))
+    test_world_settle(&f.w)
+    for _ in 0..<8 {test_step(f)}
+    placed0,_,ok_c0:=pcg_cell(&f.generated,graph,{0,0})
+    testing.expect(t,ok_c0 && len(placed0)==1 && placed0[0].id==id0 && placed0[0].position=={31.0,4.5,16.0})
+    cell1:=generated_cell(generated_graph(&f.generated,graph),{1,0})
+    if testing.expect(t,cell1!=nil,"neighbour cell (1,0) exists") {
+        // Cell (1,0) has no ground so it skipped cell_generate without points; test cell_generate directly on (1,0) with ground to verify 3x3 micro occupancy.
+        g_cell:=Pcg_Ground_Cell{cell_size=32,samples=2}
+        scratch:Pcg_Scratch
+        testing.expect(t,scratch_init(&scratch))
+        defer scratch_destroy(&scratch)
+        out:=make([dynamic]Placed)
+        defer delete(out)
+        entry:=data_find(&f.data,{0x55,0x66})
+        cin:=Pcg_Cell_Input{source=&entry.source,coord={1,0},ground=g_cell,frame=1}
+        testing.expect(t,cell_generate(&cin,&scratch,&out))
+        testing.expect(t,occupied_at(&scratch.occupied,32,0.5,16.0),"authored point at x=31 in cell (0,0) with radius 3.75 occupies x=0.5 in cell (1,0)")
+    }
+    // Play suppression still hides authored points cleanly.
+    pcg_suppress_request(&f.suppress,{graph=graph,coord={0,0},id=id0})
+    test_step(f);test_step(f)
+    placed_after,_,_:=pcg_cell(&f.generated,graph,{0,0})
+    testing.expect_value(t,len(placed_after),0)
+}

@@ -2,10 +2,13 @@ package pcg
 
 import "base:runtime"
 import "core:math"
+import "core:math/linalg"
+import "core:slice"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:host"
 import "mirai:std/base"
+import mm "mirai:std/math"
 import "mirai:std/serial"
 import pcg_lib "mirai:std/pcg"
 
@@ -34,14 +37,34 @@ DITHER_MEMBERS_MAX :: 8  // Scatter layers of a tier in one dither group
 CASCADE_CHILDREN_MAX :: 16 // children per parent of a Cascade layer
 GROUND_RULE_LAYERS :: 4
 TEXT_MAX :: pcg_lib.MAX_SOURCE // bytes of an expression
+POINTS_CELL_MAX :: 1 << 16     // authored points in one cell at most
+POINTS_MAX :: 1 << 20          // authored points in a source at most
+AUTHORED_POINT_BIT :: u32(1) << 31 // low-32 bit of Placed.id marking an authored point
 
 Pcg_Info :: struct {
     seed:u32,
     cell_size:f32 `mirai:"min=4,max=256,unit=m"`,
     next_layer:u32, // the id the next layer takes, from 1: an id is never given twice
+    next_point:u32, // the id the next authored point takes, from 1: never given twice in a source
     ecotopes:u32 `mirai:"max=8"`, // painted channels of each painted cell
     revision:u32,   // of the saved data
 }
+
+// An explicit point placed by a Macro/Meso Scatter layer in the frame of the
+// graph, stored in the Pcg_Cell of its x and z. Never references a generated
+// id, so there are no transform overrides or orphans.
+Pcg_Point :: struct {
+    position:[3]f32,
+    rotation:mm.Quat,
+    scale:[3]f32,
+    layer:u32, // id of the Scatter layer that places it
+    point:u32, // from 1, stable: Placed.id is stable_id(layer, AUTHORED_POINT_BIT | point)
+}
+
+point_authored :: proc "contextless" (id:u64) -> bool {return u32(id)&AUTHORED_POINT_BIT!=0}
+point_layer :: proc "contextless" (id:u64) -> u32 {return u32(id>>32)}
+point_ordinal :: proc "contextless" (id:u64) -> u32 {return u32(id)&~AUTHORED_POINT_BIT}
+authored_id :: proc "contextless" (layer,point:u32) -> u64 {return pcg_lib.stable_id(layer,AUTHORED_POINT_BIT|point)}
 
 // When a layer is placed. Macro layers are placed first and keep their
 // places; Meso layers keep apart from them; Micro layers are not placed on
@@ -107,14 +130,16 @@ Pcg_Layer :: struct {
 
 PCG_LAYER_DEFAULT :: Pcg_Layer_Params{density=0.05,scale={0.8,1.2},height={1,1},yaw=6.2831855,align=1,cull_distance=200,fade_distance=180,ground_rule={slope={0,math.PI/2},height={-POSITION_MAX,POSITION_MAX},weight=0.5}}
 
-// A painted cell: how much of the density of the layers it keeps, from 0 to
-// 255 on PAINT_SAMPLES by PAINT_SAMPLES points over it, x first (none: all of
-// it), and the weights of its ecotopes, Pcg_Info.ecotopes blocks of as many
-// (none: 0 everywhere).
+// A cell with painted samples and/or authored points: how much of the density
+// of the layers it keeps, from 0 to 255 on PAINT_SAMPLES by PAINT_SAMPLES
+// points over it, x first (none: all of it), the weights of its ecotopes,
+// Pcg_Info.ecotopes blocks of as many (none: 0 everywhere), and the authored
+// points whose x and z fall in it.
 Pcg_Cell :: struct {
     coord:[2]i32,
     density:[dynamic]u8,
     ecotopes:[dynamic]u8,
+    points:[dynamic]Pcg_Point,
 }
 
 // The programs of a layer: what its texts compile to.
@@ -137,7 +162,7 @@ Pcg_Source :: struct {
 }
 
 source_init :: proc(s:^Pcg_Source,allocator:=context.allocator) {
-    s^={info={cell_size=CELL_SIZE_DEFAULT,next_layer=1},allocator=allocator}
+    s^={info={cell_size=CELL_SIZE_DEFAULT,next_layer=1,next_point=1},allocator=allocator}
     s.layers=make([dynamic]Pcg_Layer,allocator)
     s.cells=make([dynamic]Pcg_Cell,allocator)
     s.compiled=make([dynamic]Pcg_Compiled,allocator)
@@ -162,7 +187,7 @@ source_compiled_free :: proc(s:^Pcg_Source) {
 source_destroy :: proc(s:^Pcg_Source) {
     source_compiled_free(s)
     for &l in s.layers {layer_texts_free(s,&l)}
-    for &cell in s.cells {delete(cell.density);delete(cell.ecotopes)}
+    for &cell in s.cells {delete(cell.density);delete(cell.ecotopes);delete(cell.points)}
     delete(s.layers);delete(s.cells);delete(s.compiled);delete(s.units);delete(s.members)
     s^={}
 }
@@ -187,7 +212,7 @@ source_layer_add :: proc(s:^Pcg_Source,kind:Pcg_Layer_Kind,tier:=Pcg_Tier.Macro)
     return &s.layers[len(s.layers)-1]
 }
 
-// Takes a layer out; the cascades of it go with it. False when there is none.
+// Takes a layer out; the cascades and authored points of it go with it. False when there is none.
 source_layer_remove :: proc(s:^Pcg_Source,id:u32) -> bool {
     _,index:=source_layer(s,id)
     if index<0 {return false}
@@ -197,6 +222,7 @@ source_layer_remove :: proc(s:^Pcg_Source,id:u32) -> bool {
     for i:=len(s.layers)-1;i>=0;i-=1 {
         if s.layers[i].kind==.Cascade && s.layers[i].parent_layer==id {source_layer_remove(s,s.layers[i].id)}
     }
+    source_points_clear(s,id)
     return true
 }
 
@@ -251,15 +277,175 @@ coord_lower :: proc "contextless" (items:[]$T,coord:[2]i32) -> int {
     return low
 }
 
-// The painted cell of a coordinate, made when it is not there and make_it;
+// The cell of a coordinate, made when it is not there and make_it;
 // nil without memory.
 source_cell :: proc(s:^Pcg_Source,coord:[2]i32,make_it:=false) -> ^Pcg_Cell {
     at:=coord_lower(s.cells[:],coord)
     if at<len(s.cells) && s.cells[at].coord==coord {return &s.cells[at]}
     if !make_it {return nil}
-    cell:=Pcg_Cell{coord=coord,density=make([dynamic]u8,s.allocator),ecotopes=make([dynamic]u8,s.allocator)}
+    cell:=Pcg_Cell{coord=coord,density=make([dynamic]u8,s.allocator),ecotopes=make([dynamic]u8,s.allocator),points=make([dynamic]Pcg_Point,s.allocator)}
     if _,error:=inject_at(&s.cells,at,cell);error!=nil {return nil}
     return &s.cells[at]
+}
+
+// Removes a cell from s.cells when it holds neither paint nor authored points.
+source_cell_prune :: proc(s:^Pcg_Source,at:int) {
+    if at<0 || at>=len(s.cells) {return}
+    c:=&s.cells[at]
+    if len(c.density)!=0 || len(c.ecotopes)!=0 || len(c.points)!=0 {return}
+    delete(c.density);delete(c.ecotopes);delete(c.points)
+    ordered_remove(&s.cells,at)
+}
+
+source_point_count :: proc "contextless" (s:^Pcg_Source,layer:u32=0) -> (count:int) {
+    for &cell in s.cells {
+        if layer==0 {count+=len(cell.points);continue}
+        for pt in cell.points {if pt.layer==layer {count+=1}}
+    }
+    return
+}
+
+// Whether an authored point has finite values, positive bounded scale, valid
+// rotation, a Macro/Meso Scatter layer and coordinates within POSITION_MAX.
+source_point_valid :: proc "contextless" (s:^Pcg_Source,layer:u32,position:[3]f32,rotation:mm.Quat,scale:[3]f32) -> bool {
+    l,_:=source_layer(s,layer)
+    if l==nil || l.kind!=.Scatter || l.tier==.Micro {return false}
+    for v in position {if !finite(v) || abs(v)>POSITION_MAX {return false}}
+    for v in scale {if !finite(v) || v<=0 || v>1000 {return false}}
+    q:=[4]f32{rotation.x,rotation.y,rotation.z,rotation.w}
+    for v in q {if !finite(v) {return false}}
+    if linalg.dot(q,q)<1e-8 {return false}
+    coord,_:=cell_of(s.info.cell_size,position.xz)
+    if abs(coord.x)>COORD_MAX || abs(coord.y)>COORD_MAX {return false}
+    return true
+}
+
+// Adds an authored point to its cell in graph-local coordinates; returns its
+// cell, stable id and ok. False on invalid input, a full cell or OOM. The
+// points of the whole source (POINTS_MAX) are counted by who adds many, once:
+// source_issue refuses a source past it.
+source_point_add :: proc(s:^Pcg_Source,layer:u32,position:[3]f32,rotation:mm.Quat,scale:[3]f32) -> (coord:[2]i32,id:u64,ok:bool) {
+    if !source_point_valid(s,layer,position,rotation,scale) {return}
+    if s.info.next_point==0 || s.info.next_point>=AUTHORED_POINT_BIT {return}
+    coord,_=cell_of(s.info.cell_size,position.xz)
+    cell:=source_cell(s,coord,true)
+    if cell==nil || len(cell.points)>=POINTS_CELL_MAX {return}
+    rot:=linalg.normalize(rotation)
+    pt_id:=s.info.next_point
+    if _,error:=append(&cell.points,Pcg_Point{position=position,rotation=rot,scale=scale,layer=layer,point=pt_id});error!=nil {
+        source_cell_prune(s,coord_lower(s.cells[:],coord))
+        return
+    }
+    s.info.next_point+=1
+    return coord,authored_id(layer,pt_id),true
+}
+
+// Finds an authored point by its cell and Placed.id.
+source_point_find :: proc "contextless" (s:^Pcg_Source,coord:[2]i32,id:u64) -> (Pcg_Point,bool) {
+    if !point_authored(id) {return {},false}
+    at:=coord_lower(s.cells[:],coord)
+    if at>=len(s.cells) || s.cells[at].coord!=coord {return {},false}
+    layer,ord:=point_layer(id),point_ordinal(id)
+    for pt in s.cells[at].points {if pt.layer==layer && pt.point==ord {return pt,true}}
+    return {},false
+}
+
+// Removes an authored point from its cell, pruning the cell if left empty.
+source_point_remove :: proc(s:^Pcg_Source,coord:[2]i32,id:u64) -> bool {
+    if !point_authored(id) {return false}
+    at:=coord_lower(s.cells[:],coord)
+    if at>=len(s.cells) || s.cells[at].coord!=coord {return false}
+    layer,ord:=point_layer(id),point_ordinal(id)
+    pts:=&s.cells[at].points
+    for pt,i in pts {
+        if pt.layer==layer && pt.point==ord {
+            ordered_remove(pts,i)
+            source_cell_prune(s,at)
+            return true
+        }
+    }
+    return false
+}
+
+// Removes all authored points of a layer (or of all layers when layer == 0),
+// pruning cells left empty. Returns how many were removed.
+source_points_clear :: proc(s:^Pcg_Source,layer:u32=0) -> (removed:int) {
+    for i:=len(s.cells)-1;i>=0;i-=1 {
+        pts:=&s.cells[i].points
+        if len(pts)==0 {continue}
+        if layer==0 {
+            removed+=len(pts)
+            clear(pts)
+        } else {
+            kept:=0
+            for pt in pts {
+                if pt.layer==layer {removed+=1;continue}
+                pts[kept]=pt
+                kept+=1
+            }
+            base.truncate(pts,kept)
+        }
+        source_cell_prune(s,i)
+    }
+    return
+}
+
+// Moves the authored points into the cells of new_cell_size and takes it as
+// the cell size; painted cells stay at their coordinates. False, with s as it
+// was, without memory or past COORD_MAX, POINTS_CELL_MAX or CELLS_MAX.
+source_rechunk_points :: proc(s:^Pcg_Source,new_cell_size:f32) -> bool {
+    if !finite(new_cell_size) || new_cell_size<CELL_SIZE_MIN || new_cell_size>CELL_SIZE_MAX {return false}
+    Moved :: struct {coord:[2]i32,point:Pcg_Point}
+    moved,error:=make([dynamic]Moved,0,source_point_count(s),context.temp_allocator)
+    if error!=nil {return false}
+    for &cell in s.cells {
+        for pt in cell.points {
+            coord,_:=cell_of(new_cell_size,pt.position.xz)
+            if abs(coord.x)>COORD_MAX || abs(coord.y)>COORD_MAX {return false}
+            append(&moved,Moved{coord,pt})
+        }
+    }
+    if len(moved)==0 {s.info.cell_size=new_cell_size;return true}
+    slice.sort_by(moved[:],proc(a,b:Moved) -> bool {return coord_before(a.coord,b.coord) || a.coord==b.coord && a.point.point<b.point.point})
+    cells_free :: proc(cells:^[dynamic]Pcg_Cell) {
+        for &c in cells {delete(c.density);delete(c.ecotopes);delete(c.points)}
+        delete(cells^)
+    }
+    // The cells that follow are whole before s changes.
+    next:=make([dynamic]Pcg_Cell,s.allocator)
+    i,j:=0,0
+    for i<len(s.cells) || j<len(moved) {
+        old:=i<len(s.cells) && (j>=len(moved) || !coord_before(moved[j].coord,s.cells[i].coord))
+        coord:=s.cells[i].coord if old else moved[j].coord
+        run:=j
+        for run<len(moved) && moved[run].coord==coord {run+=1}
+        painted:=old && (len(s.cells[i].density)>0 || len(s.cells[i].ecotopes)>0)
+        if painted || run>j {
+            held:=Pcg_Cell{coord=coord,density=make([dynamic]u8,s.allocator),ecotopes=make([dynamic]u8,s.allocator),points=make([dynamic]Pcg_Point,s.allocator)}
+            ok:=run-j<=POINTS_CELL_MAX && len(next)<CELLS_MAX && reserve(&held.points,run-j)==nil
+            if ok && painted {
+                _,e0:=append(&held.density,..s.cells[i].density[:])
+                _,e1:=append(&held.ecotopes,..s.cells[i].ecotopes[:])
+                ok=e0==nil && e1==nil
+            }
+            if ok {
+                for m in moved[j:run] {append(&held.points,m.point)}
+                _,e2:=append(&next,held)
+                ok=e2==nil
+            }
+            if !ok {
+                delete(held.density);delete(held.ecotopes);delete(held.points)
+                cells_free(&next)
+                return false
+            }
+        }
+        if old {i+=1}
+        j=run
+    }
+    cells_free(&s.cells)
+    s.cells=next
+    s.info.cell_size=new_cell_size
+    return true
 }
 
 @(private)
@@ -312,7 +498,7 @@ params_valid :: proc "contextless" (s:^Pcg_Source,l:Pcg_Layer_Params,index:int) 
 @(private)
 source_shape_issue :: proc(s:^Pcg_Source) -> Pcg_Issue {
     i:=s.info
-    if !finite(i.cell_size) || i.cell_size<CELL_SIZE_MIN || i.cell_size>CELL_SIZE_MAX || i.next_layer==0 || i.ecotopes>ECOTOPES_MAX {return {kind=.Info}}
+    if !finite(i.cell_size) || i.cell_size<CELL_SIZE_MIN || i.cell_size>CELL_SIZE_MAX || i.next_layer==0 || i.next_point==0 || i.next_point>=AUTHORED_POINT_BIT || i.ecotopes>ECOTOPES_MAX {return {kind=.Info}}
     if len(s.layers)>LAYERS_MAX || len(s.cells)>CELLS_MAX {return {kind=.Info}}
     for &l,k in s.layers {
         if !params_valid(s,l.params,k) || len(l.field_expr)>TEXT_MAX || len(l.grammar_expr)>TEXT_MAX || len(l.grammar_symbols)>SYMBOLS_MAX {return {kind=.Layer,layer=l.id}}
@@ -329,11 +515,30 @@ source_shape_issue :: proc(s:^Pcg_Source) -> Pcg_Issue {
         }
     }
     side:=PAINT_SAMPLES*PAINT_SAMPLES
+    total_points:=0
     for &cell,k in s.cells {
         if abs(cell.coord.x)>COORD_MAX || abs(cell.coord.y)>COORD_MAX {return {kind=.Cell}}
         if k>0 && !coord_before(s.cells[k-1].coord,cell.coord) {return {kind=.Cell}}
         if len(cell.density)!=0 && len(cell.density)!=side {return {kind=.Cell}}
         if len(cell.ecotopes)!=0 && len(cell.ecotopes)!=int(i.ecotopes)*side {return {kind=.Cell}}
+        if len(cell.points)>POINTS_CELL_MAX {return {kind=.Cell}}
+        total_points+=len(cell.points)
+        if total_points>POINTS_MAX {return {kind=.Cell}}
+        for pt in cell.points {
+            if pt.point==0 || pt.point>=i.next_point || !source_point_valid(s,pt.layer,pt.position,pt.rotation,pt.scale) {return {kind=.Cell,layer=pt.layer}}
+            q:=[4]f32{pt.rotation.x,pt.rotation.y,pt.rotation.z,pt.rotation.w}
+            if abs(linalg.dot(q,q)-1)>1e-3 {return {kind=.Cell,layer=pt.layer}}
+            expected,_:=cell_of(i.cell_size,pt.position.xz)
+            if expected!=cell.coord {return {kind=.Cell,layer=pt.layer}}
+        }
+    }
+    if total_points>1 {
+        ids,err:=make([]u32,total_points,context.temp_allocator)
+        if err!=nil {return {kind=.Memory}}
+        n:=0
+        for &cell in s.cells {for pt in cell.points {ids[n]=pt.point;n+=1}}
+        slice.sort(ids)
+        for k in 1..<len(ids) {if ids[k]==ids[k-1] {return {kind=.Cell}}}
     }
     return {}
 }
@@ -401,11 +606,12 @@ source_copy :: proc(dst,src:^Pcg_Source,allocator:=context.allocator) -> bool {
     }
     for &cell in src.cells {
         if !ok {break}
-        held:=Pcg_Cell{coord=cell.coord,density=make([dynamic]u8,allocator),ecotopes=make([dynamic]u8,allocator)}
+        held:=Pcg_Cell{coord=cell.coord,density=make([dynamic]u8,allocator),ecotopes=make([dynamic]u8,allocator),points=make([dynamic]Pcg_Point,allocator)}
         _,e0:=append(&held.density,..cell.density[:])
         _,e1:=append(&held.ecotopes,..cell.ecotopes[:])
-        _,e2:=append(&dst.cells,held)
-        if e0!=nil || e1!=nil || e2!=nil {delete(held.density);delete(held.ecotopes);ok=false}
+        _,e2:=append(&held.points,..cell.points[:])
+        _,e3:=append(&dst.cells,held)
+        if e0!=nil || e1!=nil || e2!=nil || e3!=nil {delete(held.density);delete(held.ecotopes);delete(held.points);ok=false}
     }
     // A source that did not compile is copied as it was: its issue stays.
     if ok && len(src.compiled)>0 {ok=source_compile(dst).kind==.None}
@@ -425,21 +631,23 @@ Pcg_Cell_Row :: struct {
     coord:[2]i32,
     density_first,density_count:u32,
     ecotope_first,ecotope_count:u32,
+    point_first,point_count:u32,
 }
 
 // The .pcg file of a source, as bytes from allocator; with import_info, the
 // record of the import it comes from.
 source_bytes :: proc(s:^Pcg_Source,id:base.Asset_Id,types:^asset.Types,allocator:=context.allocator,import_info:^asset.Import_Info=nil) -> (data:[]u8,error:asset.Error) {
     if !source_valid(s) {return nil,.Invalid}
-    texts,symbols,paint:=0,0,0
+    texts,symbols,paint,pts:=0,0,0,0
     for l in s.layers {texts+=len(l.field_expr)+len(l.grammar_expr);symbols+=len(l.grammar_symbols)}
-    for cell in s.cells {paint+=len(cell.density)+len(cell.ecotopes)}
+    for cell in s.cells {paint+=len(cell.density)+len(cell.ecotopes);pts+=len(cell.points)}
     rows,e0:=make([]Pcg_Layer_Row,len(s.layers),context.temp_allocator)
     cells,e1:=make([]Pcg_Cell_Row,len(s.cells),context.temp_allocator)
     text,e2:=make([dynamic]u8,0,texts,context.temp_allocator)
     defs,e3:=make([dynamic]Grammar_Symbol_Def,0,symbols,context.temp_allocator)
     painted,e4:=make([dynamic]u8,0,paint,context.temp_allocator)
-    if e0!=nil || e1!=nil || e2!=nil || e3!=nil || e4!=nil {return nil,.Out_Of_Memory}
+    points,e5:=make([dynamic]Pcg_Point,0,pts,context.temp_allocator)
+    if e0!=nil || e1!=nil || e2!=nil || e3!=nil || e4!=nil || e5!=nil {return nil,.Out_Of_Memory}
     for l,k in s.layers {
         r:=&rows[k]
         r.params=l.params
@@ -457,6 +665,8 @@ source_bytes :: proc(s:^Pcg_Source,id:base.Asset_Id,types:^asset.Types,allocator
         append(&painted,..cell.density[:])
         c.ecotope_first,c.ecotope_count=u32(len(painted)),u32(len(cell.ecotopes))
         append(&painted,..cell.ecotopes[:])
+        c.point_first,c.point_count=u32(len(points)),u32(len(cell.points))
+        append(&points,..cell.points[:])
     }
     document:asset.Document
     asset.document_init(&document,PCG_KIND,id,allocator)
@@ -469,6 +679,7 @@ source_bytes :: proc(s:^Pcg_Source,id:base.Asset_Id,types:^asset.Types,allocator
     asset.document_put(&document,types,"cells",cells) or_return
     asset.document_put(&document,types,"text",text[:],{.Bulk}) or_return
     asset.document_put(&document,types,"paint",painted[:],{.Bulk}) or_return
+    asset.document_put(&document,types,"points",points[:],{.Bulk}) or_return
     asset.import_put(&document,types,import_info) or_return
     return asset.document_bytes(&document,allocator)
 }
@@ -495,10 +706,11 @@ source_read :: proc(s:^Pcg_Source,file:^asset.Asset,types:^asset.Types,allocator
     cells,r2:=rows_or_none(file,types,"cells",Pcg_Cell_Row)
     text,r3:=rows_or_none(file,types,"text",u8)
     paint,r4:=rows_or_none(file,types,"paint",u8)
-    if !r0 || !r1 || !r2 || !r3 || !r4 {return {},unread}
-    if len(rows)>LAYERS_MAX || len(cells)>CELLS_MAX {return {},{kind=.Info}}
-    // The ranges of the rows follow each other and cover every byte and symbol once.
-    next_text,next_symbol,next_paint:=u32(0),u32(0),u32(0)
+    points,r5:=rows_or_none(file,types,"points",Pcg_Point)
+    if !r0 || !r1 || !r2 || !r3 || !r4 || !r5 {return {},unread}
+    if len(rows)>LAYERS_MAX || len(cells)>CELLS_MAX || len(points)>POINTS_MAX {return {},{kind=.Info}}
+    // The ranges of the rows follow each other and cover every byte, symbol and point once.
+    next_text,next_symbol,next_paint,next_point:=u32(0),u32(0),u32(0),u32(0)
     for r in rows {
         if r.field_first!=next_text || r.grammar_first!=r.field_first+r.field_count || r.symbol_first!=next_symbol {return {},unread}
         if r.field_count>TEXT_MAX || r.grammar_count>TEXT_MAX || r.symbol_count>SYMBOLS_MAX {return {},{kind=.Layer,layer=r.params.id}}
@@ -507,12 +719,13 @@ source_read :: proc(s:^Pcg_Source,file:^asset.Asset,types:^asset.Types,allocator
         next_symbol+=r.symbol_count
     }
     for c in cells {
-        if c.density_first!=next_paint || c.ecotope_first!=c.density_first+c.density_count {return {},unread}
-        if c.density_count>PAINT_SAMPLES*PAINT_SAMPLES || c.ecotope_count>ECOTOPES_MAX*PAINT_SAMPLES*PAINT_SAMPLES {return {},{kind=.Cell}}
-        if !range_in(c.ecotope_first,c.ecotope_count,len(paint)) {return {},unread}
+        if c.density_first!=next_paint || c.ecotope_first!=c.density_first+c.density_count || c.point_first!=next_point {return {},unread}
+        if c.density_count>PAINT_SAMPLES*PAINT_SAMPLES || c.ecotope_count>ECOTOPES_MAX*PAINT_SAMPLES*PAINT_SAMPLES || c.point_count>POINTS_CELL_MAX {return {},{kind=.Cell}}
+        if !range_in(c.ecotope_first,c.ecotope_count,len(paint)) || !range_in(c.point_first,c.point_count,len(points)) {return {},unread}
         next_paint=c.ecotope_first+c.ecotope_count
+        next_point=c.point_first+c.point_count
     }
-    if int(next_text)!=len(text) || int(next_symbol)!=len(defs) || int(next_paint)!=len(paint) {return {},unread}
+    if int(next_text)!=len(text) || int(next_symbol)!=len(defs) || int(next_paint)!=len(paint) || int(next_point)!=len(points) {return {},unread}
     read:Pcg_Source
     source_init(&read,allocator)
     read.info=info^
@@ -536,11 +749,12 @@ source_read :: proc(s:^Pcg_Source,file:^asset.Asset,types:^asset.Types,allocator
     }
     for c in cells {
         if !ok {break}
-        held:=Pcg_Cell{coord=c.coord,density=make([dynamic]u8,allocator),ecotopes=make([dynamic]u8,allocator)}
+        held:=Pcg_Cell{coord=c.coord,density=make([dynamic]u8,allocator),ecotopes=make([dynamic]u8,allocator),points=make([dynamic]Pcg_Point,allocator)}
         _,e0:=append(&held.density,..paint[c.density_first:][:c.density_count])
         _,e1:=append(&held.ecotopes,..paint[c.ecotope_first:][:c.ecotope_count])
-        _,e2:=append(&read.cells,held)
-        if e0!=nil || e1!=nil || e2!=nil {delete(held.density);delete(held.ecotopes);ok=false}
+        _,e2:=append(&held.points,..points[c.point_first:][:c.point_count])
+        _,e3:=append(&read.cells,held)
+        if e0!=nil || e1!=nil || e2!=nil || e3!=nil {delete(held.density);delete(held.ecotopes);delete(held.points);ok=false}
     }
     if !ok {source_destroy(&read);return {},{kind=.Memory}}
     if issue=source_compile(&read);issue.kind!=.None {source_destroy(&read);return}

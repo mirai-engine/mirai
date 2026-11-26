@@ -40,7 +40,7 @@ Step :: struct {
 }
 
 @(private)
-cell_free :: proc(c:^pcg.Pcg_Cell) {delete(c.density);delete(c.ecotopes);c^={}}
+cell_free :: proc(c:^pcg.Pcg_Cell) {delete(c.density);delete(c.ecotopes);delete(c.points);c^={}}
 
 @(private)
 layers_free :: proc(layers:^[dynamic]pcg.Pcg_Layer,allocator:=context.allocator) {
@@ -64,14 +64,17 @@ cell_clone :: proc(c:^pcg.Pcg_Cell) -> (copied:pcg.Pcg_Cell,ok:bool) {
     error:mem.Allocator_Error
     if copied.density,error=make([dynamic]u8,len(c.density));error!=nil {return {},false}
     if copied.ecotopes,error=make([dynamic]u8,len(c.ecotopes));error!=nil {delete(copied.density);return {},false}
+    if copied.points,error=make([dynamic]pcg.Pcg_Point,len(c.points));error!=nil {delete(copied.density);delete(copied.ecotopes);return {},false}
     copy(copied.density[:],c.density[:])
     copy(copied.ecotopes[:],c.ecotopes[:])
+    copy(copied.points[:],c.points[:])
     return copied,true
 }
 
 @(private)
 cell_same :: proc(a,b:^pcg.Pcg_Cell) -> bool {
-    return mem.compare(a.density[:],b.density[:])==0 && mem.compare(a.ecotopes[:],b.ecotopes[:])==0
+    return mem.compare(a.density[:],b.density[:])==0 && mem.compare(a.ecotopes[:],b.ecotopes[:])==0 &&
+        mem.compare(mem.slice_to_bytes(a.points[:]),mem.slice_to_bytes(b.points[:]))==0
 }
 
 layer_same :: proc(a,b:^pcg.Pcg_Layer) -> bool {

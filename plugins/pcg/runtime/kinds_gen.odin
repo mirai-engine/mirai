@@ -6,4 +6,4 @@ import "mirai:asset"
 
 PCG_KIND :: asset.Fourcc(u32('P')|u32('C')<<8|u32('G')<<16|u32('G')<<24)
 PCG_EXTENSION :: ".pcg"
-PCG_VERSION :: 1
+PCG_VERSION :: 2

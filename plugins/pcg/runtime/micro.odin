@@ -26,25 +26,41 @@ source_micro :: proc "contextless" (s:^Pcg_Source) -> bool {
 }
 
 // The squares of a cell the points that stand cover, into o, and its hash
-// (0 when none is covered): those of the cells around count where they reach in.
+// (0 when none is covered): those of the cells around count where they reach
+// in, including authored points of Macro/Meso layers in the 3 by 3 cells.
 @(private)
-occupancy_raster :: proc(o:^Occupancy,cell_size:f32,stood:[]Stood) -> (hash:u64) {
+occupancy_raster :: proc(o:^Occupancy,cell_size:f32,stood:[]Stood,s:^Pcg_Source=nil,coord:[2]i32={}) -> (hash:u64) {
     o^={}
     if !(cell_size>0) {return 0}
     step:=cell_size/KEPT_SIDE
     any:=false
-    for st in stood {
-        r:=st.reach
-        if !(r>0) {continue}
-        first:=[2]int{int(math.floor((st.at.x-r)/step)),int(math.floor((st.at.y-r)/step))}
-        last:=[2]int{int(math.floor((st.at.x+r)/step)),int(math.floor((st.at.y+r)/step))}
+    mark :: proc "contextless" (o:^Occupancy,step:f32,at:[2]f32,r:f32,any:^bool) {
+        if !(r>0) {return}
+        first:=[2]int{int(math.floor((at.x-r)/step)),int(math.floor((at.y-r)/step))}
+        last:=[2]int{int(math.floor((at.x+r)/step)),int(math.floor((at.y+r)/step))}
         for v in max(first.y,0)..=min(last.y,KEPT_SIDE-1) {
             for u in max(first.x,0)..=min(last.x,KEPT_SIDE-1) {
-                d:=[2]f32{(f32(u)+0.5)*step-st.at.x,(f32(v)+0.5)*step-st.at.y}
+                d:=[2]f32{(f32(u)+0.5)*step-at.x,(f32(v)+0.5)*step-at.y}
                 if d.x*d.x+d.y*d.y>r*r {continue}
                 k:=v*KEPT_SIDE+u
                 o[k>>6]|=1<<(uint(k)&63)
-                any=true
+                any^=true
+            }
+        }
+    }
+    for st in stood {mark(o,step,st.at,st.reach,&any)}
+    if s!=nil {
+        corner:=cell_corner(cell_size,coord)
+        for dz in i32(-1)..=i32(1) {
+            for dx in i32(-1)..=i32(1) {
+                cell:=source_cell(s,coord+{dx,dz})
+                if cell==nil || len(cell.points)==0 {continue}
+                for pt in cell.points {
+                    l,_:=source_layer(s,pt.layer)
+                    if l==nil || l.tier==.Micro || !(l.radius>0) {continue}
+                    r:=l.radius*max(pt.scale.x,pt.scale.z)
+                    mark(o,step,{pt.position.x-corner.x,pt.position.z-corner.z},r,&any)
+                }
             }
         }
     }
