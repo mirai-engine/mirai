@@ -914,3 +914,50 @@ authored_points_round_trip_emit_without_ground_and_occupy_micro :: proc(t:^testi
     placed_after,_,_:=pcg_cell(&f.generated,graph,{0,0})
     testing.expect_value(t,len(placed_after),0)
 }
+
+@(test)
+ground_layers_canonical_and_reporting :: proc(t:^testing.T) {
+    a,b,c:=base.Asset_Id{1,1},base.Asset_Id{1,2},base.Asset_Id{2,1}
+    w1,l1:=ground_layers_canonical({200,55,0,0},{b,a,c,{}})
+    w2,l2:=ground_layers_canonical({55,200,0,0},{a,b,{},{}})
+    testing.expect_value(t,l1,Ground_Layers{a,b,{},{}})
+    testing.expect_value(t,l1,l2)
+    testing.expect_value(t,w1,[4]u8{55,200,0,0})
+    testing.expect_value(t,w2,[4]u8{55,200,0,0})
+
+    // A probe returning >TILE_LAYERS distinct canonical sets in one cell reports pcg.layers
+    // only when the graph actually uses ground-layer rules.
+    many_layers_probe :: proc(user:rawptr,at,down:mm.Vec3) -> (hit:core.Ground_Hit,found:core.Ground_Found) {
+        ix:=u64(int(at.x*4)+1000)
+        iz:=u64(int(at.z*4)+1000)
+        return {point={at.x,0,at.z},normal={0,1,0},weights={255,0,0,0},layers={0={9,ix*10000+iz+1}}},.Ground
+    }
+    many_layers_open :: proc(w:core.World_Read) -> (core.Ground_Query,bool) {
+        return {probe=many_layers_probe,spacing=1},true
+    }
+    Case :: struct {name:string,with_rule:bool,expect_problem:bool}
+    cases:=[?]Case{
+        {"authored/no ground layer rule stays quiet",false,false},
+        {"active ground layer rule reports overflow",true,true},
+    }
+    for tc in cases {
+        f:=new(Pcg_Test);defer free(f)
+        if !test_init(t,f) {return}
+        defer test_destroy(f)
+        f.queries.open=many_layers_open
+        src:Pcg_Source
+        source_init(&src);defer source_destroy(&src)
+        l:=source_layer_add(&src,.Scatter,.Macro)
+        testing.expect(t,l!=nil)
+        l.params.density=0.02
+        if tc.with_rule {l.ground_rule={enabled=true,slope={0,1.5},height={-10,10},layers={0={9,1}},weight=0.5}}
+        testing.expect_value(t,source_compile(&src),Pcg_Issue{})
+        graph:=test_graph(f,&src,{0x77,tc.with_rule?1:2})
+        core.add(&f.volumes,graph,volume.box({64,20,64}))
+        test_world_settle(&f.w)
+        before:=f.problems.count
+        for _ in 0..<8 {test_step(f)}
+        reported:=f.problems.count>before
+        testing.expectf(t,reported==tc.expect_problem,"%s: pcg.layers reported=%v expected=%v",tc.name,reported,tc.expect_problem)
+    }
+}

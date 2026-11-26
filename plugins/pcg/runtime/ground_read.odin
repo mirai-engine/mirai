@@ -438,12 +438,43 @@ queue_order :: proc(ground:^Pcg_Ground,data:^Pcg_Data,graphs:^core.Table(Pcg_Gra
 }
 
 // The Ground_Layers a tile meets, which its samples index while it is read.
-@(private) TILE_LAYERS :: 8
+@(private) TILE_LAYERS :: 64
 @(private)
 Tile_Layers :: struct {
     items:[TILE_LAYERS]Ground_Layers,
     count:int,
     over:bool, // more than TILE_LAYERS: the samples of those have no layers
+}
+
+// Whether any layer of s filters placement by ground material layers.
+@(private)
+source_uses_ground_layers :: proc "contextless" (s:^Pcg_Source) -> bool {
+    for l in s.layers {if l.ground_rule.enabled && l.ground_rule.layers!={} {return true}}
+    return false
+}
+
+// Canonicalizes a ground sample's (weights, layers) so order of dominance does not multiply
+// distinct Ground_Layers keys across a multi-layer terrain: zero-weight slots are dropped and
+// active slots are ordered by material Asset_Id.
+@(private)
+ground_layers_canonical :: proc "contextless" (weights:[4]u8,layers:Ground_Layers) -> (out_w:[4]u8,out_l:Ground_Layers) {
+    n:=0
+    for i in 0..<4 {
+        w,m:=weights[i],layers[i]
+        if w==0 || m=={} {continue}
+        out_w[n],out_l[n]=w,m
+        n+=1
+    }
+    for i in 1..<n {
+        w,m:=out_w[i],out_l[i]
+        j:=i
+        for j>0 && (m[0]<out_l[j-1][0] || m[0]==out_l[j-1][0] && m[1]<out_l[j-1][1]) {
+            out_w[j],out_l[j]=out_w[j-1],out_l[j-1]
+            j-=1
+        }
+        out_w[j],out_l[j]=w,m
+    }
+    return
 }
 
 // A tile read in a job.
@@ -455,6 +486,7 @@ Tile_Work :: struct {
     samples:int,
     sparse:bool,
     coarse:bool, // SAMPLES_MIN a side, for a cell without a tile, whose task stays queued
+    uses_layers:bool,
     keys:[]u16,
     heights:[]f32,
     weights:[]Layer_Weights,
@@ -487,11 +519,13 @@ tile_sample :: proc(q:^core.Ground_Query,w:^Tile_Work) -> (any:bool) {
         if found!=.Ground {continue}
         w.heights[i]=mm.mat4_point(w.frame_local,hit.point).y
         if hit.weights=={} {continue}
+        weights,layers:=ground_layers_canonical(hit.weights,hit.layers)
+        if weights=={} {continue}
         at:=0
-        for at<w.layers.count && w.layers.items[at]!=hit.layers {at+=1}
+        for at<w.layers.count && w.layers.items[at]!=layers {at+=1}
         if at==TILE_LAYERS {w.layers.over=true;continue}
-        if at==w.layers.count {w.layers.items[at]=hit.layers;w.layers.count+=1}
-        w.weights[i]={hit.weights,u8(at)}
+        if at==w.layers.count {w.layers.items[at]=layers;w.layers.count+=1}
+        w.weights[i]={weights,u8(at)}
     }
     return
 }
@@ -588,7 +622,7 @@ ground_read :: proc(ground:^Pcg_Ground,q:^core.Ground_Query,data:^Pcg_Data,graph
         held:=ground_tile_find(o.owner,task.coord)
         sparse:=!task.fine && !tile_fine(&near,o.owner.cell_size,task.coord,held>=0 && o.owner.tiles[held].pool!=SPARSE_POOL)
         n:=int(o.owner.samples)
-        w:=Tile_Work{task=task,frame_world=o.frame_world,frame_local=o.frame_local,cell_size=o.owner.cell_size,samples=n,sparse=sparse}
+        w:=Tile_Work{task=task,frame_world=o.frame_world,frame_local=o.frame_local,cell_size=o.owner.cell_size,samples=n,sparse=sparse,uses_layers=source_uses_ground_layers(s)}
         count:=n*n
         if sparse {
             if !sparse_keys(s,graph_seed(s.info.seed,o.graph.seed),task.coord,n,fine_reach(s),&keys) {
@@ -611,7 +645,7 @@ ground_read :: proc(ground:^Pcg_Ground,q:^core.Ground_Query,data:^Pcg_Data,graph
         o:=task_owner(ground,data,graphs,at,task)
         if !o.ok || task.fine || o.owner.samples<=SAMPLES_MIN || ground_tile_find(o.owner,task.coord)>=0 {continue}
         count:=SAMPLES_MIN*SAMPLES_MIN
-        w:=Tile_Work{task=task,frame_world=o.frame_world,frame_local=o.frame_local,cell_size=o.owner.cell_size,samples=SAMPLES_MIN,coarse=true}
+        w:=Tile_Work{task=task,frame_world=o.frame_world,frame_local=o.frame_local,cell_size=o.owner.cell_size,samples=SAMPLES_MIN,coarse=true,uses_layers=source_uses_ground_layers(&o.entry.source)}
         w.heights,w.weights=make([]f32,count,context.temp_allocator),make([]Layer_Weights,count,context.temp_allocator)
         w.kept=make([]u64,KEPT_WORDS,context.temp_allocator)
         append(&reading.work,w)
@@ -646,7 +680,7 @@ ground_read :: proc(ground:^Pcg_Ground,q:^core.Ground_Query,data:^Pcg_Data,graph
             if !known[sample.layers] {sample={};continue}
             sample.layers=index[sample.layers]
         }
-        if w.layers.over || slice.contains(known[:w.layers.count],false) {
+        if w.uses_layers && (w.layers.over || slice.contains(known[:w.layers.count],false)) {
             core.report(problems,w.task.entity,"pcg.layers","the ground under cell %v of this Pcg_Graph has more terrains with other layers than it keeps apart (%d in a cell, GROUND_LAYERS_MAX in all), so a ground rule takes none of the ground of some of them: give the terrains under it the same layers, or fewer terrains",w.task.coord,TILE_LAYERS)
         }
         if w.sparse {
