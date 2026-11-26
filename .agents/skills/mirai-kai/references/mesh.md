@@ -187,11 +187,13 @@ or anonymous (an empty claim). The namespace decides who reads it:
   grant. Records of one key with different outputs are both kept and flagged nondeterministic: the
   build is not deterministic and the mesh says so instead of choosing.
 - A lookup asks the store, then LAN peers, then the rest, and answers `Found` only once every object
-  of the output is whole here, or `Missing` once `DDC_SECONDS` pass with nothing of it arriving
-  (`ddc_lookup_stalled`): an output of any size comes whole over a link that delivers, and the
-  cook waits as long as the runner says it does. Lookups at once and the uses a
-  ddc node remembers have fixed tables: one lookup more is a miss, one use more replaces the
-  oldest.
+  of an output is whole here. The outputs of every record of the key are asked together, since one
+  whose producer is away does not come, and the first whole is the result. It answers `Missing` at
+  once when no peer has a record and none is on its way, or once `DDC_SECONDS` pass with nothing
+  arriving, of its outputs or of what else its agent asked before them (`ddc_lookup_stalled`): an
+  output of any size comes whole over a link that delivers, and the cook waits as long as the runner
+  says it does. A lookup that ends lets go of what it asked. Lookups at once and the uses a ddc node
+  remembers have fixed tables: one lookup more is a miss, one use more replaces the oldest.
 - An output built from private inputs inherits their scopes: it is sealed under the newest epoch of
   every one at once, so only a device that reads them all opens it ([private
   files](private.md#what-a-peer-sees)). It is sealed and opened a chunk at a time, as a private

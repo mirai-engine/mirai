@@ -228,10 +228,10 @@ DDC_Lookup :: struct {
     lan_done:bool,
     queries:[AGENT_PEERS]exchange.Query,
     query_used:[AGENT_PEERS]bool,
-    output:store.Hash, // the output_root of a record that came
+    output:store.Hash, // the output_root of the first record that came
 }
 
-DDC_SECONDS :: 10.0 // a lookup gives up after this long with nothing of its output arriving
+DDC_SECONDS :: 10.0 // a lookup gives up after this long with nothing arriving, of its output or of anything else its agent asked
 DDC_LOOKUPS_MAX :: 64 // lookups at once; one more is a miss
 
 // Starts the runner of the machine: its socket, an agent for every org it
@@ -1467,19 +1467,25 @@ runner_ddc_ask :: proc(r:^Runner,org:Log_Id,key:store.Hash) -> (state:DDC_State,
     if .DDC in r.desc.modes {runner_ddc_touch(r,org,key)}
     records:=make([dynamic]DDC_Record,context.temp_allocator)
     ddc_lookup(&r.machine.store,org,key,&records)
-    // The first output whole here, else what the first one that reads lacks.
+    // An output whole here, else what every output that reads lacks. The records of a key may name
+    // several outputs (builds that differ between machines), and one whose producer is away does not
+    // come: they are asked together, and the first that is whole is the result.
     lacking:=make([dynamic]store.Hash,context.temp_allocator)
     wanted:store.Hash
     for d in records {
-        clear(&lacking)
-        if _,e:=ddc_output_lacking(&r.machine.store,d.output_root,&lacking);e!=.None {continue}
-        if len(lacking)==0 {
+        at:=len(lacking)
+        if _,e:=ddc_output_lacking(&r.machine.store,d.output_root,&lacking);e!=.None {
+            resize(&lacking,at)
+            continue
+        }
+        if len(lacking)==at {
+            // What the other outputs lacked is asked for no longer.
+            for m in lacking {agent_forget_object(&served.agent,m)}
             runner_ddc_end(r,org,key)
             r.ddc_found+=1
             return .Found,d.output_root
         }
-        wanted=d.output_root
-        break
+        if wanted=={} {wanted=d.output_root}
     }
     for &l in r.ddc {
         if l.org!=org || l.key!=key {continue}
@@ -1487,6 +1493,8 @@ runner_ddc_ask :: proc(r:^Runner,org:Log_Id,key:store.Hash) -> (state:DDC_State,
         here:=i64(0)
         if wanted!={} {
             l.output=wanted
+            // What else the agent takes from its peers counts: an output waits its turn behind it.
+            here=agent_received(&served.agent)
             for m in lacking {
                 agent_want_object(&served.agent,m)
                 progress,known:=exchange.progress(&served.agent.x,m)
@@ -1494,19 +1502,17 @@ runner_ddc_ask :: proc(r:^Runner,org:Log_Id,key:store.Hash) -> (state:DDC_State,
                 if known {here+=progress.here}
             }
         }
-        if ddc_lookup_stalled(&l,wanted!={}?len(lacking):-1,here,r.now) {
+        // Nothing arrives, or every peer was asked for what the outputs lack and none has it.
+        if ddc_lookup_stalled(&l,wanted!={}?len(lacking):-1,here,r.now) || given_up {
+            for m in lacking {agent_forget_object(&served.agent,m)}
             runner_ddc_end(r,org,key)
             r.ddc_missing+=1
             return .Missing,{}
         }
-        // Every peer was asked for what the output lacks and none has it.
-        if given_up {
-            runner_ddc_end(r,org,key)
-            r.ddc_missing+=1
-            return .Missing,{}
-        }
-        // Every peer answered and none had it, nor is a record on its way.
-        if l.output=={} && l.lan_done && len(served.agent.fetches)==0 {
+        // Every peer answered and none had it, nor is a record of the key on its way.
+        ns_buffer:[len(DDC_PREFIX)+64]u8
+        name_buffer:[64]u8
+        if l.output=={} && l.lan_done && !agent_fetching(&served.agent,ddc_namespace(org,&ns_buffer),store.hex(key,&name_buffer)) {
             asking:=false
             for used in l.query_used {asking||=used}
             if !asking {
@@ -1530,8 +1536,10 @@ runner_ddc_ask :: proc(r:^Runner,org:Log_Id,key:store.Hash) -> (state:DDC_State,
 
 // Whether a lookup that waits gives up at now. lacking: the objects of its
 // output not whole here, -1 while no record came; here: the data bytes of
-// those in the store. An object that came whole, or bytes of one that grew,
-// start its DDC_SECONDS again, as does the record itself.
+// those in the store and the bytes its agent took from every peer, since on
+// a slow link an output waits behind what was asked before it. An object
+// that came whole, or bytes that grew, start its DDC_SECONDS again, as does
+// the record itself.
 ddc_lookup_stalled :: proc(l:^DDC_Lookup,lacking:int,here:i64,now:f64) -> bool {
     if (lacking>=0 && (l.lacking<0 || lacking<l.lacking)) || here>l.here {l.started=now}
     l.lacking,l.here=lacking,here

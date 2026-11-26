@@ -1103,6 +1103,37 @@ agent_want :: proc(a:^Agent,namespace,name:string,address:store.Hash) -> (placed
     return true
 }
 
+// Lets go of an object asked for with agent_want_object.
+agent_forget_object :: proc(a:^Agent,address:store.Hash) {
+    for f,k in a.fetches {
+        if f.kind!=.Object || f.address!=address {continue}
+        unordered_remove(&a.fetches,k)
+        exchange.forget(&a.x,address)
+        a.dirty=true
+        return
+    }
+}
+
+// Whether what a peer said the ref names is being fetched, or waits for room to be.
+agent_fetching :: proc(a:^Agent,namespace,name:string) -> bool {
+    for &f in a.fetches {
+        if f.kind!=.Object && string(f.namespace[:f.namespace_len])==namespace && string(f.name[:f.name_len])==name {return true}
+    }
+    for &h in a.hints {
+        if string(h.namespace[:h.namespace_len])==namespace && string(h.name[:h.name_len])==name {return true}
+    }
+    return false
+}
+
+// The chunk bytes every connected peer gave this end so far.
+agent_received :: proc(a:^Agent) -> (bytes:i64) {
+    for p in a.peers {
+        if !p.used {continue}
+        if progress,ok:=exchange.peer_progress(&a.x,p.host,p.connection);ok {bytes+=i64(progress.received)}
+    }
+    return
+}
+
 @(private)
 agent_want_object :: proc(a:^Agent,address:store.Hash) {
     for f in a.fetches {
