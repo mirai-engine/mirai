@@ -898,10 +898,11 @@ index_merge :: proc(index:^Stat_Index,updates:[]Index_Update) -> Error {
     return .None
 }
 
-// A new empty change on parents as this workspace's working copy, written.
-workspace_new :: proc(w:^Workspace,parents:[]Revision,description:="") -> (revision:Revision,error:Error) {
+// A new empty change on parents as this workspace's working copy, written;
+// closing describes the working change it leaves (change_new).
+workspace_new :: proc(w:^Workspace,parents:[]Revision,description:="",closing:Maybe(string)=nil) -> (revision:Revision,error:Error) {
     workspace_snapshot(w) or_return
-    revision=change_new(&w.repo,parents,description) or_return
+    revision=change_new(&w.repo,parents,description,closing) or_return
     c:=change_get(w.repo.s,revision,context.temp_allocator) or_return
     checkout(w,c.tree) or_return
     return

@@ -297,9 +297,22 @@ editor_kai_new_change_takes_only_the_checked_files :: proc(t:^testing.T) {
     testing.expect_value(t,kai_paths(w,working),"c.txt")
     testing.expect(t,kai_checked(st,"c.txt"),"after New change every file is checked again")
 
-    // Every file checked: a new empty change; none checked: refused.
-    testing.expect_value(t,kai_new_checked(s,""),"")
-    testing.expect(t,kai_paths(w,vcs.repo_working(&w.repo))=="" && kai_paths(w,working)=="c.txt")
+    // Every file checked: the text typed names the change that closes, the new
+    // one is empty and has none, and one undo takes both back.
+    testing.expect_value(t,kai_new_checked(s,"c alone"),"")
+    after:=vcs.repo_working(&w.repo)
+    c,_=vcs.change_get(w.repo.s,after,context.temp_allocator)
+    closed,_=vcs.change_get(w.repo.s,c.parents[0],context.temp_allocator)
+    testing.expect(t,c.description=="" && closed.description=="c alone","the description goes to the change that closes")
+    testing.expect(t,kai_paths(w,after)=="" && kai_paths(w,c.parents[0])=="c.txt")
+    // A change with no file and no description, and none typed: nothing closes.
+    testing.expect(t,strings.contains(kai_new_checked(s,""),"empty"))
+    testing.expect(t,vcs.repo_working(&w.repo)==after,"no change is stacked on an empty one")
+    _,refused:=kai_undo(s)
+    testing.expect_value(t,refused,"")
+    c,_=vcs.change_get(w.repo.s,vcs.repo_working(&w.repo),context.temp_allocator)
+    testing.expect(t,c.description=="" && kai_paths(w,vcs.repo_working(&w.repo))=="c.txt","one undo opens the change again, undescribed")
+    // None checked: refused.
     kai_write(t,s,fmt.tprintf("%s/e.txt",k.root),transmute([]u8)string("e"))
     kai_checks_reset(st,true)
     testing.expect(t,strings.contains(kai_new_checked(s,""),"No file is checked"))
@@ -606,6 +619,31 @@ kai_panel_stable :: proc(t:^testing.T,s:^Session,what:string,loc:=#caller_locati
         kai_panel_still(t,s,loc=loc)
     }
     testing.expectf(t,heap.total_allocation_count==0 && temp.total_allocation_count==0,"%s: a stable frame allocates nothing (%d, %d)",what,heap.total_allocation_count,temp.total_allocation_count,loc=loc)
+}
+
+// A machine of the store that does not open (here its X25519 key does not
+// read) leaves a workspace with no team: the view names no org, Team says why
+// and Changes draws, instead of reading the org at an index nothing set.
+@(test)
+editor_kai_team_view_of_a_machine_that_does_not_open_says_why :: proc(t:^testing.T) {
+    k:=new(Kai_Fixture);defer free(k)
+    if !kai_fixture_init(t,k,"kai-team-closed") {return}
+    defer kai_fixture_destroy(k)
+    s:=&k.s
+    ctx:ui.Context
+    if !testing.expect(t,test_ui_init(&ctx,{})) {return}
+    defer ui.context_destroy(&ctx)
+    k.gui.ctx,k.gui.begun=&ctx,true
+    testing.expect(t,os.write_entire_file(fmt.tprintf("%s/%s",s.store.root,vcs.DH_FILE),transmute([]u8)string("short"))==nil)
+    testing.expect_value(t,kai_enable(s),"")
+    if !testing.expect(t,kai_workspace(s)!=nil) {return}
+    team:=&s.kai.state.team
+    testing.expect(t,!team.opened && team.view.org<0 && len(team.view.orgs)==0,"no machine, no org")
+    for tab in Kai_Tab {
+        team.tab=tab
+        kai_panel_still(t,s)
+    }
+    testing.expect(t,team.machine.why!="","the machine says why it does not open")
 }
 
 // The team views draw what was read, and a frame that changes nothing

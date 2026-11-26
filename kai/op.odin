@@ -566,10 +566,23 @@ heads_enforce :: proc(tx:^Tx) -> Error {
     return .None
 }
 
-// A new empty change on parents, made this workspace's working copy.
-change_new :: proc(r:^Repo,parents:[]Revision,description:="") -> (revision:Revision,error:Error) {
+// A new empty change on parents, made this workspace's working copy. closing,
+// when given, describes the working change it leaves, in the same operation:
+// a parent that names that change is the change as described.
+change_new :: proc(r:^Repo,parents:[]Revision,description:="",closing:Maybe(string)=nil) -> (revision:Revision,error:Error) {
     if len(parents)==0 || len(parents)>PARENTS_MAX {return {},.Invalid_Argument}
     tx:=tx_begin(r) or_return
+    on:[PARENTS_MAX]Revision
+    copy(on[:],parents)
+    parents:=on[:len(parents)]
+    if text,given:=closing.?;given {
+        working:=repo_working(r)
+        if working=={} {return {},.Stale}
+        closed:=change_rewrite(&tx,working,text,{}) or_return
+        for &p in parents {
+            if p==working {p=closed}
+        }
+    }
     tree:=parents_tree(r,parents) or_return
     revision=change_create(&tx,parents,tree,description) or_return
     workspace_point(&tx,r.workspace,revision) or_return

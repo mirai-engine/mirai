@@ -92,6 +92,9 @@ derived data cache that use it decide what a ref means and what is live.
 - A read pass that looks up many refs or objects borrows the store with `read_index`. It reads
   the root once, or uses the index from `open` when the owner just opened it. The borrow shares
   the owner's index, so it sees local writes and must end before the owner closes the store.
+- A value holds a descriptor per pack it loaded, and loads every pack no generation folds: only
+  a sweep bounds them. `open` raises the process's limit of open files to what the system allows
+  (`files_limit_raise`), since a shell or a desktop hands a process a few hundred.
 - Only a sweep writes a generation, one sweep at a time by the claim it creates in `tmp/sweep`; a
   claim of a holder that ended is taken by moving it aside and checking it is the one judged, and
   a generation is published only where none of that number is, so exactly one sweep owns it. It
@@ -178,6 +181,7 @@ derived data cache that use it decide what a ref means and what is live.
   `a_full_volume_is_no_space_and_a_sweep_frees_it`, `a_scrub_tombstones_a_damaged_chunk`,
   `hostile_packs_and_generations_are_refused`, `hostile_inputs_return_errors` and
   `fresh_leases_keep_their_current_addresses`, `a_chunk_check_tombstones_a_damaged_copy`,
+  `opening_a_store_raises_the_limit_of_open_files`,
   `frames_compress_and_addresses_are_of_the_bytes`,
   `a_damaged_encoded_frame_is_a_damaged_chunk`, `hostile_chunk_frames_are_refused`; for
   chunks and nodes

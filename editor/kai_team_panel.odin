@@ -375,6 +375,11 @@ kai_team_build :: proc(s:^Session) {
     v:=&t.view
     f:=&t.fields
     text:[160]u8
+    if !t.opened {
+        kai_line(ctx,"The machine of the store does not open, and the team needs it: open the project again once it does.","danger")
+        kai_line(ctx,t.machine.why)
+        return
+    }
     kai_line(ctx,kai_runner_text(t))
     me:=&v.identity
     kai_head(ctx,"IDENTITY",len(me.devices))

@@ -107,6 +107,7 @@ open :: proc(root:string,allocator:=context.allocator) -> (s:Store,error:Error) 
     for c in transmute([]u8)trimmed {
         if c==0 {return {},.Invalid_Argument}
     }
+    files_limit_raise()
     folder_make(trimmed) or_return
     fresh:=layout_check(trimmed) or_return
     buffer:[PATH_BYTES]u8

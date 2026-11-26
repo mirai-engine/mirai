@@ -207,6 +207,8 @@ kai_attach :: proc(s:^Session,create:bool) -> vcs.Error {
     }
     k.error=.None
     k.state=st
+    // No org until the team is read: a machine that does not open reads nothing.
+    st.team.view.org=-1
     if s.edits!=nil {st.seen_state,st.seen_epoch=s.edits.serial,s.edits.epoch}
     if s.app!=nil && s.app.platform!=nil {
         if watch,error:=platform.watch_create(s.app.platform,{path=s.project_root,recursive=true,file_capacity=1<<16});error==.None {
@@ -443,21 +445,32 @@ kai_checks_reset :: proc(st:^Kai_State,unchecked:bool) {
 
 // Closes the working change with the files checked in CHANGES, described with
 // description when given, and leaves the others in a new working change; with
-// every file checked, a new change as kai_new. The files are read again after
-// the snapshot, so one that changed since the click goes by its own check.
+// every file checked, the new working change is empty. Either way the text
+// typed names the change that closes, never the one that starts, and it is
+// one operation. A change with one parent, no file and no description, with
+// none typed, has nothing to close. The files are read again after the
+// snapshot, so one that changed since the click goes by its own check.
 kai_new_checked :: proc(s:^Session,description:string) -> string {
     w,message:=kai_prepare(s)
     if w==nil {return message}
     st:=s.kai.state
+    working:=vcs.repo_working(&w.repo)
     diffs:=make([dynamic]vcs.Diff,context.temp_allocator)
-    if e:=ka.diff(w,vcs.repo_working(&w.repo),&diffs);e!=.None {return kai_finish(s,e,nil)}
+    if e:=ka.diff(w,working,&diffs);e!=.None {return kai_finish(s,e,nil)}
     picked:=make([dynamic]string,0,len(diffs),context.temp_allocator)
     for d in diffs {
         if kai_checked(st,d.path) {append(&picked,d.path)}
     }
     if len(picked)==len(diffs) {
+        if len(diffs)==0 && description=="" {
+            c,e:=vcs.change_get(w.repo.s,working,context.temp_allocator)
+            if e!=.None {return kai_finish(s,e,nil)}
+            if c.description=="" && len(c.parents)<=1 {return "The working change is empty: change a file or describe it, then New change closes it"}
+        }
         changed:=make([dynamic]string,context.temp_allocator)
-        _,e:=ka.new_change(w,nil,description,&changed)
+        closing:Maybe(string)
+        if description!="" {closing=description}
+        _,e:=ka.new_change(w,nil,"",&changed,closing=closing)
         if e==.None {kai_checks_reset(st,false)}
         return kai_finish(s,e,changed[:])
     }

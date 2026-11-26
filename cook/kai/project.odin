@@ -303,14 +303,15 @@ restore :: proc(w:^vcs.Workspace,from:vcs.Revision,changed:^[dynamic]string,allo
 // A new change on parents (the working copy when none) as the working copy,
 // written, with the private files this device reads: what public files that
 // changed. With several parents their trees merge, and what does not merge is
-// a conflict in its files.
-new_change :: proc(w:^vcs.Workspace,parents:[]vcs.Revision,description:string,changed:^[dynamic]string,allocator:=context.temp_allocator) -> (revision:vcs.Revision,error:vcs.Error) {
+// a conflict in its files. closing, when given, describes the working change
+// it leaves, in the same operation.
+new_change :: proc(w:^vcs.Workspace,parents:[]vcs.Revision,description:string,changed:^[dynamic]string,allocator:=context.temp_allocator,closing:Maybe(string)=nil) -> (revision:vcs.Revision,error:vcs.Error) {
     snapshot(w) or_return
     before:=w.state.tree
     on:=parents
     working:=[1]vcs.Revision{vcs.repo_working(&w.repo)}
     if len(on)==0 {on=working[:]}
-    revision=vcs.workspace_new(w,on,description) or_return
+    revision=vcs.workspace_new(w,on,description,closing) or_return
     vcs.overlay_checkout(w.repo.overlay,w.repo.s,w.root,working[0],revision) or_return
     return revision,files_changed(w,before,changed,allocator)
 }

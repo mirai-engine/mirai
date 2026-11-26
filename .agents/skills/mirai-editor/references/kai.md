@@ -50,6 +50,10 @@ the tab reads the detail again on the team's poll, a method waits for them.
 - Undo takes back the newest operation of the repository, as
   [Kai defines it](../../mirai-kai/references/model.md#operations-and-undo); it is not the undo of
   the document.
+- New change closes the working change and starts an empty one on it; the text typed names the
+  change that closes, never the one that starts, in the same operation (`closing` of
+  `ka.new_change`). With no file changed, no description and none typed there is nothing to close
+  and it says so. `kai.new` and `mirai kai new -m` describe the change they start.
 - Each file of CHANGES has a check, all on by default; New change with some off splits instead
   (`ka.split`, `kai.split`, `mirai kai split`), the description going to the closed half. Checks
   are kept by path, and the files are read again after the snapshot: a file that appeared since is
@@ -61,6 +65,8 @@ the tab reads the detail again on the team's poll, a method waits for them.
 
 ## Team
 
+- A machine of the store that does not open leaves the workspace with no team: Team says why and
+  the other views work.
 - The editor owns the machine's runner while it is open (`editor/kai_team.odin`): once the
   machine has a user or an org, or a pairing starts, it runs it in a thread of its own. When a
   `mirai kai agent` or another editor already runs it for the store, the editor reaches that one.
@@ -136,8 +142,11 @@ the tab reads the detail again on the team's poll, a method waits for them.
   shows and the detail of each kind of file, a merge with a conflict resolved by field, undo and
   redo.
 - `editor_kai_new_change_takes_only_the_checked_files` (`editor/kai_test.odin`): `kai.split` and
-  New change with files unchecked while the list changes; the split itself is
+  New change with files unchecked while the list changes, and with all checked the text naming
+  the change that closes; the split itself is
   `a_change_splits_by_paths_and_undoes_in_one_operation` in `kai`.
+- `editor_kai_team_view_of_a_machine_that_does_not_open_says_why` (`editor/kai_test.odin`): the
+  views of a workspace whose machine does not open.
 - `collab_coauthorship_and_agent_turns_record_in_change` (`editor/collab_share_test.odin`): the
   key of a guest and the turn of an agent recorded in the host's change.
 - `editor_kai_pairs_and_lands_a_proposal` (`editor/kai_test.odin`): two editors with their stores

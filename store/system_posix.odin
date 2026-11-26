@@ -26,6 +26,22 @@ rename_folder :: proc(from,to:string) -> os.Error {
     return os.rename(from,to)
 }
 
+// Raises the limit of open files of the process to what the system allows: a
+// value holds a descriptor per pack it loaded, a sweep is what bounds the
+// packs, and a shell or a desktop hands a process a few hundred. macOS
+// refuses the unlimited hard limit it reports, so its bounds per process are
+// tried after it.
+@(private)
+files_limit_raise :: proc() {
+    limit:posix.rlimit
+    if posix.getrlimit(.NOFILE,&limit)!=.OK {return}
+    for bound in ([?]posix.rlim_t{limit.rlim_max,1<<20,61440,10240}) {
+        if bound>limit.rlim_max || bound<=limit.rlim_cur {continue}
+        raised:=posix.rlimit{rlim_cur=bound,rlim_max=limit.rlim_max}
+        if posix.setrlimit(.NOFILE,&raised)==.OK {return}
+    }
+}
+
 // Maps size bytes of file read-only; the mapping outlives the file's name.
 @(private)
 file_map :: proc(file:^os.File,size:i64) -> ([]u8,Error) {

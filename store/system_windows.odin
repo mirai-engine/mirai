@@ -229,6 +229,10 @@ host_name :: proc(buffer:^[HOST_BYTES]u8) {
     windows.WideCharToMultiByte(windows.CP_UTF8,0,cstring16(&wide[0]),i32(size),&buffer[0],HOST_BYTES-1,nil,nil)
 }
 
+// Windows bounds the handles of a process by its memory alone.
+@(private)
+files_limit_raise :: proc() {}
+
 // Maps size bytes of file read-only; the mapping outlives the file's name.
 @(private)
 file_map :: proc(file:^os.File,size:i64) -> ([]u8,Error) {
