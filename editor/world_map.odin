@@ -270,7 +270,7 @@ world_map_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
             color:=shown_color(ctx,item.shown)
             // The dot of a section that loads is what works: it beats while it does.
             if item.shown==.Loading {color=ui.color_alpha(color,u8(110+100*(0.5+0.5*math.sin(f32(ctx.time)*6))))}
-            row:=ui.row(ctx,ui.id(ctx,"world_map_row",index+1),{label=entity_label(w,item.reference),detail=cost.gpu>0?bytes_text(cost.gpu):"",icon=.Dot,icon_color=color,icon_size=12,text_color=item.edited?SECTION_TEXT:{},selected=item.id==m.chosen || m.hovered==index+1,height=OUTLINER_ROW})
+            row:=ui.row(ctx,ui.id(ctx,"world_map_row",index+1),{label=entity_label(w,item.reference),detail=cost.gpu>0?base.bytes_text(cost.gpu):"",icon=.Dot,icon_color=color,icon_size=12,text_color=item.edited?SECTION_TEXT:{},selected=item.id==m.chosen || m.hovered==index+1,height=OUTLINER_ROW})
             if row.clicked {world_map_travel(s,w,m,index)}
             if item.overridden && ui.button(ctx,ui.id(ctx,"world_map_auto",index+1),{icon=.Revert,icon_color=ui.tone(ctx,"text_muted"),icon_size=13,variant="ghost",width=22,height=OUTLINER_ROW}).clicked {
                 if why:=section_view_set(s,w,item.reference,.Active,true);why!="" {notify(s,why)}
@@ -285,7 +285,7 @@ world_map_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
     shown:=m.hovered>0?m.items[m.hovered-1].id:m.chosen
     if shown!=0 {
         cost:=world_map_cost(m,shown)
-        ui.label(ctx,fmt.tprintf("%d entities · %d meshes · %d textures · GPU %s · files %s",cost.entities,cost.meshes,cost.textures,bytes_text(cost.gpu),bytes_text(cost.files)),ui.metric(ctx,"font_label"),ui.tone(ctx,"text_muted"))
+        ui.label(ctx,fmt.tprintf("%d entities · %d meshes · %d textures · GPU %s · files %s",cost.entities,cost.meshes,cost.textures,base.bytes_text(cost.gpu),base.bytes_text(cost.files)),ui.metric(ctx,"font_label"),ui.tone(ctx,"text_muted"))
     }
 }
 
@@ -320,17 +320,6 @@ world_map_cost :: proc(m:^World_Map,id:base.Entity_Id) -> Section_Cost {
         if c.id==id {return c.cost}
     }
     return {}
-}
-
-// A size in bytes as a person reads it.
-@(private)
-bytes_text :: proc(bytes:i64) -> string {
-    switch {
-    case bytes>=1<<30: return fmt.tprintf("%.1f GB",f64(bytes)/(1<<30))
-    case bytes>=1<<20: return fmt.tprintf("%.1f MB",f64(bytes)/(1<<20))
-    case bytes>=1<<10: return fmt.tprintf("%.0f KB",f64(bytes)/(1<<10))
-    }
-    return fmt.tprintf("%d B",bytes)
 }
 
 section_cost :: proc(s:^Session,w:core.World_Ref,reference:core.Entity) -> (cost:Section_Cost) {

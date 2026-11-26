@@ -420,8 +420,8 @@ content_package_state :: proc(s:^Session,p:^Content_Package) -> (text:string,fai
     // A package of a peer's root is not in this machine's library yet: adding takes it, even when its build is here.
     peer:=content_package_peer(s,p)
     switch {
-    case peer<0:     return p.bytes>0 ? vcs.bytes_text(p.bytes) : "",false,""
-    case p.bytes>=0: return fmt.tprintf("%s to fetch",vcs.bytes_text(p.bytes)),false,""
+    case peer<0:     return p.bytes>0 ? base.bytes_text(p.bytes) : "",false,""
+    case p.bytes>=0: return fmt.tprintf("%s to fetch",base.bytes_text(p.bytes)),false,""
     }
     return "To fetch",false,""
 }

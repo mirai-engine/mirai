@@ -453,8 +453,8 @@ collab_join_text :: proc(j:^Collab_Join) -> string {
     case .Snapshot:   return "Asking for the project..."
     case .Files:
         left:=state.left>=0?fmt.tprintf(", %s left",share.seconds_text(state.left)):""
-        return fmt.tprintf("Files: %d of %d, %s of %s, %s/s%s",state.files_done,state.files,vcs.bytes_text(state.bytes_done),vcs.bytes_text(state.bytes),vcs.bytes_text(i64(state.rate)),left)
-    case .Packages:   return fmt.tprintf("Builds: %s, %s/s",vcs.bytes_text(i64(state.received)),vcs.bytes_text(i64(state.rate)))
+        return fmt.tprintf("Files: %d of %d, %s of %s, %s/s%s",state.files_done,state.files,base.bytes_text(state.bytes_done),base.bytes_text(state.bytes),base.bytes_text(i64(state.rate)),left)
+    case .Packages:   return fmt.tprintf("Builds: %s, %s/s",base.bytes_text(i64(state.received)),base.bytes_text(i64(state.rate)))
     case .Done:
     }
     return ""

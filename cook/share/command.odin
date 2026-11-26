@@ -194,7 +194,7 @@ share_command :: proc(args:[]string,output,errors:io.Writer) -> int {
         fmt.wprintfln(errors,"mirai share: %s",offer_error)
         return 1
     }
-    fmt.wprintfln(output,"snapshot of %s: %d files, %s (%d read into the store at %s, %s)",root,o.taken.files,vcs.bytes_text(o.taken.bytes),o.taken.put,s.root,seconds_text(time.duration_seconds(time.tick_since(started))))
+    fmt.wprintfln(output,"snapshot of %s: %d files, %s (%d read into the store at %s, %s)",root,o.taken.files,base.bytes_text(o.taken.bytes),o.taken.put,s.root,seconds_text(time.duration_seconds(time.tick_since(started))))
     if o.taken.sources>0 {fmt.wprintfln(output,"%d sources of built packages left out: joiners take the builds",o.taken.sources)}
     for problem in o.problems {fmt.wprintfln(errors,"warning: a joiner will not get it: %s",problem)}
     h:=new(Udp_Host,context.temp_allocator)
@@ -221,7 +221,7 @@ share_command :: proc(args:[]string,output,errors:io.Writer) -> int {
             status_at=now
             t:=node_totals(n)
             if t.sent!=last.sent || t.connected!=last.connected {
-                fmt.wprintfln(output,"%d connected, %s sent, %s/s",t.connected,vcs.bytes_text(i64(t.sent)),vcs.bytes_text(i64(t.send_rate)))
+                fmt.wprintfln(output,"%d connected, %s sent, %s/s",t.connected,base.bytes_text(i64(t.sent)),base.bytes_text(i64(t.send_rate)))
             }
             last=t
         }
@@ -336,7 +336,7 @@ source_relative :: proc(path:string) -> string {
 event_print :: proc(output:io.Writer,e:Event,connected:int) {
     switch e.kind {
     case .Joined: fmt.wprintfln(output,"peer %d joined (%d connected)",e.peer,connected)
-    case .Left: fmt.wprintfln(output,"peer %d left (%v): %s sent to it, %s received (%d connected)",e.peer,e.reason,vcs.bytes_text(i64(e.sent)),vcs.bytes_text(i64(e.received)),connected)
+    case .Left: fmt.wprintfln(output,"peer %d left (%v): %s sent to it, %s received (%d connected)",e.peer,e.reason,base.bytes_text(i64(e.sent)),base.bytes_text(i64(e.received)),connected)
     }
 }
 
@@ -444,7 +444,7 @@ join_command :: proc(args:[]string,output,errors:io.Writer,library:sources.Libra
     for failure in report.packages.failures {fmt.wprintfln(errors,"mirai join: %s",failure);code=1}
     for missing in report.packages.missing {fmt.wprintfln(errors,"mirai join: %s",missing);code=1}
     fmt.wprintfln(output,"Joined into %s: %d files, %d written, %d removed, %d kept as you left them; %d packages, %d builds fetched; %s received.",
-        report.folder,report.files,report.written,report.removed,len(report.kept),report.packages.packages,report.packages.fetched,vcs.bytes_text(i64(t_received)))
+        report.folder,report.files,report.written,report.removed,len(report.kept),report.packages.packages,report.packages.fetched,base.bytes_text(i64(t_received)))
     if len(report.failed)>0 {
         fmt.wprintfln(errors,"mirai join: incomplete, %d files were not written or removed; fix what each says and run the same join again, which does only those",len(report.failed))
         return 3

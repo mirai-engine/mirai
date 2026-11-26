@@ -6,6 +6,7 @@ import "core:strings"
 import "core:time"
 import "core:unicode/utf8"
 import "mirai:kai"
+import "mirai:std/base"
 import "mirai:store"
 
 // The pages of the web view, made on the server as HTML with no script:
@@ -165,7 +166,7 @@ repo_page :: proc(h:^Hub,v:^Org_Access,i:int,who:^Session,out:^Out) {
     r:=v.org.repos[i]
     b:=page_begin(out,r.name,who)
     org:=v.org.id
-    base:=fmt.tprintf("/%s/%s",id_text(org),id_text(r.id))
+    here:=fmt.tprintf("/%s/%s",id_text(org),id_text(r.id))
     fmt.sbprintf(b,"<p class=\"crumbs\"><a href=\"/%s\">%s</a> /</p><h1>%s</h1>",id_text(org),html(v.org.name),html(r.name))
     refs,_,e:=kai.repo_refs_head(v.s,org,r.id,context.temp_allocator)
     if e!=.None || len(refs.bookmarks)==0 {
@@ -178,7 +179,7 @@ repo_page :: proc(h:^Hub,v:^Org_Access,i:int,who:^Session,out:^Out) {
     for x,k in refs.bookmarks {
         if x.name=="main" {shown=k}
         target:=x.target
-        fmt.sbprintf(b,"<tr><td>%s</td><td><a href=\"%s/c/%s\">%s</a></td><td><a href=\"%s/t/%s\">files</a></td></tr>",html(x.name),base,id_text(target),change_text(v.s,target),base,id_text(target))
+        fmt.sbprintf(b,"<tr><td>%s</td><td><a href=\"%s/c/%s\">%s</a></td><td><a href=\"%s/t/%s\">files</a></td></tr>",html(x.name),here,id_text(target),change_text(v.s,target),here,id_text(target))
     }
     strings.write_string(b,"</table>")
     fmt.sbprintf(b,"<h2>History of %s</h2><table>",html(refs.bookmarks[shown].name))
@@ -187,7 +188,7 @@ repo_page :: proc(h:^Hub,v:^Org_Access,i:int,who:^Session,out:^Out) {
         c,ce:=kai.change_get(v.s,at,context.temp_allocator)
         if ce!=.None {break}
         fmt.sbprintf(b,"<tr><td><a href=\"%s/c/%s\">%s</a></td><td>%s</td><td class=\"muted\">%s</td><td class=\"muted\">%s</td></tr>",
-            base,id_text(at),change_text(v.s,at),html(first_line(c.description)),author(v,c.author),when_text(c.written))
+            here,id_text(at),change_text(v.s,at),html(first_line(c.description)),author(v,c.author),when_text(c.written))
         if len(c.parents)==0 {break}
         at=c.parents[0]
     }
@@ -209,10 +210,10 @@ change_page :: proc(h:^Hub,v:^Org_Access,i:int,text:string,who:^Session,out:^Out
         return
     }
     org:=v.org.id
-    base:=fmt.tprintf("/%s/%s",id_text(org),id_text(r.id))
+    here:=fmt.tprintf("/%s/%s",id_text(org),id_text(r.id))
     b:=page_begin(out,r.name,who)
-    fmt.sbprintf(b,"<p class=\"crumbs\"><a href=\"/%s\">%s</a> / <a href=\"%s\">%s</a> /</p>",id_text(org),html(v.org.name),base,html(r.name))
-    fmt.sbprintf(b,"<h1>%s</h1><p class=\"muted\">%s, %s · <a href=\"%s/t/%s\">files</a></p>",change_text(v.s,revision),author(v,c.author),when_text(c.written),base,text)
+    fmt.sbprintf(b,"<p class=\"crumbs\"><a href=\"/%s\">%s</a> / <a href=\"%s\">%s</a> /</p>",id_text(org),html(v.org.name),here,html(r.name))
+    fmt.sbprintf(b,"<h1>%s</h1><p class=\"muted\">%s, %s · <a href=\"%s/t/%s\">files</a></p>",change_text(v.s,revision),author(v,c.author),when_text(c.written),here,text)
     if c.description!="" {fmt.sbprintf(b,"<pre class=\"text\">%s</pre>",html(c.description))}
     before:store.Hash
     if len(c.parents)>0 {
@@ -220,7 +221,7 @@ change_page :: proc(h:^Hub,v:^Org_Access,i:int,text:string,who:^Session,out:^Out
         strings.write_string(b,"<p>Parents: ")
         for p,k in c.parents {
             p:=p
-            fmt.sbprintf(b,"%s<a href=\"%s/c/%s\">%s</a>",k>0?", ":"",base,id_text(p),change_text(v.s,p))
+            fmt.sbprintf(b,"%s<a href=\"%s/c/%s\">%s</a>",k>0?", ":"",here,id_text(p),change_text(v.s,p))
         }
         strings.write_string(b,"</p>")
     }
@@ -228,7 +229,7 @@ change_page :: proc(h:^Hub,v:^Org_Access,i:int,text:string,who:^Session,out:^Out
     kai.tree_diff(v.s,before,c.tree,&diffs,context.temp_allocator)
     fmt.sbprintf(b,"<h2>%d files changed</h2><table>",len(diffs))
     for d in diffs {
-        fmt.sbprintf(b,"<tr><td class=\"mark\">%c</td><td><a href=\"%s/t/%s/%s\">%s</a></td></tr>",rune(kai.diff_mark(d)),base,text,path_href(d.path),html(d.path))
+        fmt.sbprintf(b,"<tr><td class=\"mark\">%c</td><td><a href=\"%s/t/%s/%s\">%s</a></td></tr>",rune(kai.diff_mark(d)),here,text,path_href(d.path),html(d.path))
     }
     strings.write_string(b,"</table>")
     page_end(b,out)
@@ -274,14 +275,14 @@ tree_page :: proc(h:^Hub,v:^Org_Access,i:int,text,path:string,who:^Session,out:^
         }
     }
     org:=v.org.id
-    base:=fmt.tprintf("/%s/%s",id_text(org),id_text(r.id))
+    here:=fmt.tprintf("/%s/%s",id_text(org),id_text(r.id))
     b:=page_begin(out,r.name,who)
-    fmt.sbprintf(b,"<p class=\"crumbs\"><a href=\"/%s\">%s</a> / <a href=\"%s\">%s</a> / <a href=\"%s/t/%s\">%s</a>",id_text(org),html(v.org.name),base,html(r.name),base,text,change_text(v.s,revision))
+    fmt.sbprintf(b,"<p class=\"crumbs\"><a href=\"/%s\">%s</a> / <a href=\"%s\">%s</a> / <a href=\"%s/t/%s\">%s</a>",id_text(org),html(v.org.name),here,html(r.name),here,text,change_text(v.s,revision))
     walked:=""
     for name in strings.split(path,"/",context.temp_allocator) {
         if name=="" {continue}
         walked=walked==""?name:strings.concatenate({walked,"/",name},context.temp_allocator)
-        fmt.sbprintf(b," / <a href=\"%s/t/%s/%s\">%s</a>",base,text,path_href(walked),html(name))
+        fmt.sbprintf(b," / <a href=\"%s/t/%s/%s\">%s</a>",here,text,path_href(walked),html(name))
     }
     strings.write_string(b,"</p>")
     switch kind {
@@ -291,19 +292,19 @@ tree_page :: proc(h:^Hub,v:^Org_Access,i:int,text,path:string,who:^Session,out:^
         strings.write_string(b,"<table>")
         for x in entries {
             full:=path==""?x.name:strings.concatenate({path,"/",x.name},context.temp_allocator)
-            fmt.sbprintf(b,"<tr><td><a href=\"%s/t/%s/%s\">%s%s</a></td><td class=\"muted\">%s</td></tr>",base,text,path_href(full),html(x.name),x.kind==.Folder?"/":"",x.kind==.Folder?fmt.tprintf("%d files",x.files):bytes_text(x.size))
+            fmt.sbprintf(b,"<tr><td><a href=\"%s/t/%s/%s\">%s%s</a></td><td class=\"muted\">%s</td></tr>",here,text,path_href(full),html(x.name),x.kind==.Folder?"/":"",x.kind==.Folder?fmt.tprintf("%d files",x.files):base.bytes_text(i64(x.size)))
         }
         strings.write_string(b,"</table>")
     case .File,.Executable:
         if size>FILE_SHOWN_MAX {
-            fmt.sbprintf(b,"<p class=\"muted\">%s: too large to show here.</p>",bytes_text(size))
+            fmt.sbprintf(b,"<p class=\"muted\">%s: too large to show here.</p>",base.bytes_text(i64(size)))
             break
         }
         bytes,fe:=kai.file_bytes(v.s,at,context.temp_allocator)
         if fe!=.None {
             strings.write_string(b,"<p class=\"muted\">This server does not hold the file yet.</p>")
         } else if !utf8.valid_string(string(bytes)) || strings.index_byte(string(bytes),0)>=0 {
-            fmt.sbprintf(b,"<p class=\"muted\">A binary file of %s: an asset opens in the editor.</p>",bytes_text(size))
+            fmt.sbprintf(b,"<p class=\"muted\">A binary file of %s: an asset opens in the editor.</p>",base.bytes_text(i64(size)))
         } else {
             fmt.sbprintf(b,"<pre class=\"text\">%s</pre>",html(string(bytes)))
         }
@@ -413,15 +414,6 @@ when_text :: proc(ns:i64) -> string {
     y,m,d:=time.date(t)
     hh,mm,_:=time.clock(t)
     return fmt.tprintf("%04d-%02d-%02d %02d:%02d UTC",y,int(m),d,hh,mm)
-}
-
-@(private)
-bytes_text :: proc(n:u64) -> string {
-    switch {
-    case n>=1<<20: return fmt.tprintf("%.1f MB",f64(n)/f64(1<<20))
-    case n>=1<<10: return fmt.tprintf("%.1f KB",f64(n)/f64(1<<10))
-    }
-    return fmt.tprintf("%d bytes",n)
 }
 
 @(private)
