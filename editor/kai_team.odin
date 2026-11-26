@@ -1,5 +1,6 @@
 package editor
 
+import "base:runtime"
 import "core:fmt"
 import "core:log"
 import vmem "core:mem/virtual"
@@ -163,7 +164,7 @@ kai_agent_start :: proc(s:^Session) -> string {
     if t.running {return ""}
     options:=vcs.Agent_Options{port=0,beacon=true,portmap=true}
     if s.kai.mesh_loopback {options={port=0,host="127.0.0.1"}}
-    if vcs.agent_start(&t.agent,&t.team,options)!=.None {
+    if vcs.agent_start(&t.agent,&t.team,options,runtime.heap_allocator())!=.None {
         t.why_length=copy(t.why[:],t.team.why)
         log.warnf("the Kai agent does not start: %s",t.team.why)
         return fmt.tprintf("The Kai agent does not start: %s",t.team.why)

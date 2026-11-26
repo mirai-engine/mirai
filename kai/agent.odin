@@ -175,12 +175,30 @@ agent_start :: proc(a:^Agent,team:^Team,options:Agent_Options,allocator:=context
 
 @(private)
 agent_thread :: proc(a:^Agent,run:proc(a:^Agent)) {
-    t:=thread.create_and_start_with_poly_data(a,run,context)
+    t:=thread.create_and_start_with_poly_data(a,run,agent_context(a))
     append(&a.threads,t)
+}
+
+// The context of a thread of the agent: the agent's allocator, the caller's
+// logger and a temp allocator of the thread's own, which it frees as it ends
+// (thread_end). Never the caller's context: its temp allocator is another
+// thread's, and an editor's call may give an allocator that ends with it.
+@(private)
+agent_context :: proc(a:^Agent) -> runtime.Context {
+    c:=runtime.default_context()
+    c.allocator=a.allocator
+    c.logger=context.logger
+    return c
+}
+
+// What a thread of the agent frees as it ends: its temp allocator.
+thread_end :: proc() {
+    runtime.default_temp_allocator_destroy(&runtime.global_default_temp_allocator_data)
 }
 
 // Stops the agent: closes every connection and waits for its threads.
 agent_stop :: proc(a:^Agent) {
+    context.allocator=a.allocator
     sync.mutex_lock(&a.lock)
     a.stopping=true
     sync.cond_broadcast(&a.wake)
@@ -336,6 +354,7 @@ agent_event :: proc(a:^Agent,format:string,args:..any) {
 
 @(private)
 agent_accept_run :: proc(a:^Agent) {
+    defer thread_end()
     for {
         socket,remote,e:=net.accept_tcp(a.listener)
         sync.mutex_lock(&a.lock)
@@ -366,6 +385,7 @@ agent_accept_run :: proc(a:^Agent) {
 // zero, the key it must prove; secret, an invite's.
 @(private)
 agent_dial :: proc(a:^Agent,address:string,expect:Key,secret:[32]u8={}) -> (p:^Peer,error:Error) {
+    context.allocator=a.allocator
     c,e:=conn_dial(address,a.team.identity,expect,secret)
     if e!=.None {return nil,e}
     pe,de:runtime.Allocator_Error
@@ -393,7 +413,7 @@ peer_add :: proc(a:^Agent,p:^Peer) -> bool {
     if a.stopping || len(a.peers)>=PEERS_MAX {return false}
     p.told=make(map[Tell_Key]store.Hash)
     append(&a.peers,p)
-    p.reader=thread.create_and_start_with_poly_data(p,peer_read_run,context)
+    p.reader=thread.create_and_start_with_poly_data(p,peer_read_run,agent_context(a))
     return true
 }
 
@@ -503,6 +523,7 @@ write_text :: proc(out:^[dynamic]u8,text:string) {
 // send first, then every message until the connection ends.
 @(private)
 peer_read_run :: proc(p:^Peer) {
+    defer thread_end()
     a:=p.agent
     defer {
         sync.mutex_lock(&p.lock)
@@ -536,8 +557,8 @@ peer_read_run :: proc(p:^Peer) {
     p.ready=true
     sync.mutex_unlock(&p.lock)
     agent_moved(a)
-    p.server=thread.create_and_start_with_poly_data(p,peer_serve_run,context)
-    p.puller=thread.create_and_start_with_poly_data(p,peer_pull_run,context)
+    p.server=thread.create_and_start_with_poly_data(p,peer_serve_run,agent_context(a))
+    p.puller=thread.create_and_start_with_poly_data(p,peer_pull_run,agent_context(a))
     buffer,be:=make([]u8,FRAME_MAX+NOISE_TAG)
     if be!=nil {return}
     defer delete(buffer)
@@ -725,6 +746,7 @@ peer_arrived :: proc(p:^Peer,address:store.Hash,lacked:bool,bytes:int) {
 
 @(private)
 peer_serve_run :: proc(p:^Peer) {
+    defer thread_end()
     a:=p.agent
     buffer,be:=make([]u8,FRAME_MAX)
     if be!=nil {return}
@@ -811,6 +833,7 @@ put_u32 :: proc(out:[]u8,v:u32) {
 
 @(private)
 peer_pull_run :: proc(p:^Peer) {
+    defer thread_end()
     for {
         free_all(context.temp_allocator)
         sync.mutex_lock(&p.lock)
@@ -1216,6 +1239,7 @@ agent_ddc_published :: proc(a:^Agent,org:Org_Id,key:store.Hash,address:store.Has
 
 @(private)
 agent_look_run :: proc(a:^Agent) {
+    defer thread_end()
     last_dial:i64
     mapped:=wire.Port_Mapping_Phase.Pending
     for {
@@ -1331,9 +1355,10 @@ agent_dial_members :: proc(a:^Agent) {
         d.a,d.key=a,t.key
         d.length=copy(d.address[:],t.address)
         th:=thread.create_and_start_with_poly_data(d,proc(d:^Dial) {
+            defer thread_end()
             agent_dial(d.a,string(d.address[:d.length]),d.key)
             free(d)
-        },context,self_cleanup=true)
+        },agent_context(a),self_cleanup=true)
         _=th
     }
 }
@@ -1345,6 +1370,7 @@ agent_dial_members :: proc(a:^Agent) {
 // beacon names proves itself in the handshake, so a beacon proves nothing.
 @(private)
 agent_beacon_run :: proc(a:^Agent) {
+    defer thread_end()
     socket,e:=net.make_unbound_udp_socket(.IP4)
     if e!=nil {return}
     defer net.close(socket)

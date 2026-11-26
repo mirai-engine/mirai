@@ -91,7 +91,7 @@ hub_start :: proc(h:^Hub,options:Hub_Options,allocator:=context.allocator) -> (w
     }
     h.listener=listener
     if bound,be:=net.bound_endpoint(listener);be==nil {h.port=bound.port}
-    h.accept=thread.create_and_start_with_poly_data(h,hub_accept_run,context)
+    h.accept=thread.create_and_start_with_poly_data(h,hub_accept_run,hub_context(h))
     return "",true
 }
 
@@ -123,8 +123,18 @@ hub_free :: proc(h:^Hub) {
     store.close(&h.s)
 }
 
+// A thread of the web view: the hub's allocator and a temp allocator of its own.
+@(private)
+hub_context :: proc(h:^Hub) -> runtime.Context {
+    c:=runtime.default_context()
+    c.allocator=h.allocator
+    c.logger=context.logger
+    return c
+}
+
 @(private)
 hub_accept_run :: proc(h:^Hub) {
+    defer kai.thread_end()
     for {
         socket,_,e:=net.accept_tcp(h.listener)
         sync.mutex_lock(&h.lock)
@@ -148,13 +158,14 @@ hub_accept_run :: proc(h:^Hub) {
         }
         job^={h,socket}
         thread.create_and_start_with_poly_data(job,proc(job:^Job) {
+            defer kai.thread_end()
             hub_connection(job.h,job.socket)
             net.close(job.socket)
             sync.mutex_lock(&job.h.lock)
             job.h.connections-=1
             sync.mutex_unlock(&job.h.lock)
             free(job)
-        },context,self_cleanup=true)
+        },hub_context(h),self_cleanup=true)
     }
 }
 
