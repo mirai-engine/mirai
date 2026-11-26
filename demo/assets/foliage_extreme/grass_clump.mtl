@@ -1,0 +1,4 @@
+# The material of the grass of foliage_extreme
+newmtl grass
+Kd 0.22 0.45 0.10
+Ns 20
