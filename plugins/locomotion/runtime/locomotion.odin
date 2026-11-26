@@ -561,10 +561,14 @@ locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe
         current:=ground.fluid_velocity
         relative:=v-current
         aim:=mm.quat_rotate(look,move_share(move_input,swim.speed))
-        surfaced:=ground.head_depth<=0 && linalg.dot(aim,up)>=0
+        // On the surface, or under it, only in a fluid its state says it is in: that of a character just
+        // made or placed says none yet, and a float then would pull it up from the deep.
+        wet:=.In_Fluid in ground.fluid
+        surfaced:=wet && ground.head_depth<=0 && linalg.dot(aim,up)>=0
+        dives:=wet && !surfaced && aim!={}
         flat:=across(relative,up)
         drift:=across(current,up)
-        loco.desired=(across(aim,up) if surfaced else aim)*swim.speed
+        loco.desired=(aim if dives else across(aim,up))*swim.speed
         loco.acceleration,loco.braking=swim.acceleration,swim.acceleration
         if surfaced {
             move.air={mm.approach_point(flat,across(aim,up)*swim.speed,swim.acceleration*dt)+drift,traction}
@@ -577,12 +581,13 @@ locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe
                 loco.move_count+=1
                 loco.mode,loco.jumped=MODE_FALLING,true
             }
-        } else if aim!={} {
+        } else if dives {
             move.air={mm.approach_point(relative,aim*swim.speed,swim.acceleration*dt)+current,traction}
             move.flags={.Airborne,.Drive_Vertical}
         } else {
             // Still, what the buoyancy has over the weight, or the weight over it, takes it up or down slowly.
-            move.air={mm.approach_point(flat,{},swim.acceleration*dt)+drift,traction}
+            // Out of a fluid it is driven across alone, and falls.
+            move.air={mm.approach_point(flat,across(aim,up)*swim.speed,swim.acceleration*dt)+drift,traction}
             move.flags={.Airborne}
         }
     } else if loco.mode==MODE_FLYING {

@@ -500,6 +500,42 @@ without_gravity_a_swimmer_on_the_surface_does_not_climb :: proc(t:^testing.T) {
     testing.expect(t,.Float in move.flags)
 }
 
+// A swimmer floats to the surface and is driven up and down only in a fluid its state says it is in. The
+// state of one just made or placed says none yet: floated then, one that weighs what the water does
+// would be thrown up from the deep and go on rising.
+@(test)
+a_swimmer_floats_and_dives_only_in_a_fluid_it_is_known_to_be_in :: proc(t:^testing.T) {
+    Case :: struct {
+        name:string,
+        fluid:phys.Fluid_Flags,
+        head_depth:f32,
+        forward:bool,
+        floats,dives:bool,
+    }
+    cases:=[?]Case{
+        {"head out",{.In_Fluid},-0.25,false,true,false},
+        {"head out, forward",{.In_Fluid},-0.25,true,true,false},
+        {"under, still",{.In_Fluid,.Underwater},4,false,false,false},
+        {"under, forward",{.In_Fluid,.Underwater},4,true,false,true},
+        {"just made or placed",{},0,false,false,false},
+        {"just made or placed, forward",{},0,true,false,false},
+        {"out of the water",{},-max(f32),false,false,false},
+        {"out of the water, forward",{},-max(f32),true,false,false},
+    }
+    for c in cases {
+        loco:=Locomotion_State{mode=MODE_SWIMMING}
+        found:phys.Character_State
+        found.fluid,found.head_depth=c.fluid,c.head_depth
+        given:input.Move_Input
+        if c.forward {given.move={0,0,-1}}
+        // No Walk: a vehicle of the water, which stays in its mode out of it.
+        move:=locomotion_move(&loco,phys.character_default(),nil,{},SWIM_DEFAULT,found,1,given,TEST_JUMP,TEST_SPRINT,TEST_CROUCH,{},{},1.0/60)
+        testing.expectf(t,loco.mode==MODE_SWIMMING,"%s: mode %v",c.name,loco.mode)
+        testing.expectf(t,(.Float in move.flags)==c.floats && (.Drive_Vertical in move.flags)==c.dives,"%s: flags %v",c.name,move.flags)
+        testing.expectf(t,c.dives || move.air.velocity.y==0,"%s: driven up at %v",c.name,move.air.velocity.y)
+    }
+}
+
 // A motion of a character in a world a setup makes, where it starts.
 @(private="file")
 Lock_Case :: struct {
