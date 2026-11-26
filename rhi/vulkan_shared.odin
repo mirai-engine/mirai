@@ -53,7 +53,7 @@ texture_open_shared :: proc(d: ^Device, desc: Texture_Desc, shared: Shared_Textu
 		return 0
 	}
 	// The one that draws leaves it ready to be sampled.
-	t.levels[0] = {layout = .SHADER_READ_ONLY_OPTIMAL, reads = {.Shader_Read}}
+	t.levels[0] = {layout = .SHADER_READ_ONLY_OPTIMAL, hazard = {reads = {.Shader_Read}}}
 	return vk_shared_finish(d, &t, desc)
 }
 
