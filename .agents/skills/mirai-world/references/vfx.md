@@ -10,8 +10,9 @@ lives in [vfx-editor.md](vfx-editor.md).
 
 `plugins/vfx/runtime/effect` (`effect.PARTICLE_KIND` `PART`, `.particle`,
 `effect.PARTICLE_VERSION`). Tables: `particle` (primary + additional layers of `Particle_Info` in
-`effect.odin`), `parameters` (`Particle_Parameter`, 1–4 components or texture), `hidden` (primary
-instance hidden fields).
+`effect.odin`, up to `PARTICLE_LAYERS` (32) in all: a system of many emitters is one effect),
+`parameters` (`Particle_Parameter`, 1–4 components or texture; `PARTICLE_MAX_PARAMETERS` per
+layer, `PARTICLE_EFFECT_PARAMETERS` in all), `hidden` (primary instance hidden fields).
 
 - **Emission & motion**: constant `rate` (custom via program `births`), `Surface` shape (skinned
   meshes move its triangles), `gravity`/`drag` sample world `Gravity`/`Wind` [volumes][vol] on GPU

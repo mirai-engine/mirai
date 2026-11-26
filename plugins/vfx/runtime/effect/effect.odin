@@ -24,12 +24,13 @@ import "mirai:std/serial"
 // paths an instance can change, each a value of at most PARTICLE_VALUE_BYTES;
 // text fields (the program) are of the effect alone.
 
-PARTICLE_LAYERS :: 8
+PARTICLE_LAYERS :: 32
 PARTICLE_BURSTS :: 4
 PARTICLE_CURVE_KEYS :: 8
 PARTICLE_VALUE_BYTES :: 16
 PARTICLE_NAME_BYTES :: 64
-PARTICLE_MAX_PARAMETERS :: 32
+PARTICLE_MAX_PARAMETERS :: 32 // of the program of a layer
+PARTICLE_EFFECT_PARAMETERS :: 256 // of all the layers of an effect
 PARTICLE_MESHES :: 4
 
 Particle_Shape :: enum u32 {Point,Sphere,Hemisphere,Cone,Box,Circle,Line,Surface}
@@ -379,6 +380,9 @@ particle_finite :: proc(p:^Particle_Info) -> (field:string,ok:bool) {
 
 // Each name once, a type the programs take and numbers they hold exactly.
 particle_parameters_validate :: proc(parameters:[]Particle_Parameter,layers:=1) -> Particle_Problem {
+    if len(parameters)>PARTICLE_EFFECT_PARAMETERS {
+        return {"parameters",fmt.tprintf("Give at most %d program parameters in all the layers of an effect",PARTICLE_EFFECT_PARAMETERS)}
+    }
     counts:[PARTICLE_LAYERS]int
     for &parameter,at in parameters {
         if int(parameter.layer)>=min(layers,len(counts)) {return {"parameters","Give parameters only for layers of the effect"}}

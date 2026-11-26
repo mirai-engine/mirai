@@ -74,6 +74,8 @@ value_set :: proc(override:^Particle_Override,name:string,value:$T,resolved:^eff
     return value_put(override,base.name_hash(path),bytes[:],resolved,layer)
 }
 
+#assert(effect.PARTICLE_LAYERS<=100) // a layer is named by up to two digits
+
 // The path of a value inside the layer it names, and that layer + 1 (0: no
 // layer named); false for a layer the effect cannot have.
 @(private)
@@ -81,8 +83,14 @@ value_layer :: proc(name:string) -> (path:string,layer:u8,ok:bool) {
     if !strings.has_prefix(name,PARTICLE_LAYER_PATH) {return name,0,true}
     rest:=name[len(PARTICLE_LAYER_PATH):]
     dot:=strings.index_byte(rest,'.')
-    if dot!=1 || rest[0]<'0' || int(rest[0]-'0')>=effect.PARTICLE_LAYERS {return}
-    return rest[dot+1:],rest[0]-'0'+1,true
+    if dot<1 || dot>2 || dot==2 && rest[0]=='0' {return}
+    index:=0
+    for c in transmute([]u8)rest[:dot] {
+        if c<'0' || c>'9' {return}
+        index=index*10+int(c-'0')
+    }
+    if index>=effect.PARTICLE_LAYERS {return}
+    return rest[dot+1:],u8(index+1),true
 }
 
 @(private)

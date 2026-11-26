@@ -30,7 +30,7 @@ Particle_World :: enum u8 {Edit,Play}
 Api_Particle_Instance_Params :: struct {
     entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     world:Particle_World `mirai:"optional,label=Edit: the document; Play: the Play of the caller"`,
-    layer:u8 `mirai:"optional,max=7,label=The layer of its effect it reads: 0 the primary"`,
+    layer:u8 `mirai:"optional,max=31,label=The layer of its effect it reads: 0 the primary"`,
 }
 
 @(private)

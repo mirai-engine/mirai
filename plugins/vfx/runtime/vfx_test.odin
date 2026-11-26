@@ -321,7 +321,12 @@ an_effects_layers_keep_independent_clocks_and_share_resolved_values :: proc(t:^t
     defer asset.types_destroy(&types)
     id:=base.Asset_Id{3,7}
     flame:=effect.particle_preset(.Fire)
-    layers:=[1]effect.Particle_Info{effect.particle_preset(.Smoke)}
+    // Many more layers than a few: a system of emitters is one effect.
+    layers:[15]effect.Particle_Info
+    for &layer,i in layers {
+        layer=effect.particle_preset(.Smoke)
+        layer.rate=f32(i+1)
+    }
     if !testing.expect_value(t,effect.particle_save(path,&types,{id=id,info=flame,layers=layers[:]}),asset.Error.None) {
         return
     }
@@ -339,6 +344,13 @@ an_effects_layers_keep_independent_clocks_and_share_resolved_values :: proc(t:^t
     if !testing.expect(t,flame_clock!=nil && smoke_clock!=nil) {return}
     testing.expect_value(t,flame_clock.emission.rate,flame.rate)
     testing.expect_value(t,smoke_clock.emission.rate,layers[0].rate)
+    for layer,i in layers {
+        clock,shown:=clock_find(&f.clocks,first,i+1),shown_find(&f.sync,first,i+1)
+        if !testing.expectf(t,clock!=nil && shown!=nil,"layer %d has a clock and was told",i+1) {continue}
+        testing.expectf(t,clock.emission.rate==layer.rate && shown.desc.info.rate==layer.rate,"layer %d emits %v",i+1,clock.emission.rate)
+    }
+    whole,_:=status(&f.clocks,PARTICLE_EMITTER_DEFAULT,first)
+    testing.expect_value(t,whole.layers,u8(1+len(layers)))
     flame_a,flame_b:=sync_shown(&f.sync,first),sync_shown(&f.sync,second)
     if testing.expect(t,flame_a!=nil && flame_b!=nil) {
         testing.expect(t,flame_a.desc.spec!=nil && flame_a.desc.spec==flame_b.desc.spec)
@@ -1170,8 +1182,9 @@ layer_paths_change_their_layer_and_parameters_every_layer_that_declares_them :: 
     testing.expect_value(t,request_value(&f.requests,e,"layers.1.rate",f32(40)),Error.None)
     testing.expect_value(t,request_value(&f.requests,e,"parameters.heat",f32(7)),Error.None)
     testing.expect_value(t,request_value(&f.requests,e,"layers.2.parameters.chill",f32(3)),Error.None)
-    testing.expect_value(t,request_value(&f.requests,e,"layers.8.rate",f32(1)),Error.Unknown_Field)
-    testing.expect_value(t,request_value(&f.requests,e,"layers.x.rate",f32(1)),Error.Unknown_Field)
+    for name in ([]string{"layers.32.rate","layers.x.rate","layers.01.rate","layers.100.rate","layers..rate"}) {
+        testing.expectf(t,request_value(&f.requests,e,name,f32(1))==Error.Unknown_Field,"%s names no layer an effect can have",name)
+    }
     fixture_tick(f,TICK)
     fixture_tick(f,TICK)
     fixture_sync(f,{0,1},TICK)
@@ -1185,7 +1198,7 @@ layer_paths_change_their_layer_and_parameters_every_layer_that_declares_them :: 
         testing.expectf(t,base.text_get(shown.problem[:])=="","layer %d runs its program: %s",c.layer,base.text_get(shown.problem[:]))
     }
     // A layer that does not exist is refused when its request is taken.
-    testing.expect_value(t,request_value(&f.requests,e,"layers.5.rate",f32(1)),Error.None)
+    testing.expect_value(t,request_value(&f.requests,e,"layers.31.rate",f32(1)),Error.None)
     f.problems={}
     fixture_tick(f,TICK)
     testing.expect_value(t,f.problems.count,1)
