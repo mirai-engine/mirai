@@ -80,11 +80,25 @@ scatters them on the GPU through `engine/render` alone (`Foliage_Micro`, `host, 
 - **Occupancy** is pre-suppression: `pcg.cell_generate` rasterizes the radii of every Macro/Meso
   point that stood (`Generated_Cell.occupied`, sources with Micro layers only), so taking a tree
   out never lets grass sprout at its stump.
-- **Draw**: per view, `foliage_micro_cull.comp` (`Gbuffer`) keeps instances within distance, in
-  the frustum and not hidden by this frame's depth pyramid (one phase), into one list per look;
-  `foliage_micro.vert` draws a fixed count of indirect draws (a look × Surface program) with the
-  engine G-buffer fragment, shrinking between fade and cull, bent by `foliage_lean`/`foliage_sway`.
-  Micro meshes are not in the ray structure and cast no shadow maps.
+- **Draw**: each look draws through one [batch the GPU fills][filled] (`render.batch_reserve`,
+  `Micro_Batch`: room for what its tiles hold, grown by half when outgrown, shrunk under a
+  quarter; its box the union of its tiles' boxes). In the `Instances` stage of each view the CPU
+  keeps the tiles whose box it sees within the look's cull distance (`micro_box_seen`), and
+  `foliage_micro_fill.comp` (a group row per tile) drops what is past the cull distance, outside
+  the frustum or thinned before placing the rest whole, shrinks it between fade and cull and
+  writes it into the batch a wave at a time. The scene's cull, two-phase occlusion, depth buckets,
+  visibility raster (masked cards tested, sub-pixel clusters by software) and resolve draw it;
+  wind and trampling are the vertex hook of the batches (`hook_vertex`). Micro meshes are not in
+  the ray structure, cast no shadow maps and are not picked. `MICRO_COUNTERS` (`render.counters`)
+  says what a frame wrote, left out for room, thinned and grew.
+- **Thinning by distance** (nothing to set): past `micro_thin_onset`, where the look's mesh at its
+  mean size spans `MICRO_THIN_PIXELS` pixels of the view's height, an instance is kept with the
+  chance (onset/distance)² of the chance near, at least `MICRO_THIN_KEPT`, by a hash of its place
+  (the same ones however the view turns); those within `MICRO_THIN_BAND` of the edge grow from
+  the ground (no pop) and the kept ones widen along the ground by `rsqrt(chance)` up to
+  `MICRO_THIN_WIDEN`, so distant meadows keep their cover.
+- **Far geometry**: a mesh of one cluster gets coarser levels in its DAG on import
+  (`geom.CLUSTER_ROOT_TRIANGLES`), so the cut sheds sub-pixel triangles of far clumps.
 - **Detail**: filler layers keep `FOLIAGE_DETAIL[0]` of their candidates by hash; distances scale
   by `FOLIAGE_DETAIL[1]`.
 
@@ -102,6 +116,7 @@ scatters them on the GPU through `engine/render` alone (`Foliage_Micro`, `host, 
 - **Trampling**: `Foliage_Bender` stamps `Foliage_Trample` around the first streaming source.
 
 [hook]: ../../mirai-rendering/references/views.md#extension-hooks-and-constants
+[filled]: ../../mirai-rendering/references/scene.md#instance-batches
 [sway]: ../../mirai-rendering/references/lights.md#what-sways-in-the-maps
 
 ## Collision
@@ -152,10 +167,13 @@ mirai rpc foliage.query '{"entity":"Woods","min":[-10,-5,-10],"max":[30,20,10]}'
 ## Verification
 
 - `mirai test plugins/foliage/runtime --no-gpu`: looks, filler and bands, grouping, physics diffing
-  and budget, hull rocks, prefab parts and sway, picks, queries, marks, impostor rows and crowns.
+  and budget, hull rocks, prefab parts and sway, picks, queries, marks, impostor rows and crowns,
+  the thinning onset and the tiles a view sees.
 - `mirai test plugins/foliage/runtime` (GPU with validation): the wind, sway and bender tests of
-  `gpu_test.odin` and `bend_test.odin`; micro generation once, cull and draw in
+  `gpu_test.odin` and `bend_test.odin`; micro generation once, drawing through the batch and
+  occlusion, and the thinning (kept share, widening, growing, room) read back in
   `micro_gpu_test.odin` (`micro_test.odin`: occupancy, tile gating, headless no-op, no GPU).
 - `mirai test plugins/foliage/editor -collection:plugins=<root>/plugins`.
 - Live: `mirai session start demo --copy`, `scene.open forest/forest.scene`, `foliage.query
-  entity=Woods`, and `mirai capture` of `forest` and `foliage_extreme` at 200+ frames.
+  entity=Woods`, and `mirai capture` of `forest` and `foliage_extreme` (its grass is a Micro
+  layer) at 200+ frames; `profile.capture` shows the fill as `foliage micro`.

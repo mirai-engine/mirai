@@ -117,6 +117,13 @@ G-buffer and rays with scene instances.
   `batch_anchor`; one row after scene instances + `BATCH_GROUP` slots/group. Shaders read all
   instances via `scene_instance` (`index < instance_count` = scene, else batch). Belongs to
   `scene_world` (`batches_build`); `meshes_clear` forgets all (`batches_epoch`).
+- **Filled by the GPU.** `batch_reserve(r, handle, world, desc, capacity, low, high)` takes room
+  for `capacity` instances and a count word before them (`pool_take`: no CPU writes, no upload;
+  the same room again only takes the new box/desc). Each view zeroes the counts of those drawn
+  (`Batch_State.counts`) and runs the `Instances` stage before its cull; `pass_batch_target`
+  binds the pool to write and gives `first`, `count`, `capacity` and `anchor`, and the cull reads
+  `batch_count` (the count, up to the room; row `world_inv[2].z` = first word). No flags: rays,
+  maps and `batch_ray` never meet them. Nested views draw what the main view wrote.
 - **Cull & rays.** Batch AABB -> instance AABB -> cluster cut; dither fade/cull +
   `Settings.batch_min_pixels` raster cull (rays still see it); blend triangles ignored.
   `Batch_Flags`: `Casts_Shadow`, `Ray_Visible`, `Rays_Only` (no view/pick; needs a ray flag). Sw:
@@ -125,7 +132,9 @@ G-buffer and rays with scene instances.
 - **Verification.** `mirai test render` (`batch_test.odin`, `batch_bench_test.odin`
   `-define:BATCH_BENCHMARK=true`; GPU `batch_trace_test.odin`:
   `a_batch_casts_the_shadows_and_shows_in_the_reflections_of_its_instances`,
-  `a_batch_with_a_basis_is_drawn_where_its_transform_says`).
+  `a_batch_with_a_basis_is_drawn_where_its_transform_says`); filled: `batch_test.odin`
+  `a_batch_the_gpu_fills_holds_its_room_and_its_count`, GPU `batch_fill_gpu_test.odin`
+  (`testdata/batch_fill.comp`).
 
 ```odin
 insts := []render.Batch_Instance{render.batch_instance({2, 0, 0}, 1, {1, 1, 1})}

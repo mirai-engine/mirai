@@ -85,6 +85,32 @@ pass_buffer :: proc(s: ^Stage_Pass, slot: u32, desc: Extension_Buffer_Desc) -> (
 	return true, made
 }
 
+// Where an Instances pass writes the instances a view draws of a batch the
+// GPU fills (batch_reserve), as words of the u32 pool of the scene:
+// instance k is BATCH_WORDS words from first + k * BATCH_WORDS, a
+// Batch_Instance whose position is relative to anchor; the word count, which
+// the view zeroed, says how many of them there are, and the cull takes at most
+// capacity. A shader writes them all before the cull reads them.
+Batch_Target :: struct {
+	first, count, capacity: u32,
+	anchor:                 Vec3, // relative to the origin of the frame (Stage_Pass.origin)
+}
+
+// In Instances, binds the u32 pool of the scene at SLOT_PASS0 + slot, to
+// write, for the instances of a batch the GPU fills: where they go. False in
+// another stage, for a handle that names no such batch of the world shown,
+// and for one the view does not draw (its mesh still goes to the GPU).
+pass_batch_target :: proc(s: ^Stage_Pass, slot: u32, handle: Batch_Handle) -> (target: Batch_Target, ok: bool) {
+	r := s.pass.r
+	if s.stage != .Instances || slot > SLOT_PASS9 - SLOT_PASS0 || r.scene.index_buffer == 0 {return}
+	index, found := batch_index(&r.scene, handle)
+	if !found {return}
+	record := &r.scene.batch.records[index]
+	if !record.filled || record.drawn < 0 || record.world != s.world {return}
+	rhi.cmd_bind_buffer(s.pass.cmd, SLOT_PASS0 + slot, r.scene.index_buffer)
+	return {first = record.words, count = record.words - 1, capacity = record.count, anchor = batch_offset(r, record)}, true
+}
+
 // Whether the world holds a buffer under a description, with that size.
 pass_buffer_held :: proc(s: ^Stage_Pass, desc: Extension_Buffer_Desc) -> bool {
 	return extension_buffer_find(s.pass.r, s.world, desc) != nil

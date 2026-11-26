@@ -150,7 +150,9 @@ _ = res; _ = err
   of `CLUSTER_GROUP_SIZE` simplified to half with locked group borders -> `Permissive` -> relaxed
   `Protect` if still above `CLUSTER_SIMPLIFY_STUCK` (attribute error capped by
   `CLUSTER_ERROR_EDGE_LIMIT` × longest edge, position error uncapped); still stuck becomes a root
-  whose places stay locked above. No sloppy fallback.
+  whose places stay locked above. No sloppy fallback. A level of one cluster of more than
+  `CLUSTER_ROOT_TRIANGLES` (32) is simplified too, so a mesh of one cluster (grass clump, small
+  prop) gets coarser levels and every root is that small.
 - **Cut contract:** draw cluster where `own` projects within threshold and `parent` does not (`own`
   error 0 at level 0, `parent` error `max(f32)` at root; monotonic errors and nested spheres give
   crack-free cuts). Clusters never span submeshes (`Cluster_Source.ranges`; shared submesh vertex
@@ -195,6 +197,7 @@ planes.
   - `cluster_dag_of_a_closed_mesh_cuts_without_cracks_and_is_deterministic`
   - `meshlet_optimize_keeps_each_triangle_and_reuses_vertices_sooner`
   - `cluster_levels_cut_one_whole_level`
+  - `a_lone_cluster_is_simplified_into_coarser_levels`
   - `tangents_of_a_curved_grid_match_the_reference`
   - `cook/import`: `the_cluster_dag_of_demo_meshes_cuts_without_cracks_with_errors_that_grow`
 - Benchmarks (`-define:GEOM_BENCH=true -define:ODIN_TEST_THREADS=1`): `bench_hull`,

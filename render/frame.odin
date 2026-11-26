@@ -1289,6 +1289,11 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 	glass_groups := [4]u32{groups(t.width, 8), groups(t.height, 8), 0, 0} if p.draw_glass else {}
 	p.pyramid_previous = t.hiz_valid
 	if r.probe.instance > 0 {r.probe.eye = p.camera.position}
+	// The batches the GPU fills draw what the Instances stage of this view writes alone.
+	if len(s.batch.counts) > 0 && s.index_buffer != 0 {
+		for word in s.batch.counts {rhi.cmd_fill_buffer(cmd, s.index_buffer, u64(word) * 4, 4, 0)}
+		if stage_asked(r, .Instances) {stage_run(p, .Instances)}
+	}
 	rhi.cmd_timestamp(cmd, "cull")
 	// What the view before counted, before this one counts its own.
 	cull_stats_fold(r, cmd)

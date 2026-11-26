@@ -22,6 +22,13 @@ import "mirai:render/abi"
 // tree of their instances in the BLAS nodes while rays are traced by
 // software, an item of the software TLAS each, and their instances are
 // instances of a native TLAS.
+//
+// A batch the GPU fills (batch_reserve) holds room for its instances and a
+// count before them in the pool, which no CPU writes: each view zeroes the
+// count before its Instances stage, where an extension writes the instances
+// the view draws (pass_batch_target), and the cull reads how many it wrote
+// (batch_count of scene.slang). No ray nor map meets it: they would need
+// its instances on the CPU.
 
 BATCH_GROUP :: abi.BATCH_GROUP
 BATCH_WORDS :: abi.BATCH_WORDS
@@ -154,6 +161,7 @@ Batch_Record :: struct {
 	scale:                  f32, // the largest scale of its instances
 	small:                  bool, // every instance within SMALL_INSTANCE_REACH of its centre
 	drawn:                  i32,  // its row among those drawn; -1 when it is not drawn
+	filled:                 bool, // the GPU fills it (batch_reserve): count is its room, and the word before words its count
 	// Of one that casts shadows and sways, or whose deformable moves: it
 	// moves in the maps (batch_moving), as of the last frame that drew them.
 	shadow_moving:          bool,
@@ -186,6 +194,7 @@ Batch_State :: struct {
 	winds:           [dynamic]f32,               // by wind, the share of their sway the batches that sway in it take now (batches_wind)
 	winds_changed:   bool,                       // a share went from 0 or to 0 since the last frame that drew the maps
 	hooked:          bool,                       // a batch drawn gives the vertex hook values (Batch_Desc.vertex): the resolve leaves where its pixels rest
+	counts:          [dynamic]u32,               // the words of the counts of the batches drawn the GPU fills, which each view zeroes
 }
 
 // A batch drawn whose instances a native TLAS holds: their first custom
@@ -212,13 +221,14 @@ batches_init :: proc(r: ^Renderer) {
 	b.hw = make([dynamic]Batch_Hw, a)
 	b.reflective = make([dynamic]Reflective_Instance, a)
 	b.winds = make([dynamic]f32, a)
+	b.counts = make([dynamic]u32, a)
 }
 
 @(private)
 batches_destroy :: proc(r: ^Renderer) {
 	b := &r.scene.batch
 	delete(b.records);delete(b.free);delete(b.drawn);delete(b.rows);delete(b.boxes)
-	delete(b.traced);delete(b.hw);delete(b.reflective);delete(b.winds)
+	delete(b.traced);delete(b.hw);delete(b.reflective);delete(b.winds);delete(b.counts)
 	b^ = {}
 }
 
@@ -275,12 +285,18 @@ batch_changed_near :: proc(r: ^Renderer, record: ^Batch_Record) {
 @(private)
 batch_offset :: #force_inline proc "contextless" (r: ^Renderer, record: ^Batch_Record) -> Vec3 {return record.anchor - r.origin}
 
+// The words of the pool a batch holds: its instances, and of one the GPU fills its count.
+@(private)
+batch_pool_words :: #force_inline proc "contextless" (record: ^Batch_Record) -> u32 {
+	return record.count * BATCH_WORDS + (1 if record.filled else 0)
+}
+
 @(private)
 batch_release :: proc(s: ^Scene_State, record: ^Batch_Record) {
-	if record.count > 0 {pool_release(&s.indices, &s.pool_free[.Index], record.words, record.count * BATCH_WORDS)}
+	if record.count > 0 {pool_release(&s.indices, &s.pool_free[.Index], record.words - (1 if record.filled else 0), batch_pool_words(record))}
 	if record.count > 0 && record.colored {pool_release(&s.indices, &s.pool_free[.Index], record.colors, record.count)}
 	batch_tree_release(s, record)
-	record.count, record.colored = 0, false
+	record.count, record.colored, record.filled = 0, false, false
 }
 
 @(private)
@@ -331,6 +347,32 @@ batches_trees_build :: proc(r: ^Renderer) {
 	}
 }
 
+@(private = "file")
+finite :: #force_inline proc "contextless" (v: f32) -> bool {return v - v == 0}
+
+// What is wrong with the description of a batch and how to fix it, said by
+// the procedure `by`; "" for none.
+@(private)
+batch_desc_problem :: proc(s: ^Scene_State, desc: Batch_Desc, by: string) -> string {
+	if int(desc.mesh) >= len(s.meshes) || s.meshes[desc.mesh].vertex_count == 0 {
+		return fmt.tprintf("%s: the mesh is not one of the renderer; give it a handle that mesh_add or the assets returned", by)
+	}
+	if !finite(desc.fade_distance) || !finite(desc.cull_distance) || desc.fade_distance < 0 || desc.cull_distance < 0 {
+		return fmt.tprintf("%s: a fade or cull distance is negative or not finite; give 0 or more metres (a cull distance of 0 never culls)", by)
+	}
+	if .Rays_Only in desc.flags && desc.flags & {.Casts_Shadow, .Ray_Visible} == {} {
+		return fmt.tprintf("%s: no ray meets a batch of Rays_Only and no view draws it; give it Casts_Shadow or Ray_Visible, or take Rays_Only out", by)
+	}
+	for value in desc.vertex {if !finite(value) {return fmt.tprintf("%s: a number of Batch_Desc.vertex is not finite", by)}}
+	if desc.basis != {} {
+		determinant := linalg.determinant(desc.basis)
+		if !finite(determinant) || abs(determinant) < 1e-12 {return fmt.tprintf("%s: Batch_Desc.basis is not finite or flattens its instances; give a rotation times a scale above 0, or zero for none", by)}
+	}
+	if !finite(desc.reach) || desc.reach < 0 {return fmt.tprintf("%s: Batch_Desc.reach is negative or not finite; give the metres the vertex hook moves a point at most, or 0", by)}
+	if !finite(desc.sway) || desc.sway < 0 {return fmt.tprintf("%s: Batch_Desc.sway is negative or not finite; give the metres the vertex hook sways a point at most in its wind, or 0", by)}
+	return ""
+}
+
 // Gives a batch its mesh, its materials, how it is drawn and traced, and its
 // instances: a new batch for handle 0, or the batch handle names, which
 // keeps it. world: the key of the world it belongs to, as scene_world names
@@ -349,29 +391,13 @@ batch_set :: proc(r: ^Renderer, handle: Batch_Handle, world: u64, desc: Batch_De
 		if !ok {return handle, "batch_set: the handle names no batch of the renderer; pass 0 for a new batch"}
 		index = found
 	}
-	if int(desc.mesh) >= len(s.meshes) || s.meshes[desc.mesh].vertex_count == 0 {
-		return handle, "batch_set: the mesh is not one of the renderer; give it a handle that mesh_add or the assets returned"
-	}
+	if problem := batch_desc_problem(s, desc, "batch_set"); problem != "" {return handle, problem}
 	if len(colors) != 0 && len(colors) != len(instances) {
 		return handle, fmt.tprintf("batch_set: %d colors for %d instances; give one for each instance, or none", len(colors), len(instances))
 	}
 	if len(instances) > BATCH_INDICES_MAX {
 		return handle, fmt.tprintf("batch_set: %d instances, more than the %d a batch holds; split them in several batches", len(instances), BATCH_INDICES_MAX)
 	}
-	finite :: proc "contextless" (v: f32) -> bool {return v - v == 0}
-	if !finite(desc.fade_distance) || !finite(desc.cull_distance) || desc.fade_distance < 0 || desc.cull_distance < 0 {
-		return handle, "batch_set: a fade or cull distance is negative or not finite; give 0 or more metres (a cull distance of 0 never culls)"
-	}
-	if .Rays_Only in desc.flags && desc.flags & {.Casts_Shadow, .Ray_Visible} == {} {
-		return handle, "batch_set: no ray meets a batch of Rays_Only and no view draws it; give it Casts_Shadow or Ray_Visible, or take Rays_Only out"
-	}
-	for value in desc.vertex {if !finite(value) {return handle, "batch_set: a number of Batch_Desc.vertex is not finite"}}
-	if desc.basis != {} {
-		determinant := linalg.determinant(desc.basis)
-		if !finite(determinant) || abs(determinant) < 1e-12 {return handle, "batch_set: Batch_Desc.basis is not finite or flattens its instances; give a rotation times a scale above 0, or zero for none"}
-	}
-	if !finite(desc.reach) || desc.reach < 0 {return handle, "batch_set: Batch_Desc.reach is negative or not finite; give the metres the vertex hook moves a point at most, or 0"}
-	if !finite(desc.sway) || desc.sway < 0 {return handle, "batch_set: Batch_Desc.sway is negative or not finite; give the metres the vertex hook sways a point at most in its wind, or 0"}
 	for instance, i in instances {
 		_, scale := batch_instance_unpack(instance)
 		if !finite(instance.position.x) || !finite(instance.position.y) || !finite(instance.position.z) {
@@ -441,6 +467,72 @@ batch_set :: proc(r: ^Renderer, handle: Batch_Handle, world: u64, desc: Batch_De
 	return Batch_Handle(u64(record.generation) << 32 | u64(index + 1)), ""
 }
 
+// Gives a batch the GPU fills its mesh, its materials, how it is drawn, room
+// for capacity instances and the box of the world every instance it is given
+// stays in, as drawn: a new batch for handle 0, or the batch handle names,
+// which keeps it. Each view draws the instances an extension writes into it
+// in its Instances stage (pass_batch_target), none when nothing writes them,
+// at most capacity; no ray nor shadow map meets them. A load transaction
+// when the room changes: one of the same capacity changes only its box and
+// description, without memory. On an error, which says what is wrong and how
+// to fix it, nothing changes.
+batch_reserve :: proc(r: ^Renderer, handle: Batch_Handle, world: u64, desc: Batch_Desc, capacity: u32, low, high: Vec3) -> (Batch_Handle, string) {
+	s := &r.scene
+	b := &s.batch
+	index := -1
+	if handle != 0 {
+		found, ok := batch_index(s, handle)
+		if !ok {return handle, "batch_reserve: the handle names no batch of the renderer; pass 0 for a new batch"}
+		index = found
+	}
+	if problem := batch_desc_problem(s, desc, "batch_reserve"); problem != "" {return handle, problem}
+	if desc.flags != {} {
+		return handle, "batch_reserve: no ray nor shadow map meets the instances of a batch the GPU fills; give it no Batch_Flags, or give its instances on the CPU with batch_set"
+	}
+	if capacity == 0 || capacity > BATCH_INDICES_MAX {
+		return handle, fmt.tprintf("batch_reserve: room for %d instances; give between 1 and %d, or several batches", capacity, BATCH_INDICES_MAX)
+	}
+	if !finite(low.x) || !finite(low.y) || !finite(low.z) || !finite(high.x) || !finite(high.y) || !finite(high.z) || low.x > high.x || low.y > high.y || low.z > high.z {
+		return handle, "batch_reserve: the box is not finite, or its low corner is above its high one; give the box of the world its instances stay in"
+	}
+	kept := index >= 0 && b.records[index].filled && b.records[index].count == capacity
+	if !kept && !pool_room(r, .Index, int(capacity) * BATCH_WORDS + 1) {
+		s.refused.batches += 1
+		return handle, fmt.tprintf("batch_reserve: the GPU has no memory for %d instances (renderer_stats().problem says what it holds); give less room", capacity)
+	}
+	// Its count, then its instances: words no CPU writes, which each view
+	// zeroes and fills. A batch it replaces gives its words back only after.
+	first: u32
+	if !kept {
+		taken: bool
+		if first, taken = pool_take(&s.indices, &s.pool_free[.Index], capacity * BATCH_WORDS + 1); !taken {return handle, "batch_reserve: out of memory for the room of its instances"}
+	}
+	if index < 0 {
+		if len(b.free) > 0 {index = int(pop(&b.free))} else {
+			append(&b.records, Batch_Record{drawn = -1})
+			index = len(b.records) - 1
+		}
+	} else if !kept {
+		record := &b.records[index]
+		batch_changed_near(r, record)
+		batch_release(s, record)
+	}
+	record := &b.records[index]
+	record.desc = desc
+	record.used, record.gone, record.world = true, false, world
+	record.anchor = origin_snap(low * 0.5 + high * 0.5)
+	record.bounds_min, record.bounds_max = origin_point(low, record.anchor), origin_point(high, record.anchor)
+	record.reach, record.small, record.scale, record.colored = linalg.length(high - low) * 0.5, false, 1, false
+	if !kept {
+		record.count, record.filled = capacity, true
+		record.words = first + 1
+	}
+	s.geometry_dirty = true
+	b.built = false
+	b.revision += 1
+	return Batch_Handle(u64(record.generation) << 32 | u64(index + 1)), ""
+}
+
 // Says how much of their sway the batches that sway in `wind` take now
 // (Batch_Desc.sway): 0, still, to 1, the most; the vertex hook sways them as
 // the wind is, and this says to the maps whether they move and how far. A
@@ -486,7 +578,7 @@ batch_remove :: proc(r: ^Renderer, handle: Batch_Handle) -> bool {
 	if !ok {return false}
 	record := &s.batch.records[index]
 	batch_changed_near(r, record)
-	geometry_released(s, u64(record.count) * (BATCH_WORDS + 1 + (1 if record.colored else 0)) * 4)
+	geometry_released(s, u64(batch_pool_words(record) + (record.count if !record.filled else 0) + (record.count if record.colored else 0)) * 4)
 	batch_release(s, record)
 	generation := record.generation + 1
 	record^ = {generation = generation, drawn = -1}
@@ -549,7 +641,7 @@ batches_build :: proc(r: ^Renderer) {
 	s := &r.scene
 	b := &s.batch
 	if b.built && b.built_instances == len(s.instances) && b.built_world == r.world_key {return}
-	clear(&b.drawn);clear(&b.rows);clear(&b.boxes);clear(&b.traced);clear(&b.hw);clear(&b.reflective)
+	clear(&b.drawn);clear(&b.rows);clear(&b.boxes);clear(&b.traced);clear(&b.hw);clear(&b.reflective);clear(&b.counts)
 	if b.groups.count > 0 {pool_release(&s.indices, &s.pool_free[.Index], b.groups.first, b.groups.count)}
 	b.groups = {}
 	b.slots, b.dropped, b.hw_count, b.hooked = 0, 0, 0, false
@@ -593,7 +685,7 @@ batches_build :: proc(r: ^Renderer) {
 				{bits(record.order), desc.fade_distance, desc.cull_distance, desc.sway},
 				{0, 0, 0, bits(classes)},
 			},
-			world_inv = {desc.vertex, {offset.x, offset.y, offset.z, desc.reach}, {bits(record.colors + 1 if record.colored else 0), batch_swayed(b, &record), 0, 0}},
+			world_inv = {desc.vertex, {offset.x, offset.y, offset.z, desc.reach}, {bits(record.colors + 1 if record.colored else 0), batch_swayed(b, &record), bits(record.words if record.filled else 0), 0}},
 			prev_world = batch_basis_rows(desc),
 			// Rays meet the instances of a batch in the cut its mesh always has.
 			meta = {u32(desc.mesh) | (u32(ray_cut_always(s.meshes[desc.mesh])) << INSTANCE_RAY_SHIFT if int(desc.mesh) < len(s.meshes) else 0), material, u32(desc.object_id), flags},
@@ -605,6 +697,7 @@ batches_build :: proc(r: ^Renderer) {
 			slot_materials = slots,
 		})
 		append(&b.boxes, mm.Aabb{low, high})
+		if record.filled {append(&b.counts, record.words - 1)}
 		b.bounds_min, b.bounds_max = linalg.min(b.bounds_min, low), linalg.max(b.bounds_max, high)
 		if a.reflectance && !a.glass && layers != 0 {append(&b.reflective, Reflective_Instance{drawn, a.layered, a.subsurface})}
 		for _ in 0 ..< groups {append(&s.indices, drawn)}
@@ -754,7 +847,8 @@ batches_revision :: proc(r: ^Renderer) -> u64 {return r.scene.batch.revision}
 // max_distance, on the triangles of the first level of its mesh, at rest:
 // what the picker of an editor asks. The batch box, then the box of each
 // instance, keep the triangles of most of them out. A batch of Rays_Only,
-// which no view draws, is not met.
+// which no view draws, and one the GPU fills, whose instances the CPU does
+// not know, are not met.
 Batch_Hit :: struct {
 	handle:    Batch_Handle,
 	instance:  int,
@@ -770,7 +864,7 @@ batch_ray :: proc(r: ^Renderer, world: u64, origin, direction: Vec3, max_distanc
 	inverse := Vec3{1 / d.x, 1 / d.y, 1 / d.z}
 	nearest := max_distance
 	for &record, index in s.batch.records {
-		if !record.used || record.gone || record.world != world || record.count == 0 || .Rays_Only in record.desc.flags {continue}
+		if !record.used || record.gone || record.filled || record.world != world || record.count == 0 || .Rays_Only in record.desc.flags {continue}
 		if int(record.desc.mesh) >= len(s.meshes) || s.meshes[record.desc.mesh].vertex_count == 0 || mesh_pending(s, u32(record.desc.mesh)) {continue}
 		origin := origin_point(origin, record.anchor)
 		if t, crossed := mm.ray_aabb_fast(origin, inverse, {record.bounds_min, record.bounds_max}, nearest); !crossed || t > nearest {continue}

@@ -212,6 +212,7 @@ choices ([`fsr`](../../mirai-plugins/references/render-plugins.md#fsr)).
 | Stage | Scope / Pipeline parent | Role and key `pass_*` calls |
 | --- | --- | --- |
 | `Geometry` | 1x/frame (no view) / `Geometry` | Deformable vertices: `pass_vertices_begin`, `pass_deformable`, `pass_dispatch`. |
+| `Instances` | Per view, before its cull (only with a [filled batch](#batches) drawn) / `Geometry` | Instances of batches the GPU fills: `pass_batch_target` (pool bound to write, `Batch_Target`), `batch_instance_write` of `batch_instance.slang`; the view zeroed their counts. |
 | `Decal` | Per view / `Geometry` | Before the resolve, after the decals of the scene: `pass_decal_targets`, `pass_decal_begin` (decal targets, no depth attached), `pass_surface_read .Depth`; `frame_decal_emission` asks for the emission target ([decals](materials.md#decals)). |
 | `Simulate` | 1st view (not `ui_only`) / `Geometry` | GPU sim with scene tables, HW rays, probes, `pass_surface_read` depth/normal. |
 | `Gbuffer` | Per view / `Geometry` | Lit custom geometry: `pass_gbuffer_begin`, `pass_gbuffer_pipeline`, `pass_depth_pyramid`, `pass_rest_write`. |
@@ -315,9 +316,11 @@ struct My_Frame { float4 params; };
 ## Batches
 
 `engine/render` exposes [instance batches](scene.md#instance-batches) (`batch_set`,
-`batch_remove`, `batches_epoch`, `batch_desc`, `batch_instance`) scoped by `core.World_Id`.
-Store handles in a `by_world` storage and call `batch_remove` in `release` (re-create if
-`batches_epoch` changes).
+`batch_reserve`, `batch_remove`, `batches_epoch`, `batch_desc`, `batch_instance`) scoped by
+`core.World_Id`. Store handles in a `by_world` storage and call `batch_remove` in `release`
+(re-create if `batches_epoch` changes). A batch the GPU fills (`batch_reserve`: room and a box,
+no flags) draws what an `Instances` pass of each view writes into it, nothing without one: the
+[micro foliage](../../mirai-world/references/foliage.md#micro-scatter-on-the-gpu) draws so.
 
 ## Deformable meshes
 

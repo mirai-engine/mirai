@@ -1,7 +1,9 @@
 // An instance of a batch as the pool holds it (render.Batch_Instance),
 // BATCH_WORDS words: its position, its rotation (quat_pack of std/math, 10
 // bits) and its scale along its x, y and z, half floats in two words.
-// Decoded here alone: by the scene, and by the instances of the native TLAS.
+// Decoded here alone: by the scene, and by the instances of the native TLAS;
+// encoded on the GPU here alone, by the extensions that fill a batch
+// (batch_instance_write), as render.batch_instance encodes it on the CPU.
 #ifndef MIRAI_BATCH_INSTANCE_SLANG
 #define MIRAI_BATCH_INSTANCE_SLANG
 #include <shared_constants.slang>
@@ -51,5 +53,28 @@ void batch_basis_placement(float3 p, float4 basis[3], inout float4 world[3], ino
     inverse[0] = float4(r0, -dot(r0, p));
     inverse[1] = float4(r1, -dot(r1, p));
     inverse[2] = float4(r2, -dot(r2, p));
+}
+// A unit rotation (x, y, z, w) as quat_pack of std/math packs it with 10
+// bits a component: the index of the largest one, the first of those as
+// large, and the other three in order, as that one makes them positive.
+uint batch_rotation_pack(float4 q) {
+    float4 a = abs(q);
+    uint at = a.x >= a.y && a.x >= a.z && a.x >= a.w ? 0u : a.y >= a.z && a.y >= a.w ? 1u : a.z >= a.w ? 2u : 3u;
+    float largest = at == 0u ? q.x : at == 1u ? q.y : at == 2u ? q.z : q.w;
+    float3 three = at == 0u ? q.yzw : at == 1u ? q.xzw : at == 2u ? q.xyw : q.xyz;
+    uint3 level = uint3(round(clamp(three * (largest < 0.0 ? -1.0 : 1.0) * 1.41421356, -1.0, 1.0) * 511.0) + 511.0);
+    return at << 30u | level.x << 20u | level.y << 10u | level.z;
+}
+
+// Writes the BATCH_WORDS words of an instance from `at` of the u32 pool: at
+// p from the anchor of its batch, turned by the unit rotation q and scaled
+// along its x, y and z by scale, above 0 and below 65504.
+void batch_instance_write(RWStructuredBuffer<uint> pool, uint at, float3 p, float4 q, float3 scale) {
+    pool[at] = asuint(p.x);
+    pool[at + 1u] = asuint(p.y);
+    pool[at + 2u] = asuint(p.z);
+    pool[at + 3u] = batch_rotation_pack(q);
+    pool[at + 4u] = f32tof16(scale.x) | f32tof16(scale.y) << 16u;
+    pool[at + 5u] = f32tof16(scale.z);
 }
 #endif
