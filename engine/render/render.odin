@@ -257,6 +257,10 @@ ev100_white :: proc "contextless" (luminance:f32) -> f32 {
     return math.log2(max(luminance,1e-6)*gpu.MIDDLE_GRAY*100/gpu.LIGHT_METER_K)
 }
 
+// The linear light an SDR display shows for the card a meter takes as
+// average, under any display transform: each one calibrates to it.
+DISPLAY_GRAY :: gpu.DISPLAY_ACES_GRAY
+
 // The exposure of the view through a camera.
 exposure_of :: proc "contextless" (e:Exposure) -> core.View_Exposure {
     if e.mode==.Manual {return {mode=.Manual,ev100=gpu.ev100_of(e.aperture,e.shutter,e.iso),compensation=e.compensation,own=true}}

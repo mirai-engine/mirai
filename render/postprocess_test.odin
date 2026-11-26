@@ -10,18 +10,19 @@ import "mirai:render/abi"
 @(private="file")
 Grade :: struct {
     tint:[3]f32,
-    saturation,contrast:[3]f32,
-    shadows_saturation,shadows_contrast:[3]f32,
+    saturation,contrast,gamma:[3]f32,
+    shadows_saturation,shadows_contrast,shadows_gamma:[3]f32,
     shadows_end:f32,
-    midtones_saturation,midtones_contrast:[3]f32,
-    highlights_saturation,highlights_contrast:[3]f32,
+    midtones_saturation,midtones_contrast,midtones_gamma:[3]f32,
+    highlights_saturation,highlights_contrast,highlights_gamma:[3]f32,
     highlights_start,highlights_end:f32,
 }
 
 @(private="file")
 GRADE_DEFAULT :: Grade{
-    tint=1,saturation=1,contrast=1,shadows_saturation=1,shadows_contrast=1,shadows_end=0.09,
-    midtones_saturation=1,midtones_contrast=1,highlights_saturation=1,highlights_contrast=1,highlights_start=0.5,highlights_end=1,
+    tint=1,saturation=1,contrast=1,gamma=1,shadows_saturation=1,shadows_contrast=1,shadows_gamma=1,shadows_end=0.09,
+    midtones_saturation=1,midtones_contrast=1,midtones_gamma=1,highlights_saturation=1,highlights_contrast=1,highlights_gamma=1,
+    highlights_start=0.5,highlights_end=1,
 }
 
 // The effect of the built-in ColorGrade with the values of g, each at the
@@ -35,10 +36,11 @@ grade_desc :: proc(r:^Renderer,g:Grade) -> (desc:Postprocess_Desc) {
     words[int(program_parameter(program,"strength").offset)/4]=1
     g:=g
     values:=[?]struct{name:string,value:[]f32}{
-        {"tint",g.tint[:]},{"saturation",g.saturation[:]},{"contrast",g.contrast[:]},
-        {"shadows_saturation",g.shadows_saturation[:]},{"shadows_contrast",g.shadows_contrast[:]},{"shadows_end",([^]f32)(&g.shadows_end)[:1]},
-        {"midtones_saturation",g.midtones_saturation[:]},{"midtones_contrast",g.midtones_contrast[:]},
-        {"highlights_saturation",g.highlights_saturation[:]},{"highlights_contrast",g.highlights_contrast[:]},
+        {"tint",g.tint[:]},{"saturation",g.saturation[:]},{"contrast",g.contrast[:]},{"gamma",g.gamma[:]},
+        {"shadows_saturation",g.shadows_saturation[:]},{"shadows_contrast",g.shadows_contrast[:]},{"shadows_gamma",g.shadows_gamma[:]},
+        {"shadows_end",([^]f32)(&g.shadows_end)[:1]},
+        {"midtones_saturation",g.midtones_saturation[:]},{"midtones_contrast",g.midtones_contrast[:]},{"midtones_gamma",g.midtones_gamma[:]},
+        {"highlights_saturation",g.highlights_saturation[:]},{"highlights_contrast",g.highlights_contrast[:]},{"highlights_gamma",g.highlights_gamma[:]},
         {"highlights_start",([^]f32)(&g.highlights_start)[:1]},{"highlights_end",([^]f32)(&g.highlights_end)[:1]},
     }
     for v in values {
@@ -55,19 +57,19 @@ grade_desc :: proc(r:^Renderer,g:Grade) -> (desc:Postprocess_Desc) {
 grade_reference :: proc(c:[3]f32,g:Grade) -> [3]f32 {
     color:=c*g.tint
     luma:=0.2126*color.r+0.7152*color.g+0.0722*color.b
-    corrected :: proc(color:[3]f32,luma:f32,saturation,contrast:[3]f32) -> (out:[3]f32) {
+    corrected :: proc(color:[3]f32,luma:f32,saturation,contrast,gamma:[3]f32) -> (out:[3]f32) {
         for i in 0..<3 {
             v:=max(luma+(color[i]-luma)*saturation[i],1e-8)
-            out[i]=math.pow(v/0.18,contrast[i])*0.18
+            out[i]=math.pow(math.pow(v/0.18,contrast[i])*0.18,1/gamma[i])
         }
         return
     }
     smooth :: proc(a,b,x:f32) -> f32 {t:=clamp((x-a)/(b-a),0,1);return t*t*(3-2*t)}
     shadows:=1-smooth(0,g.shadows_end,luma)
     highlights:=smooth(g.highlights_start,g.highlights_end,luma)
-    return corrected(color,luma,g.saturation*g.shadows_saturation,g.contrast*g.shadows_contrast)*shadows+
-        corrected(color,luma,g.saturation*g.midtones_saturation,g.contrast*g.midtones_contrast)*(1-shadows-highlights)+
-        corrected(color,luma,g.saturation*g.highlights_saturation,g.contrast*g.highlights_contrast)*highlights
+    return corrected(color,luma,g.saturation*g.shadows_saturation,g.contrast*g.shadows_contrast,g.gamma*g.shadows_gamma)*shadows+
+        corrected(color,luma,g.saturation*g.midtones_saturation,g.contrast*g.midtones_contrast,g.gamma*g.midtones_gamma)*(1-shadows-highlights)+
+        corrected(color,luma,g.saturation*g.highlights_saturation,g.contrast*g.highlights_contrast,g.gamma*g.highlights_gamma)*highlights
 }
 
 @(test)
@@ -121,6 +123,13 @@ postprocess_gpu_order_stage_filter_and_hdr_ldr_precision :: proc(t:^testing.T) {
     testing.expect(t,golden_read_texture(d,target,mem.slice_data_cast([]u8,pixels[:])))
     expected={.3,.6,.9}
     for axis in 0..<3 {testing.expectf(t,abs(f32(pixels[0][axis])-expected[axis])<.003,"Faded axis%d got%v expected%v",axis,f32(pixels[0][axis]),expected[axis])}
+    // Gamma raises each channel to 1/gamma after the contrast: 0.5 squares it.
+    squared:=GRADE_DEFAULT;squared.gamma=.5
+    renderer_set_postprocesses(r,{count=1,entries={0=grade_desc(r,squared)}})
+    target=execute(t,r,r.targets.display,false)
+    testing.expect(t,golden_read_texture(d,target,mem.slice_data_cast([]u8,pixels[:])))
+    expected={.04,.16,.36}
+    for axis in 0..<3 {testing.expectf(t,abs(f32(pixels[0][axis])-expected[axis])<.003,"Gamma axis%d got%v expected%v",axis,f32(pixels[0][axis]),expected[axis])}
     gone:=a;gone.fade=1
     renderer_set_postprocesses(r,{count=1,entries={0=gone}})
     faded:=Pass{r=r}
