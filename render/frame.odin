@@ -435,12 +435,14 @@ bind_light_maps :: proc(p: ^Pass, maps: bool) {
 @(private)
 build_depth_pyramid :: proc(p: ^Pass, pyramid: rhi.Texture) {
 	r, cmd, t := p.r, p.cmd, p.t
-	Params :: struct {source_size: [2]i32, levels, pad: u32}
+	Params :: struct {source_size: [2]i32, levels, pad: u32, inv_extent, pad1: [2]f32}
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Hiz])
 	source := [2]u32{t.width, t.height}
+	side := rhi.texture_desc(r.device, pyramid)
 	for first: u32 = 0; first < t.hiz_levels; first += DEPTH_PYRAMID_BATCH {
 		count := min(DEPTH_PYRAMID_BATCH, t.hiz_levels - first)
-		params := Params{source_size = {i32(source.x), i32(source.y)}, levels = count}
+		extent := source if first == 0 else [2]u32{max(side.width >> (first - 1), 1), max(side.height >> (first - 1), 1)}
+		params := Params{source_size = {i32(source.x), i32(source.y)}, levels = count, inv_extent = 1 / [2]f32{f32(extent.x), f32(extent.y)}}
 		set_params(cmd, &params)
 		if first == 0 {rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.depth)} else {rhi.cmd_bind_texture(cmd, SLOT_PASS0, pyramid, i32(first - 1))}
 		// The targets past the last level are bound to it, and not written.

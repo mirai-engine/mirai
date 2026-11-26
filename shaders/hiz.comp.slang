@@ -8,11 +8,10 @@
 //
 // A dispatch makes up to DEPTH_PYRAMID_BATCH levels from the one before them: a
 // group of 8x8 threads gathers a tile of 8x8 texels of the first, then reduces
-// 4x4 of the next, 2x2 and 1 through group memory. Its threads take their
-// texels in an order where the four that reduce into one are a bank apart, so
-// each level reads only what the group wrote; levels write the two halves of
-// that memory in turn, so one wait a level orders both its writes and the
-// reads of the level before.
+// 4x4 of the next, 2x2 and 1. Its threads take their texels in an order where
+// the four that reduce into one are a bank apart, so each level reads only
+// what the group wrote, through group memory: it writes below the banks the
+// level before read, so one wait a level orders its writes after those reads.
 #include "common.slang"
 #define MIRAI_GROUP_X 64
 #define MIRAI_GROUP_Y 1
@@ -20,8 +19,9 @@
 #define PYRAMID_TILE 8u
 
 // source_size: of the view, or of the level before the first of this dispatch.
-// levels: how many it makes, up to DEPTH_PYRAMID_BATCH.
-struct Params_Block { int2 source_size; uint levels; uint pad0; };
+// levels: how many it makes, up to DEPTH_PYRAMID_BATCH. inv_extent: 1 over
+// the size of the texture of the source, which holds more past the view.
+struct Params_Block { int2 source_size; uint levels; uint pad0; float2 inv_extent; float2 pad1; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_POINT_SAMPLER, 0)]] SamplerState point_sampler : register(MIRAI_REGISTER(s, SLOT_POINT_SAMPLER), space0);
 [[vk::binding(SLOT_PASS0, 0)]] Texture2D<float4> source : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
@@ -30,16 +30,14 @@ struct Params_Block { int2 source_size; uint levels; uint pad0; };
 [[vk::binding(SLOT_PASS3, 0)]] [[vk::image_format("r32f")]] RWTexture2D<float4> target2 : register(MIRAI_REGISTER(u, SLOT_PASS3), space0);
 [[vk::binding(SLOT_PASS4, 0)]] [[vk::image_format("r32f")]] RWTexture2D<float4> target3 : register(MIRAI_REGISTER(u, SLOT_PASS4), space0);
 
-groupshared float farthest[2][PYRAMID_TILE * PYRAMID_TILE];
+groupshared float farthest[PYRAMID_TILE * PYRAMID_TILE];
 
 // The farthest depth of the 2x2 texels of the source from s: one gather at
 // their shared corner. A texel past the source covers no pixel, holds what is
 // past the view in a level larger than it, and counts as the near plane.
 float gather_farthest(int2 s) {
-    uint2 extent;
-    source.GetDimensions(extent.x, extent.y);
     // w: (s.x, s.y), z: (s.x + 1, s.y), x: (s.x, s.y + 1), y: (s.x + 1, s.y + 1).
-    float4 d = source.GatherRed(point_sampler, float2(s + 1) / float2(extent));
+    float4 d = source.GatherRed(point_sampler, float2(s + 1) * params.inv_extent);
     // The columns and rows of the source from s: 2 or more, none past it.
     int2 left = params.source_size - s;
     if (left.x < 2) d.zy = float2(1.0);
@@ -83,11 +81,10 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
     for (uint k = 1u; k < DEPTH_PYRAMID_BATCH; k++) {
         if (k >= params.levels) break;
         uint bank = (PYRAMID_TILE >> k) * (PYRAMID_TILE >> k);
-        uint half = k & 1u;
-        if (index < bank * 4u) farthest[half][index] = d;
+        if (index < bank * 4u) farthest[index] = d;
         GroupMemoryBarrierWithGroupSync();
         if (index < bank) {
-            d = min(min(d, farthest[half][index + bank]), min(farthest[half][index + 2u * bank], farthest[half][index + 3u * bank]));
+            d = min(min(d, farthest[index + bank]), min(farthest[index + 2u * bank], farthest[index + 3u * bank]));
             p >>= 1;
             pyramid_store(k, p, d);
         }

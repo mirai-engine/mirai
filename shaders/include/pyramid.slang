@@ -34,9 +34,14 @@ int pyramid_level_for(int4 texels, int footprint) {
 bool pyramid_hides(Texture2D<float4> pyramid, uint levels, float3 bmin, float3 bmax, float4x4 view_proj, float3 eye) {
     float2 lo = float2(1.0), hi = float2(0.0);
     float nearest = -FLT_MAX;
+    // The corners from the lowest one along the edges of the box.
+    float3 size = bmax - bmin;
+    float4 low = mul(view_proj, float4(bmin - eye, 1.0));
+    float4 dx = mul(view_proj, float4(size.x, 0.0, 0.0, 0.0));
+    float4 dy = mul(view_proj, float4(0.0, size.y, 0.0, 0.0));
+    float4 dz = mul(view_proj, float4(0.0, 0.0, size.z, 0.0));
     for (int i = 0; i < 8; i++) {
-        float3 corner = float3((i & 1) != 0 ? bmax.x : bmin.x, (i & 2) != 0 ? bmax.y : bmin.y, (i & 4) != 0 ? bmax.z : bmin.z);
-        float4 clip = mul(view_proj, float4(corner - eye, 1.0));
+        float4 clip = low + ((i & 1) != 0 ? dx : 0.0) + ((i & 2) != 0 ? dy : 0.0) + ((i & 4) != 0 ? dz : 0.0);
         // Behind the eye, or on the near plane (depth 1) or nearer.
         if (clip.w <= 0.0 || clip.z >= clip.w) return false;
         float2 ndc = clip.xy / clip.w;
