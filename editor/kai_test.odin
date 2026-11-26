@@ -446,6 +446,11 @@ editor_kai_publishes_to_main_and_a_launcher_pulls_it :: proc(t:^testing.T) {
     bad:=Api_Kai_Publish_Params{description="the first version",org="nowhere"}
     call,_=kai_call(a,api_kai_publish,&bad,Api_Kai_Published)
     testing.expect(t,call.failed && st.description_length>0,"a failed publish keeps the description")
+    // A first publish that refuses leaves the org's record as it was.
+    unnamed:=Api_Kai_Publish_Params{org=org,visibility="org",bookmark="no name\x00"}
+    call,_=kai_call(a,api_kai_publish,&unnamed,Api_Kai_Published)
+    _,orgs=kai_call(a,api_kai_org,&Api_Kai_Org_Params{},Api_Kai_Orgs)
+    testing.expect(t,call.failed && len(orgs.orgs[0].repositories)==0,"a refused first publish adds no repository to the org")
     kai_write(t,a,fmt.tprintf("%s/a.txt",ka_.root),transmute([]u8)string("a\n"))
     publish:=Api_Kai_Publish_Params{description="the first version",org=org,visibility="org"}
     published:^Api_Kai_Published
@@ -465,7 +470,14 @@ editor_kai_publishes_to_main_and_a_launcher_pulls_it :: proc(t:^testing.T) {
     join:=Api_Kai_Join_Params{invite=strings.clone(invited.invite,context.temp_allocator)}
     joined:^Api_Kai_Joined
     call,joined=kai_call(b,api_kai_join,&join,Api_Kai_Joined)
-    if !kai_ok(t,call,"join") || !testing.expect_value(t,joined.name,"studio") {return}
+    if !kai_ok(t,call,"join") {return}
+    // The join runs on a thread of the agent: the frames go on.
+    joining:=time.tick_now()
+    for joined.stage=="waiting" {
+        if !testing.expect(t,kai_tick(a,b,joining),"the join ends") {return}
+        _,joined=kai_call(b,api_kai_join,&Api_Kai_Join_Params{},Api_Kai_Joined)
+    }
+    if !testing.expectf(t,joined.stage=="done" && joined.name=="studio","the join is done: %v",joined^) {return}
     testing.expect_value(t,projects_unpulled_count(b),1)
     folder:=fmt.tprintf("%s/pulled",base.test_folder(t,"kai-team-pull"))
     clone:=Api_Kai_Clone_Params{org="studio",repository=orgs.orgs[0].repositories[0].name,folder=folder}
@@ -557,10 +569,18 @@ editor_kai_team_methods_refuse_hostile_params :: proc(t:^testing.T) {
         call,_=kai_call(s,api_kai_invite,&x,Api_Kai_Invite)
         testing.expectf(t,call.failed,"%v",x)
     }
-    joins:=[]Api_Kai_Join_Params{{invite=""},{invite="kai2!!!"},{invite="kai2aaaa"}}
+    joins:=[]Api_Kai_Join_Params{{invite="kai2!!!"},{invite="kai2aaaa"}}
     for &x in joins {
         call,_=kai_call(s,api_kai_join,&x,Api_Kai_Joined)
         testing.expectf(t,call.failed,"%q",x.invite)
+    }
+    joined:^Api_Kai_Joined
+    call,joined=kai_call(s,api_kai_join,&Api_Kai_Join_Params{},Api_Kai_Joined)
+    testing.expect(t,!call.failed && joined.stage=="none","with no invite it says no join ran")
+    logins:=[]Api_Kai_Web_Login_Params{{server="127.0.0.1:7350"},{server="127.0.0.1:7350",name="ana",password="short"}}
+    for &x in logins {
+        call,_=kai_call(s,api_kai_web_login,&x,Api_Kai_Task)
+        testing.expectf(t,call.failed,"%v",x.server)
     }
     publishes:=[]Api_Kai_Publish_Params{{},{org="studio",visibility="everyone"},{org="studio",bookmark="no name\x00"}}
     for &x in publishes {

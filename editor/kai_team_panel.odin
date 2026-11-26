@@ -1,5 +1,6 @@
 package editor
 
+import "core:crypto"
 import "core:fmt"
 import "core:strings"
 import ka "mirai:cook/kai"
@@ -114,10 +115,19 @@ kai_publish_build :: proc(s:^Session) {
         return
     }
     f:=&t.fields
-    kai_line(ctx,v.publish,"text_faint")
+    t.publish_org=clamp(t.publish_org,0,len(v.orgs)-1)
+    target:=&v.orgs[t.publish_org]
+    if len(v.orgs)>1 {
+        kai_line(ctx,"Publish this project to:","text_faint")
+        names:=make([]string,len(v.orgs),context.temp_allocator)
+        for o,i in v.orgs {names[i]=o.name}
+        if pick:=kai_buttons(s,"kai_publish_org",names,active=t.publish_org);pick>=0 {t.publish_org=pick}
+    } else {
+        kai_line(ctx,v.publish,"text_faint")
+    }
     if pick:=kai_buttons(s,"kai_visibility",{"Org only","Public"},active=f.public?1:0);pick>=0 {f.public=pick==1}
     if kai_buttons(s,"kai_publish",{"Publish to main"},accent=0)==0 {
-        kai_ask(s,"kai.publish",`{{"description":%s,"org":%s,"visibility":%s}}`,kai_quote(description),kai_quote(org_hex(v.orgs[0].id)),kai_quote(f.public?"public":"org"))
+        kai_ask(s,"kai.publish",`{{"description":%s,"org":%s,"visibility":%s}}`,kai_quote(description),kai_quote(org_hex(target.id)),kai_quote(f.public?"public":"org"))
     }
 }
 
@@ -178,7 +188,9 @@ kai_team_build :: proc(s:^Session) {
     kai_head(ctx,"JOIN AN ORG",-1)
     kai_field(ctx,"kai_invite_in",f.invite[:],&f.invite_length,"Paste an invite: kai2...")
     invite:=kai_typed(f.invite[:],f.invite_length)
-    if kai_buttons(s,"kai_join",{"Join"},accent=0,disabled=invite=="")==0 {kai_ask(s,"kai.join",`{{"invite":%s}}`,kai_quote(invite))}
+    joining:=&t.tasks[.Join]
+    if kai_buttons(s,"kai_join",{"Join"},accent=0,disabled=invite=="" || joining.stage==.Waiting)==0 {kai_ask(s,"kai.join",`{{"invite":%s}}`,kai_quote(invite))}
+    kai_task_line(ctx,joining,"Reaching the machine that invited and waiting for the org's record...")
 
     for &o,i in v.orgs {
         ui.id_push(ctx,ui.id(ctx,"org",i))
@@ -203,10 +215,14 @@ kai_team_build :: proc(s:^Session) {
         kai_field(ctx,"kai_login",f.login[:],&f.login_length,"Name: a-z, 0-9, . _ -")
         kai_field(ctx,"kai_password",f.password[:],&f.password_length,"Password, 8 or more",password=true)
         server,login:=kai_typed(f.server[:],f.server_length),kai_typed(f.login[:],f.login_length)
-        if kai_buttons(s,"kai_web",{"Set sign-in"},disabled=server=="" || login=="" || f.password_length<8)==0 {
-            kai_ask(s,"kai.web_login",`{{"server":%s,"name":%s,"password":%s}}`,kai_quote(server),kai_quote(login),kai_quote(string(f.password[:f.password_length])))
+        signing:=&t.tasks[.Web_Login]
+        if kai_buttons(s,"kai_web",{"Set sign-in"},disabled=server=="" || login=="" || f.password_length<8 || signing.stage==.Waiting)==0 {
+            // Straight to the agent's thread: the password goes into no call's text.
+            if message:=kai_task_start(s,.Web_Login,server,login,string(f.password[:f.password_length]));message!="" {notify(s,message)}
+            crypto.zero_explicit(&f.password,size_of(f.password))
             f.password_length=0
         }
+        kai_task_line(ctx,signing,"Reaching the server...")
     }
 }
 
@@ -228,10 +244,11 @@ kai_invite_build :: proc(s:^Session,o:^ka.Org_View) {
     }
     kai_line(ctx,"On another network, the other machine reaches this one where the router forwards its port:","text_faint")
     kai_field(ctx,"kai_invite_at",f.at[:],&f.at_length,"External host:port (optional)")
-    if kai_buttons(s,"kai_invite",{"Make invite"},accent=0)==0 {
-        kai_ask(s,"kai.invite",`{{"org":%s,"role":%s,"mine":%v,"at":%s}}`,kai_quote(org_hex(o.id)),kai_quote(ka.role_text(f.role)),f.mine,kai_quote(kai_typed(f.at[:],f.at_length)))
+    switch kai_buttons(s,"kai_invite",{"Make invite","Revoke open invites"},accent=0) {
+    case 0: kai_ask(s,"kai.invite",`{{"org":%s,"role":%s,"mine":%v,"at":%s}}`,kai_quote(org_hex(o.id)),kai_quote(ka.role_text(f.role)),f.mine,kai_quote(kai_typed(f.at[:],f.at_length)))
+    case 1: kai_ask(s,"kai.invite",`{{"org":%s,"revoke":true}}`,kai_quote(org_hex(o.id)))
     }
-    if t.invite_length==0 {return}
+    if t.invite_length==0 || t.invite_org!=o.id {return}
     text:=string(t.invite[:t.invite_length])
     kai_line(ctx,"One machine joins with this invite, within 3 days, while this editor runs:","text_faint")
     // One word of some 200 letters: on one line, cut at the panel's edge, so it never widens the tab.
@@ -240,6 +257,15 @@ kai_invite_build :: proc(s:^Session,o:^ka.Org_View) {
         ui.text(ctx,text,{size=size,color=ui.tone(ctx,"text"),align_y=.Center,ellipsis=true},ui.GROW,ui.fixed(size+6))
     }
     if kai_buttons(s,"kai_invite_copy",{"Copy invite"})==0 && s.app!=nil && s.app.platform!=nil {platform.clipboard_set(s.app.platform,text)}
+}
+
+// How a task goes: waiting while it runs, why when it failed.
+@(private)
+kai_task_line :: proc(ctx:^ui.Context,x:^Kai_Task,waiting:string) {
+    #partial switch x.stage {
+    case .Waiting: kai_line(ctx,waiting,"text_faint")
+    case .Failed: kai_line(ctx,string(x.why[:x.why_length]),"danger")
+    }
 }
 
 // An org's id as the kai.* methods take it.

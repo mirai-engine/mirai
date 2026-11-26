@@ -836,3 +836,28 @@ repository_names_are_folder_names_everywhere :: proc(t:^testing.T) {
     for c in cases {testing.expectf(t,repo_name_valid(c.name)==c.valid,"%q: valid %v",c.name,c.valid)}
     testing.expect(t,!name_valid("bell\x07"),"a member's name has no control character")
 }
+
+// An admin revokes the open invites of an org: one that leaked admits nobody,
+// and those of another org stay.
+@(test)
+revoked_invites_admit_nobody :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-revoke")
+    if folder=="" {return}
+    mac,pc:Machine
+    if !machine_open(t,&mac,folder,"Ana") || !machine_open(t,&pc,folder,"Ben") {return}
+    defer machine_close(&mac)
+    defer machine_close(&pc)
+    org,_:=vcs_org(t,&mac)
+    other,_:=team_org_create(&mac.team,"other")
+    if !machine_start(t,&mac,0) || !machine_start(t,&pc,-1) {return}
+    address:=fmt.tprintf("127.0.0.1:%d",agent_port(&mac.agent))
+    leaked,_:=team_invite(&mac.team,org,.Writer,"",{address},context.temp_allocator)
+    team_invite(&mac.team,org,.Reader,"",{address},context.temp_allocator)
+    kept,_:=team_invite(&mac.team,other,.Writer,"",{address},context.temp_allocator)
+    cleared,e:=team_invites_clear(&mac.team,org)
+    testing.expect(t,e==.None && cleared==2,"both invites of the org are revoked")
+    _,je:=agent_join(&pc.agent,leaked)
+    testing.expect_value(t,je,Error.Expired)
+    joined,ke:=agent_join(&pc.agent,kept)
+    testing.expectf(t,ke==.None && joined==other,"the other org's invite still joins: %v %s",ke,pc.agent.team.why)
+}

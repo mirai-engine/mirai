@@ -51,13 +51,21 @@ Api_Kai_Invite_Params :: struct {
     role:string `mirai:"optional,label=reader, writer (the default), admin or node (a server)"`,
     mine:bool `mirai:"optional,label=For another machine of this person: it joins under this machine's name"`,
     at:string `mirai:"optional,label=host:port where the other machine reaches this one when it is on another network: what the router forwards; none: this machine's addresses on its LAN"`,
+    revoke:bool `mirai:"optional,label=Removes every open invite of org instead: one that leaked admits nobody"`,
 }
 Api_Kai_Invite :: struct {
     invite:string `mirai:"label=What the other machine joins with, once, within 72 hours"`,
     addresses:[]string `mirai:"label=Where it reaches this machine"`,
 }
-Api_Kai_Join_Params :: struct {invite:string}
-Api_Kai_Joined :: struct {org,name:string}
+Api_Kai_Join_Params :: struct {
+    invite:string `mirai:"optional,label=Starts joining with it; none: says how the last join went"`,
+}
+Api_Kai_Joined :: struct {
+    stage:string `mirai:"label=none, waiting (it reaches the inviting machine and waits for the org's record), done or failed"`,
+    why:string,
+    org:string,
+    name:string,
+}
 Api_Kai_Publish_Params :: struct {
     description:string `mirai:"optional,label=Describes the working change it closes"`,
     bookmark:string `mirai:"optional,label=The shared bookmark it moves; none: main"`,
@@ -98,9 +106,13 @@ Api_Kai_Peers :: struct {
     pulls:[]Api_Kai_Pull,
 }
 Api_Kai_Web_Login_Params :: struct {
-    server:string `mirai:"label=The host:port of the server's agent"`,
-    name:string `mirai:"label=a-z, 0-9, . _ and -"`,
-    password:string `mirai:"label=8 to 256 bytes"`,
+    server:string `mirai:"optional,label=The host:port of the server's agent, as the org lists it; none: says how the last sign-in went"`,
+    name:string `mirai:"optional,label=a-z, 0-9, . _ and -"`,
+    password:string `mirai:"optional,label=8 to 256 bytes"`,
+}
+Api_Kai_Task :: struct {
+    stage:string `mirai:"label=none, waiting, done or failed"`,
+    why:string,
 }
 
 @(private)
@@ -108,11 +120,11 @@ kai_team_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="kai.profile",summary="Names the person of this machine and the machine, which every org it makes or joins shows.",params=type_info_of(Api_Kai_Profile_Params),result=type_info_of(Api_Kai_Orgs),run=api_kai_profile})
     api_register(s,st,{name="kai.org",summary="This machine's orgs with their members and repositories; makes one, sets a member's role or removes it first when asked.",params=type_info_of(Api_Kai_Org_Params),result=type_info_of(Api_Kai_Orgs),run=api_kai_org})
     api_register(s,st,{name="kai.invite",summary="A one-time invite to an org for another machine: its address, this device's key and a secret only it carries; the other machine joins with kai.join while this editor runs.",params=type_info_of(Api_Kai_Invite_Params),result=type_info_of(Api_Kai_Invite),run=api_kai_invite})
-    api_register(s,st,{name="kai.join",summary="Joins the org of an invite: reaches the machine that made it, proves the invite and waits for the org's record that lists this machine.",params=type_info_of(Api_Kai_Join_Params),result=type_info_of(Api_Kai_Joined),run=api_kai_join})
+    api_register(s,st,{name="kai.join",summary="Joins the org of an invite on a thread of the agent: reaches the machine that made it, proves the invite and waits for the org's record that lists this machine. Wait with _wait_until on stage.",params=type_info_of(Api_Kai_Join_Params),result=type_info_of(Api_Kai_Joined),run=api_kai_join})
     api_register(s,st,{name="kai.publish",summary="Publishes the working copy to main for the whole org: closes the working change when it changed a file, and moves main; a project in no org goes into one first, in the same call.",params=type_info_of(Api_Kai_Publish_Params),result=type_info_of(Api_Kai_Published),run=api_kai_publish})
     api_register(s,st,{name="kai.clone",summary="Pulls a repository of an org into a folder: it is a workspace at once, and its files are written once the agent has every object of main; asked again, how far it is.",params=type_info_of(Api_Kai_Clone_Params),result=type_info_of(Api_Kai_Clone),run=api_kai_clone})
     api_register(s,st,{name="kai.peers",summary="The agent of this machine: where it listens, the machines connected now and how far each repository's pull is.",result=type_info_of(Api_Kai_Peers),flags={.Read_Only},run=api_kai_peers})
-    api_register(s,st,{name="kai.web_login",summary="Sets the name and password this machine signs in with on the web view of a Kai server of its org.",params=type_info_of(Api_Kai_Web_Login_Params),result=type_info_of(Api_Kai_Done),run=api_kai_web_login})
+    api_register(s,st,{name="kai.web_login",summary="Sets the name and password this machine signs in with on the web view of a Kai server of its org, on a thread of the agent, which proves the server's key first. Wait with _wait_until on stage.",params=type_info_of(Api_Kai_Web_Login_Params),result=type_info_of(Api_Kai_Task),run=api_kai_web_login})
 }
 
 @(private)
@@ -254,6 +266,16 @@ api_kai_invite :: proc(s:^Session,call:^api.Call) {
     if t==nil {return}
     org,ok:=api_kai_org_find(s,call,t,p.org)
     if !ok {return}
+    k:=s.kai.team
+    if p.revoke {
+        if _,e:=vcs.team_invites_clear(t,org);e!=.None {
+            api_kai_why(call,t,e)
+            return
+        }
+        if k.invite_org==org {k.invite_length=0}
+        api.call_result(call,Api_Kai_Invite)
+        return
+    }
     role:=vcs.Role.Writer
     if p.role!="" {
         known:bool
@@ -266,7 +288,6 @@ api_kai_invite :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.SERVER_ERROR,message)
         return
     }
-    k:=s.kai.team
     addresses:=make([dynamic]string,call.allocator)
     if at:=strings.trim_space(p.at);at!="" {append(&addresses,strings.clone(at,call.allocator))}
     append(&addresses,..vcs.agent_addresses(&k.agent,call.allocator))
@@ -276,6 +297,7 @@ api_kai_invite :: proc(s:^Session,call:^api.Call) {
         return
     }
     k.invite_length=copy(k.invite[:],text)
+    k.invite_org=org
     r:=api.call_result(call,Api_Kai_Invite)
     r.invite,r.addresses=text,addresses[:]
 }
@@ -285,22 +307,38 @@ api_kai_join :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Kai_Join_Params)
     t:=api_kai_team(s,call)
     if t==nil {return}
-    if message:=kai_agent_start(s);message!="" {
-        api.call_fail(call,api.SERVER_ERROR,message)
-        return
-    }
     k:=s.kai.team
-    org,e:=vcs.agent_join(&k.agent,p.invite)
-    if e!=.None {
-        api.call_fail(call,api.SERVER_ERROR,k.agent.team.why!=""?k.agent.team.why:vcs.error_text(e))
-        return
+    if invite:=strings.trim_space(p.invite);invite!="" {
+        if _,e:=vcs.invite_parse(invite,context.temp_allocator);e!=.None {
+            api.call_fail(call,api.INVALID_PARAMS,"that is no Kai invite: copy all of it, it begins with kai2")
+            return
+        }
+        if t.name=="" {
+            api.call_fail(call,api.INVALID_PARAMS,"name yourself and this machine first: kai.profile")
+            return
+        }
+        if message:=kai_task_start(s,.Join,invite);message!="" {
+            api.call_fail(call,api.SERVER_ERROR,message)
+            return
+        }
     }
-    k.fields.invite_length=0
-    kai_team_wrote(s)
-    o,_,_:=vcs.team_org(t,org)
+    x:=&k.tasks[.Join]
     r:=api.call_result(call,Api_Kai_Joined)
-    r.org=strings.clone(org_hex(org),call.allocator)
-    r.name=strings.clone(o.name,call.allocator)
+    r.stage,r.why=api_kai_task_state(x,call)
+    if x.stage==.Done {
+        o,_,_:=vcs.team_org(t,x.org)
+        r.org=strings.clone(org_hex(x.org),call.allocator)
+        r.name=strings.clone(o.name,call.allocator)
+    }
+}
+
+// A task's stage and why, as its methods say them.
+@(private)
+api_kai_task_state :: proc(x:^Kai_Task,call:^api.Call) -> (stage,why:string) {
+    STAGES :: [Kai_Clone_Stage]string{.None="none",.Waiting="waiting",.Done="done",.Failed="failed"}
+    stages:=STAGES
+    if x.stage==.Failed {why=strings.clone(string(x.why[:x.why_length]),call.allocator)}
+    return stages[x.stage],why
 }
 
 @(private)
@@ -323,21 +361,36 @@ api_kai_publish :: proc(s:^Session,call:^api.Call) {
             api.call_fail(call,api.INVALID_PARAMS,"the project is in no org yet: give org, and visibility public or org")
             return
         }
-        org,ok:=api_kai_org_find(s,call,t,p.org)
-        if !ok {return}
-        if _,e:=ka.project_join(&st.project,t,org,p.visibility=="public");e!=.None {
-            api_kai_why(call,t,e)
-            return
-        }
     } else if p.org!="" || p.visibility!="" {
         api.call_fail(call,api.INVALID_PARAMS,"the project is in an org already: org and visibility go with its first publish")
         return
+    }
+    // Whatever may refuse goes before the org's record lists the repository.
+    bookmark:=p.bookmark!=""?p.bookmark:ka.BOOKMARK_DEFAULT
+    if !vcs.bookmark_name_valid(bookmark) {
+        api.call_failf(call,api.INVALID_PARAMS,"%q is no bookmark name",bookmark)
+        return
+    }
+    org:vcs.Org_Id
+    if !linked {
+        ok:bool
+        if org,ok=api_kai_org_find(s,call,t,p.org);!ok {return}
+        o,_,_:=vcs.team_org(t,org)
+        if role,member:=vcs.org_role(&o,t.identity.key);!member || role<.Writer {
+            api.call_fail(call,api.INVALID_PARAMS,"a reader of that org publishes nothing: an admin makes you a writer")
+            return
+        }
     }
     if _,message:=kai_prepare(s);message!="" {
         api.call_fail(call,api.SERVER_ERROR,message)
         return
     }
-    bookmark:=p.bookmark!=""?p.bookmark:ka.BOOKMARK_DEFAULT
+    if !linked {
+        if _,e:=ka.project_join(&st.project,t,org,p.visibility=="public");e!=.None {
+            api_kai_why(call,t,e)
+            return
+        }
+    }
     changed:=make([dynamic]string,context.temp_allocator)
     revision,e:=ka.publish(&st.project,t,bookmark,strings.trim_space(p.description),&changed)
     kai_wrote(s,changed[:])
@@ -425,18 +478,20 @@ api_kai_peers :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_kai_web_login :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Kai_Web_Login_Params)
-    t:=api_kai_team(s,call)
-    if t==nil {return}
-    if message:=kai_agent_start(s);message!="" {
-        api.call_fail(call,api.SERVER_ERROR,message)
-        return
+    if api_kai_team(s,call)==nil {return}
+    if p.server!="" || p.name!="" || p.password!="" {
+        server,name:=strings.trim_space(p.server),strings.trim_space(p.name)
+        if server=="" || name=="" || len(p.password)<8 || len(p.password)>256 {
+            api.call_fail(call,api.INVALID_PARAMS,"give server, name and a password of 8 to 256 bytes")
+            return
+        }
+        if message:=kai_task_start(s,.Web_Login,server,name,p.password);message!="" {
+            api.call_fail(call,api.SERVER_ERROR,message)
+            return
+        }
     }
-    k:=s.kai.team
-    if e:=vcs.agent_web_login(&k.agent,strings.trim_space(p.server),strings.trim_space(p.name),p.password);e!=.None {
-        api.call_fail(call,api.SERVER_ERROR,k.agent.team.why!=""?k.agent.team.why:vcs.error_text(e))
-        return
-    }
-    api.call_result(call,Api_Kai_Done).ok=true
+    r:=api.call_result(call,Api_Kai_Task)
+    r.stage,r.why=api_kai_task_state(&s.kai.team.tasks[.Web_Login],call)
 }
 
 // The names of the shared bookmarks that point at revision, apart by commas, in allocator.
