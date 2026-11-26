@@ -3,10 +3,12 @@ package water
 import "core:math/linalg"
 import "core:slice"
 import "core:testing"
+import "mirai:asset"
 import "mirai:core"
 import render "mirai:engine/render"
 import geom "mirai:std/geom"
 import mm "mirai:std/math"
+import fog "plugins:fog/runtime"
 import phys "plugins:physics/runtime"
 
 @(test)
@@ -147,5 +149,70 @@ the_fluids_nearest_the_view_are_drawn :: proc(t:^testing.T) {
             for f,i in fluids[:count] {drawn[i]=int(f.entity)}
             testing.expectf(t,slice.equal(drawn,c.drawn),"%s, order %d: %v",c.name,order,drawn)
         }
+    }
+}
+
+// A water whose opaque surface hides what is under it from the eye gives the
+// fog no medium and under_record nothing to light: a plane with the eye over
+// its waves and the lens, which no dry box opens. Under it, at its line, over
+// a surface of glass or a lake, it does; a water that stops no light gives
+// no medium, and its caustics are still lit.
+@(test)
+water_hidden_under_an_opaque_surface_gives_no_medium_and_no_light :: proc(t:^testing.T) {
+    PLANE :: Gpu_Body{surface={2,1,0,0},look={0,0,1.2,0}}
+    LAKE :: Gpu_Body{surface={2,0,0,0},look={0,0,1.4,0}}
+    room:=mm.Transform{{30,1.5,0},1,{6,4,6}}
+    dry:=Gpu_Body{to_box=mm.mat4_rows(linalg.inverse(mm.transform_matrix(room))),surface={3.5,0,1,1}}
+    water:=fog.Medium{density=0.3,carved=true,sun_only=true,shade=0.3,glass=true}
+    clear:=fog.Medium{carved=true,sun_only=true,glass=true}
+    air:=fog.Medium{priority=1,dry=true}
+    Case :: struct {
+        name:string,
+        bodies:[]Gpu_Body,
+        waves:f32,           // amplitude of a wave of the first body
+        media:[]Body_Medium,
+        eye:f32,             // height of the eye
+        given:int,           // media into the fog
+        wet,caustic:bool,
+        ior:f32,
+    }
+    cases:=[]Case{
+        {"over an opaque sea",{PLANE},0,{{water,0,true,true}},40,0,false,false,WATER_IOR},
+        {"under an opaque sea",{PLANE},0,{{water,0,true,true}},-5,1,true,true,1.2},
+        {"at the line of an opaque sea",{PLANE},0,{{water,0,true,true}},2.03,1,true,true,1.2},
+        {"over the crests of an opaque sea",{PLANE},1.5,{{water,0,true,true}},3,1,true,true,1.2},
+        {"over a sea of glass",{PLANE},0,{{water,0,false,true}},40,1,true,true,1.2},
+        {"over an opaque sea a dry box opens",{PLANE,dry},0,{{water,0,true,true},{air,1,false,false}},40,2,true,true,1.2},
+        {"over an opaque lake",{LAKE},0,{{water,0,true,true}},40,1,true,true,1.4},
+        {"over an opaque sea and a lake of glass",{PLANE,LAKE},0,{{water,0,true,true},{water,1,false,true}},40,1,true,true,1.4},
+        {"under clear water",{PLANE},0,{{clear,0,false,true}},-5,0,true,true,1.2},
+        {"a water not drawn",{},0,{{water,-1,false,true}},-5,1,false,false,WATER_IOR},
+    }
+    for c in cases {
+        state:Water_Gpu
+        state.ior=WATER_IOR
+        copy(state.bodies[:],c.bodies)
+        state.count=len(c.bodies)
+        state.waves[0].waves[0]={direction={1,0},length=20,amplitude=c.waves,speed=5}
+        state.waves[0].count=c.waves>0?1:0
+        media:fog.Fog_Media
+        defer delete(media.queue.items)
+        view:=core.View{position={0,c.eye,0},rotation=1,fov=mm.PI/3,near=0.05,far=100,size={160,120}}
+        water_media(&state,&media,c.media,view)
+        testing.expectf(t,len(media.queue.items)==c.given,"%s: %d media, not %d",c.name,len(media.queue.items),c.given)
+        testing.expectf(t,state.wet==c.wet && state.caustic==c.caustic && state.ior==c.ior,"%s: wet %v, caustic %v at %v, not %v, %v at %v",c.name,state.wet,state.caustic,state.ior,c.wet,c.caustic,c.ior)
+    }
+}
+
+// A surface hides what is under it when its material is opaque and whole:
+// not glass, not blended, without holes.
+@(test)
+a_surface_is_opaque_without_glass_blending_or_holes :: proc(t:^testing.T) {
+    Case :: struct {mode:asset.Alpha_Mode,transmission:f32,opaque:bool}
+    nan:=f32(0);nan=nan/nan
+    for c in ([]Case{{.Opaque,0,true},{.Opaque,1,false},{.Opaque,nan,true},{.Blend,0,false},{.Mask,0,false},{.Additive,0,false}}) {
+        m:render.Material_Desc
+        m.alpha_mode,m.transmission=c.mode,c.transmission
+        testing.expectf(t,surface_opaque(m)==c.opaque,"%v with transmission %v",c.mode,c.transmission)
     }
 }
