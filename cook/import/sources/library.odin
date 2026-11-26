@@ -960,9 +960,9 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
     case keyed && found && build_given(l,key_name):
         // The source gave it before the refresh came to it.
         report.fetched+=1
-    case keyed && found && f.final:
+    case keyed && found:
         // Kept before the project shared its builds, or by another: the source hears it is here.
-        if here:=l.options.source.here;here!=nil {here(l.options.source.user,asset.REF_IMPORTS,key_name,f.hash,made_from(&p,top))}
+        if here:=l.options.source.here;here!=nil {here(l.options.source.user,f.final?asset.REF_IMPORTS:asset.REF_IMPORTS_FAST,key_name,f.hash,made_from(&p,top))}
     case keyed && !found:
         names:=[1]string{key_name}
         fetch_builds(l,names[:])

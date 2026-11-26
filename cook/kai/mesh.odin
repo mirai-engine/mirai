@@ -33,7 +33,6 @@ import vcs "mirai:kai"
 // grant holders and members below the scopes' readers hold ciphertext at most.
 
 LABEL_DDC_CACHE :: "kai-1/ddc-cache"
-MESH_WAIT :: 10.0 // seconds a miss waits for peers
 SEALED_VERSION :: 1 // of the chunks a sealed output holds
 FOLDED_PATHS :: ODIN_OS==.Darwin || ODIN_OS==.Windows // whose file systems ignore case by default
 
@@ -181,8 +180,8 @@ mesh_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string
         }
         return
     }
-    start:=time.tick_now()
-    for time.duration_seconds(time.tick_since(start))<MESH_WAIT {
+    // The runner says how long: a lookup waits while its output arrives (vcs.ddc_lookup_stalled).
+    for {
         waiting,e:=ask(c,wanted)
         if e!=.None {return}
         if !waiting {break}

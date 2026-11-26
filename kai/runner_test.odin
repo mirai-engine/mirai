@@ -1252,3 +1252,33 @@ a_user_recovers_onto_a_new_device_with_its_recovery_key :: proc(t:^testing.T) {
     testing.expect(t,user_device_active(&f,fresh.identity.key))
     user_fold_destroy(&f)
 }
+
+// A lookup gives up DDC_SECONDS after the last thing that came, not after it
+// began: the record, an object of its output whole, or bytes of one. An
+// output larger than the link carries in DDC_SECONDS still comes whole, and
+// one nothing delivers is a miss in that time.
+@(test)
+a_lookup_waits_while_its_output_arrives :: proc(t:^testing.T) {
+    Step :: struct {
+        at:f64,      // seconds since the lookup began
+        lacking:int,
+        here:i64,
+        stalled:bool,
+    }
+    cases:=[][]Step{
+        // No record ever comes.
+        {{1,-1,0,false},{DDC_SECONDS-1,-1,0,false},{DDC_SECONDS+1,-1,0,true}},
+        // The record comes late, then bytes of one large object keep coming.
+        {{DDC_SECONDS-1,3,0,false},{2*DDC_SECONDS-2,3,1<<20,false},{3*DDC_SECONDS-3,3,2<<20,false},{4*DDC_SECONDS-4,3,3<<20,false}},
+        // Objects come whole one by one, the bytes of those left falling with each.
+        {{DDC_SECONDS-1,3,4<<20,false},{2*DDC_SECONDS-2,2,1<<20,false},{3*DDC_SECONDS-3,1,0,false},{4*DDC_SECONDS-2,1,0,true}},
+        // The peer that had it stops delivering.
+        {{1,2,1<<20,false},{DDC_SECONDS,2,1<<20,false},{DDC_SECONDS+2,2,1<<20,true}},
+    }
+    for steps,k in cases {
+        l:=DDC_Lookup{started=100,lacking=-1}
+        for s,i in steps {
+            testing.expectf(t,ddc_lookup_stalled(&l,s.lacking,s.here,100+s.at)==s.stalled,"case %d step %d: stalled is not %v",k,i,s.stalled)
+        }
+    }
+}

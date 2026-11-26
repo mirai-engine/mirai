@@ -239,7 +239,8 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
   `a_grant_holder_reads_and_writes_only_its_scope_until_it_ends`,
   `two_agents_pair_and_sync_a_change_over_loopback_udp`,
   `a_relay_node_joins_two_agents_that_cannot_reach_each_other`,
-  `runner_refuses_hostile_datagrams`, `a_ddc_node_drops_least_used_outputs_past_its_quota`,
+  `runner_refuses_hostile_datagrams`, `a_lookup_waits_while_its_output_arrives`,
+  `a_ddc_node_drops_least_used_outputs_past_its_quota`,
   `a_ref_told_while_the_fetches_are_full_is_fetched_once_there_is_room`,
   `a_peer_fed_a_stale_org_log_learns_it_is_behind` and
   `a_forged_org_head_stalls_a_peer_no_longer_than_its_bound` in `kai`;

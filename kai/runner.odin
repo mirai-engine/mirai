@@ -221,7 +221,9 @@ DDC_State :: enum u8 {Waiting,Found,Missing}
 DDC_Lookup :: struct {
     org:Log_Id,
     key:store.Hash,
-    started:f64,
+    started:f64,  // when it began, or when what it waits for last arrived
+    lacking:int,  // objects of its output not whole here then; -1 before a record came
+    here:i64,     // data bytes of those in the store then
     asked:bool,
     lan_done:bool,
     queries:[AGENT_PEERS]exchange.Query,
@@ -229,7 +231,7 @@ DDC_Lookup :: struct {
     output:store.Hash, // the output_root of a record that came
 }
 
-DDC_SECONDS :: 10.0 // a lookup gives up
+DDC_SECONDS :: 10.0 // a lookup gives up after this long with nothing of its output arriving
 DDC_LOOKUPS_MAX :: 64 // lookups at once; one more is a miss
 
 // Starts the runner of the machine: its socket, an agent for every org it
@@ -1453,7 +1455,9 @@ runner_peers :: proc(r:^Runner,out:^[dynamic]Runner_Peer_Info) {
 // Looks for what a peer built for key in the org: what the store holds, then
 // LAN peers, then the rest; once a record is here every object its output
 // lists is fetched. Found with the record's output_root once they are all
-// whole here; Missing when DDC_SECONDS pass, or when no peer has one of them.
+// whole here; Missing when DDC_SECONDS pass with nothing of it arriving
+// (ddc_lookup_stalled), or when no peer has one of them: an output of any
+// size comes whole over any link that delivers.
 runner_ddc_ask :: proc(r:^Runner,org:Log_Id,key:store.Hash) -> (state:DDC_State,output_root:store.Hash) {
     served:^Runner_Org
     for o in r.orgs {
@@ -1479,25 +1483,27 @@ runner_ddc_ask :: proc(r:^Runner,org:Log_Id,key:store.Hash) -> (state:DDC_State,
     }
     for &l in r.ddc {
         if l.org!=org || l.key!=key {continue}
-        if r.now-l.started>DDC_SECONDS {
-            runner_ddc_end(r,org,key)
-            r.ddc_missing+=1
-            return .Missing,{}
-        }
+        given_up:=wanted!={}
+        here:=i64(0)
         if wanted!={} {
             l.output=wanted
-            given_up:=true
             for m in lacking {
                 agent_want_object(&served.agent,m)
                 progress,known:=exchange.progress(&served.agent.x,m)
                 given_up&&=known && progress.state==.Missing
+                if known {here+=progress.here}
             }
-            // Every peer was asked for what the output lacks and none has it.
-            if given_up {
-                runner_ddc_end(r,org,key)
-                r.ddc_missing+=1
-                return .Missing,{}
-            }
+        }
+        if ddc_lookup_stalled(&l,wanted!={}?len(lacking):-1,here,r.now) {
+            runner_ddc_end(r,org,key)
+            r.ddc_missing+=1
+            return .Missing,{}
+        }
+        // Every peer was asked for what the output lacks and none has it.
+        if given_up {
+            runner_ddc_end(r,org,key)
+            r.ddc_missing+=1
+            return .Missing,{}
         }
         // Every peer answered and none had it, nor is a record on its way.
         if l.output=={} && l.lan_done && len(served.agent.fetches)==0 {
@@ -1516,10 +1522,20 @@ runner_ddc_ask :: proc(r:^Runner,org:Log_Id,key:store.Hash) -> (state:DDC_State,
         r.ddc_missing+=1
         return .Missing,{}
     }
-    l:=DDC_Lookup{org=org,key=key,started=r.now,output=wanted}
+    l:=DDC_Lookup{org=org,key=key,started=r.now,output=wanted,lacking=wanted!={}?len(lacking):-1}
     for m in lacking {agent_want_object(&served.agent,m)}
     append(&r.ddc,l)
     return .Waiting,{}
+}
+
+// Whether a lookup that waits gives up at now. lacking: the objects of its
+// output not whole here, -1 while no record came; here: the data bytes of
+// those in the store. An object that came whole, or bytes of one that grew,
+// start its DDC_SECONDS again, as does the record itself.
+ddc_lookup_stalled :: proc(l:^DDC_Lookup,lacking:int,here:i64,now:f64) -> bool {
+    if (lacking>=0 && (l.lacking<0 || lacking<l.lacking)) || here>l.here {l.started=now}
+    l.lacking,l.here=lacking,here
+    return now-l.started>DDC_SECONDS
 }
 
 // Asks the org's peers for the object at address: true once it is whole here.

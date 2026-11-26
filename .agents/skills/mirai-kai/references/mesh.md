@@ -187,7 +187,9 @@ or anonymous (an empty claim). The namespace decides who reads it:
   grant. Records of one key with different outputs are both kept and flagged nondeterministic: the
   build is not deterministic and the mesh says so instead of choosing.
 - A lookup asks the store, then LAN peers, then the rest, and answers `Found` only once every object
-  of the output is whole here, or `Missing` after a bounded time. Lookups at once and the uses a
+  of the output is whole here, or `Missing` once `DDC_SECONDS` pass with nothing of it arriving
+  (`ddc_lookup_stalled`): an output of any size comes whole over a link that delivers, and the
+  cook waits as long as the runner says it does. Lookups at once and the uses a
   ddc node remembers have fixed tables: one lookup more is a miss, one use more replaces the
   oldest.
 - An output built from private inputs inherits their scopes: it is sealed under the newest epoch of
