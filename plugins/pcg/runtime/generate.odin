@@ -343,7 +343,7 @@ rule_takes :: proc "contextless" (cin:^Pcg_Cell_Input,l:^Pcg_Layer,mask:^Layer_M
     if r.layers=={} {return true}
     weight,known:=ground_layer_weight(cin.ground,mask,p.at.x,p.at.y)
     // Within half a step of the 255 of the weights: a full layer between samples takes weight 1.
-    return known && weight+0.5/255>=max(r.weight,p.chance)
+    return known && weight+0.5/255>=(r.whole?r.weight:max(r.weight,p.chance))
 }
 
 @(private)

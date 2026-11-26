@@ -127,6 +127,7 @@ Layer_Params :: struct {
     ground_height:[2]f32 `mirai:"optional,unit=m,label=Of the ground in the frame of the graph for its rule"`,
     ground_layers:[pcg.GROUND_RULE_LAYERS]base.Asset_Id `mirai:"optional,label=The materials of the ground it stands on; none: any"`,
     weight:f32 `mirai:"optional,min=0,max=1,label=Of those ground layers together, at least"`,
+    whole:bool `mirai:"optional,label=Past weight it stands at all of its density; false: as much as the layers weigh"`,
     field_expr:string `mirai:"optional,label=Its viability from 0 to 1 (std/pcg field expression); empty: 1 everywhere"`,
     grammar_expr:string `mirai:"optional,label=Of a Grammar layer: how its symbols fill each span"`,
     symbols:[pcg.SYMBOLS_MAX]Symbol_Param `mirai:"optional,label=Of a Grammar layer: the symbols its grammar names"`,
@@ -537,6 +538,7 @@ layer_values :: proc(call:^api.Call,l:^pcg.Pcg_Layer,p:^Layer_Params) {
     if given(call,"ground_height") {l.ground_rule.height={min(p.ground_height.x,p.ground_height.y),max(p.ground_height.x,p.ground_height.y)}}
     if given(call,"ground_layers") {l.ground_rule.layers=p.ground_layers}
     if given(call,"weight") {l.ground_rule.weight=p.weight}
+    if given(call,"whole") {l.ground_rule.whole=p.whole}
 }
 
 @(private)
