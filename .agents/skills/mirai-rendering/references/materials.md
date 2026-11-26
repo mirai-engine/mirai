@@ -396,7 +396,9 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
   Beer-Lambert `attenuation_color`/`attenuation_distance` and `scatter_color`.
 - **Refraction on screen:** the exit point is projected once, as far beyond it as the pixel
   holds the opaque scene; where that point holds something in front of the layer, the pixel
-  shows its own.
+  shows its own. A sheet takes the way through its medium (absorption, scatter, blur) from the
+  pixel it lands on, never from the unbent one; where that pixel lies nearer it lands again by
+  that way, so a drop-off's edge moves alike on both sides, by its own depth.
 - **From inside (`glass_inside.comp`):** Selects smallest `material_solid` box containing or
   within `GLASS_MEDIUM_NEAR` of the camera; back faces mark `GBUFFER_GLASS_EXIT` (Snell window +
   internal reflection). A pixel is immersed while the camera is under the top of the box and

@@ -656,6 +656,92 @@ glass_seen_from_inside_bends_out_reflects_past_the_critical_angle_absorbs_and_sc
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
+// The surface of water bends the view of each pixel aside by its tilt, the
+// more the deeper what it meets lies, and what the water takes on the way is
+// that of the way to what the pixel shows. Over a drop beside a shelf, the
+// pixels whose view lands on the shelf show it as bright as the shelf itself,
+// moved as far as the shelf lies deep: the edge moves with the surface, not
+// cut where the shelf stands. A block over the water, which the view under
+// the surface cannot meet, lends none of its color to the water around it.
+@(test)
+glass_sheet_shows_what_it_bends_the_view_onto :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 256, 192, glass_settings()) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	water := glass_material({1, 1, 1}, 1, 0.02)
+	water.thickness = 1
+	water.ior = 1.33
+	water.attenuation_color = {0.3, 0.3, 0.3}
+	water.attenuation_distance = 1
+	materials_set(r, {water})
+	sheet, box := sheet_mesh(r), box_mesh(r)
+	// Tilted about Z: its plane bends nothing (sheet_through leaves it out), its tilt alone does.
+	TILT :: f32(20 * math.PI / 180)
+	surface := placed({}, {40, 1, 40})
+	surface[0, 0], surface[0, 1] = 40 * math.cos(TILT), -math.sin(TILT)
+	surface[1, 0], surface[1, 1] = 40 * math.sin(TILT), math.cos(TILT)
+	SHELF :: f32(-1)
+	EDGE :: f32(0.35)
+	instances := []Instance_Desc{
+		{object_id = 1, mesh = sheet, transform = surface, material = 1, tint = {1, 1, 1}},
+		{object_id = 2, mesh = box, transform = placed({0, -7.5, 0}, {30, 1, 30}), tint = {0.02, 0.02, 0.02}},
+		// A shelf a metre under the surface, its edges along x -EDGE and EDGE.
+		{object_id = 3, mesh = box, transform = placed({0, 0.5 * (SHELF - 7), 0}, {2 * EDGE, SHELF + 7, 4}), tint = {0.8, 0.8, 0.8}},
+		// A gray post from the shelf through the surface holds a red block over the water.
+		{object_id = 4, mesh = box, transform = placed({0, 0.5 * SHELF + 0.05, -0.55}, {0.2, 0.1 - SHELF, 0.2}), tint = {0.3, 0.3, 0.3}},
+		{object_id = 5, mesh = box, transform = placed({0, 0.4, -0.55}, {0.3, 0.6, 0.3}), tint = {1, 0, 0}},
+	}
+	testing.expect(t, scene_given(r, instances, nil, SUN, {sky = {0.05, 0.05, 0.3}}), r.error)
+	camera := Camera{position = {0, 4, 0.001}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 30, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	for _ in 0 ..< 3 {testing.expect(t, fixture_frame(&f, {camera = camera}), r.error)}
+	rhi.device_wait_idle(f.device)
+	width := int(r.targets.width)
+	halves := make([]f16, width * int(r.targets.height) * 4, context.temp_allocator)
+	testing.expect(t, golden_read_texture(f.device, r.targets.display, mem.slice_data_cast([]u8, halves)), rhi.device_error(f.device))
+	at := proc(halves: []f16, width: int, p: [2]int) -> Vec3 {
+		i := (p.y * width + p.x) * 4
+		return {f32(halves[i]), f32(halves[i + 1]), f32(halves[i + 2])}
+	}
+	shelf := at(halves, width, glass_pixel(r, camera, {0, SHELF, 0.3})).g
+	deep := at(halves, width, glass_pixel(r, camera, {1, -7, 0.3})).g
+	testing.expectf(t, shelf > 4 * deep + 0.02, "the shelf shows brighter than the floor past the drop: %v and %v", shelf, deep)
+	// Rows along both edges of the shelf, clear of the block: the pixels past
+	// the edge that show the shelf, and those that show neither.
+	moved, dimmed, rows := 0, 0, 0
+	first, last := glass_pixel(r, camera, {0, SHELF, 0.05}).y, glass_pixel(r, camera, {0, SHELF, 0.75}).y
+	for y in first ..< last {
+		rows += 1
+		for side in ([2]f32{-EDGE, EDGE}) {
+			edge := glass_pixel(r, camera, {side, SHELF, 0.4}).x
+			out := side > 0 ? 1 : -1
+			for d in -12 ..= 12 {
+				g := at(halves, width, {edge + out * d, y}).g
+				if d >= 2 && g > deep + 0.6 * (shelf - deep) {moved += 1}
+				if g > deep + 0.2 * (shelf - deep) && g < deep + 0.6 * (shelf - deep) {dimmed += 1}
+			}
+		}
+	}
+	testing.expectf(t, moved >= 2 * rows, "the tilt moves the view past one edge onto the shelf, the shelf's depth aside: %d pixels in %d rows", moved, rows)
+	testing.expectf(t, dimmed <= 3 * rows, "%d pixels in %d rows along the edges show neither the shelf nor the floor past it", dimmed, rows)
+	// Around the block, beyond where any of it stands, nothing red.
+	low, high := [2]int{width, width}, [2]int{0, 0}
+	for corner in 0 ..< 8 {
+		p := glass_pixel(r, camera, {corner & 1 == 0 ? -0.15 : 0.15, corner & 2 == 0 ? 0.1 : 0.7, corner & 4 == 0 ? -0.7 : -0.4})
+		low, high = {min(low.x, p.x), min(low.y, p.y)}, {max(high.x, p.x), max(high.y, p.y)}
+	}
+	reddish := 0
+	for y in low.y - 14 ..= high.y + 14 {
+		for x in low.x - 14 ..= high.x + 14 {
+			if x >= low.x - 2 && x <= high.x + 2 && y >= low.y - 2 && y <= high.y + 2 {continue}
+			c := at(halves, width, {x, y})
+			if c.r > 0.02 && c.r > 1.5 * c.g && c.r > 1.5 * c.b {reddish += 1}
+		}
+	}
+	testing.expectf(t, reddish == 0, "%d pixels of the water around the block over it take its color", reddish)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
 // A blended sheet among many lights, with and without shadows, takes the
 // light of every one that reaches each of its points: the same whether the
 // lists of its instance hold them (translucent_draws.comp) or, a wide sheet

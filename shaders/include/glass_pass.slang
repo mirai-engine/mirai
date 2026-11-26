@@ -98,7 +98,9 @@ float3 scene_through(float2 uv, float layer_distance, float roughness) {
 // holds what stands over it. Where the pixel it lands on holds nothing behind
 // the sheet, the pixel shows its own. What it shows is softened over a disc
 // that grows with that way, as the scattering of the medium blurs what lies
-// deep. travelled: the way through the medium to what the pixel holds.
+// deep. travelled: the way through the medium to what the pixel shows, the one
+// it lands on, so that what the medium takes and scatters on the way follows
+// the bent view as its color does.
 #define SHEET_SHIFT_MOST 0.04 // of the height of the view
 #define SHEET_BLUR 0.03       // metres of blur on what lies behind for each metre of the way to it
 struct Sheet_Seen {
@@ -113,11 +115,33 @@ bool sheet_behind(float2 uv) {
     return layer_depth.Load(int3(min(int2(uv * frame.resolution), int2(frame.resolution) - 1), 0)).r > 0.0;
 }
 
+// The way through the medium from the sheet at g to what the pixel at uv
+// holds, and the depth of that.
+float sheet_way(Glass g, float2 uv, out float depth) {
+    depth = opaque_depth(uv);
+    return length(position_from_depth(uv, depth) - g.position);
+}
+
+// Where the view through the sheet at uv lands on screen when what it meets
+// lies `way` beyond the sheet: that far along the view, moved aside by `bend`
+// for each metre of it, at most SHEET_SHIFT_MOST from uv.
+float2 sheet_landing(Glass g, float2 uv, float3 bend, float way) {
+    float2 shift = project_uv(g.position + (bend - g.view) * way) - uv;
+    float most = SHEET_SHIFT_MOST * frame.resolution.y;
+    float pixels = length(shift * frame.resolution);
+    if (pixels > most) shift *= most / pixels;
+    return clamp(uv + shift, 0.5 * frame.inv_resolution, 1.0 - 0.5 * frame.inv_resolution);
+}
+
+// The view is moved aside as far as the scene under uv lies; where the pixel
+// it lands on holds something nearer, the view met that first, and lands
+// again as far aside as that lies: a drop-off moves as much on both sides of
+// its edge, by its own depth, and a pixel over nothing (the far plane) moves
+// onto the ground beside it no farther than that ground lies.
 Sheet_Seen sheet_through(Material m, Glass g, float2 uv) {
     Sheet_Seen seen;
-    float behind = opaque_depth(uv);
-    float3 held = position_from_depth(uv, behind);
-    seen.travelled = length(held - g.position);
+    float behind;
+    seen.travelled = sheet_way(g, uv, behind);
     float ior = m.ior;
     float3 flat = abs(g.normal.y) > 0.3 ? float3(0.0, g.normal.y >= 0.0 ? 1.0 : -1.0, 0.0) : g.normal;
     float3 bent = refract(-g.view, g.normal, 1.0 / ior);
@@ -126,12 +150,21 @@ Sheet_Seen sheet_through(Material m, Glass g, float2 uv) {
     seen.direction = turned ? bent : -g.view;
     float2 at = uv;
     if (turned) {
-        float2 shift = project_uv(held + (bent - even) * seen.travelled) - uv;
-        float most = SHEET_SHIFT_MOST * frame.resolution.y;
-        float pixels = length(shift * frame.resolution);
-        if (pixels > most) shift *= most / pixels;
-        float2 moved = clamp(uv + shift, 0.5 * frame.inv_resolution, 1.0 - 0.5 * frame.inv_resolution);
-        if (sheet_behind(moved)) at = moved;
+        float3 bend = bent - even;
+        float2 moved = sheet_landing(g, uv, bend, seen.travelled);
+        float there;
+        float way = sheet_way(g, moved, there);
+        bool under = sheet_behind(moved);
+        if (under && way < seen.travelled) {
+            moved = sheet_landing(g, uv, bend, way);
+            way = sheet_way(g, moved, there);
+            under = sheet_behind(moved);
+        }
+        if (under) {
+            at = moved;
+            seen.travelled = way;
+            behind = there;
+        }
     }
     float radius = SHEET_BLUR * seen.travelled / max(frame.footprint.x + frame.footprint.y * max(behind, 1e-3), 1e-9);
     seen.radiance = scene_blurred(at, seen.travelled < material_clear_reach(m) ? radius : 0.0);
