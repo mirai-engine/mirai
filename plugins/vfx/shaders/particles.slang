@@ -626,6 +626,9 @@ float3 particle_world_vector(uint slot, float3 v) {
     return (particle_emitters[slot].range.w & PARTICLE_FLAG_LOCAL) != 0u ? transform_vector(particle_emitters[slot].world, v) : v;
 }
 
+// The share of its life a particle lived.
+float particle_life(Particle p) { return saturate(p.age / max(p.lifetime, 1e-5)); }
+
 // The color, size and flipbook frame of a particle at its age.
 struct Particle_Look {
     float4 color;
@@ -639,7 +642,7 @@ struct Particle_Look {
 };
 Particle_Look particle_look(uint slot, Particle p) {
     Particle_Look look;
-    float life = saturate(p.age / max(p.lifetime, 1e-5));
+    float life = particle_life(p);
     float4 shown = particle_emitters[slot].look;
     uint2 flipbook = particle_emitters[slot].flipbook.xy;
     look.color = particle_color(p) * particle_gradient(slot, life);

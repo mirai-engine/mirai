@@ -2530,3 +2530,74 @@ mesh_particles_take_the_turn_and_the_scale_of_their_program :: proc(t: ^testing.
 	}
 	expect_clean(t, f.device)
 }
+
+// The Surface program of the material of a particle reads the share of its
+// life the particle lived, its color apart from that of its mesh (white on a
+// quad) and where the eye of the view is (testdata/particle_seen.slang).
+@(test)
+particle_programs_see_the_life_and_the_color_of_their_particle_apart_from_its_mesh :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 96, 64, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	surface := gpu.program_find(r, "Particle_Seen", .Surface)
+	if !testing.expect(t, surface != nil && surface.reads >= {.Particle, .View}, "testdata has the Surface program Particle_Seen, which reads its particle and the view") {return}
+	seen := gpu.DEFAULT_MATERIAL
+	seen.program_id, seen.alpha_mode = surface.id, .Additive
+	gpu.materials_set(r, {seen})
+	// A square that faces the camera, blue at its vertices.
+	blue := [3]f32{0, 0, 1}
+	square := []gpu.Mesh_Vertex {
+		{position = {-0.5, -0.5, 0}, normal = {0, 0, 1}, color = blue, tangent = {1, 0, 0, 1}},
+		{position = {0.5, -0.5, 0}, normal = {0, 0, 1}, color = blue, tangent = {1, 0, 0, 1}},
+		{position = {0.5, 0.5, 0}, normal = {0, 0, 1}, color = blue, tangent = {1, 0, 0, 1}},
+		{position = {-0.5, 0.5, 0}, normal = {0, 0, 1}, color = blue, tangent = {1, 0, 0, 1}},
+	}
+	mesh, made := gpu.mesh_add(r, square, []u32{0, 1, 2, 0, 2, 3})
+	if !testing.expect(t, made, r.error) {return}
+	gpu.scene_set_environment(r, {}, {sky = {0, 0, 0}})
+	GREEN :: [4]f32{0, 1, 0, 1}
+	MAGENTA :: [4]f32{1, 0, 1, 1}
+	Case :: struct {name: string, x: f32, color: [4]f32, age: f32, mesh: bool, shows: [3]bool}
+	// A quad faces the eye wherever it is; the square, only in front of it.
+	cases := []Case {
+		{"a young green quad", -3, GREEN, 0, false, {false, true, true}},
+		{"an old magenta quad", -1.5, MAGENTA, 9.5, false, {true, false, false}},
+		{"a young green mesh with blue vertices in front of the eye", 0, GREEN, 0, true, {false, true, true}},
+		{"a young green mesh with blue vertices seen from a side", 3, GREEN, 0, true, {false, false, true}},
+	}
+	emitters := make([]Emitter_Desc, len(cases), context.temp_allocator)
+	for c, i in cases {
+		e := &emitters[i]
+		e^ = test_emitter(u64(i + 1), {c.x, 0, 0})
+		e.material, e.info.lifetime, e.info.colors, e.info.intensity = 1, {10, 10}, {c.color, c.color}, 1
+		if c.mesh {
+			e.info.render, e.blended = .Mesh, true
+			if !testing.expect(t, mesh_choices(e, f.app.renderer, {mesh}, {1})) {return}
+		}
+	}
+	DT :: f32(1.0 / 60)
+	for i in 0 ..< 6 {
+		for &e, k in emitters {
+			e.spawns = test_burst(1) if i == 0 else {}
+			e.spawns[0].age = cases[k].age
+		}
+		testing.expect(t, frame_emitters(f, &f.sync, emitters, DT))
+		testing.expect(t, gpu.renderer_frame(r, {camera = FRONT, time = f32(i) * DT}), r.error)
+	}
+	rhi.device_wait_idle(f.device)
+	pixels, w, _, ok := gpu.renderer_capture(r)
+	testing.expect(t, ok, r.error)
+	if !ok {return}
+	defer delete(pixels)
+	for c in cases {
+		got := pixel(pixels, w, project(r, FRONT, {c.x, 0, 0}))
+		for shows, channel in c.shows {
+			testing.expectf(t, (got[channel] > 100) == shows && (got[channel] < 80) != shows, "%s shows %v of red (its life), green (the color of its particle) and blue (the life left by the color of its mesh): %v", c.name, c.shows, got)
+		}
+	}
+	expect_clean(t, f.device)
+}

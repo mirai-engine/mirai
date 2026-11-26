@@ -30,8 +30,8 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
     float rim = smoothstep(left - p.edge - 0.04, left - 0.02, ragged) * inside;
     s.unlit = true;
     s.base_color = float3(0.0);
-    s.emission = lerp(p.cool, p.warm, data.y) * p.glow * (0.25 + 3.0 * rim) * ctx.vertex_color.rgb;
-    s.alpha = inside * ctx.vertex_color.a;
+    s.emission = lerp(p.cool, p.warm, data.y) * p.glow * (0.25 + 3.0 * rim) * ctx.particle_color.rgb;
+    s.alpha = inside * ctx.particle_color.a;
     return s;
 }
 }

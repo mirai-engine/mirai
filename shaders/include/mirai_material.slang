@@ -5,6 +5,7 @@
 // Shared authoring contract: programs never own render passes or native handles.
 struct Mirai_Surface_Context {
     float3 world_position; // relative to the origin of the render, which follows the eye far from the centre of the world
+    float3 view_direction; // unit, from the point toward the eye of the view that draws it, also where a ray finds the point
     int3 origin;           // that origin in steps: what it adds to a wave, a pattern or a lattice of the world is in origin.slang
     float3 normal;        // the input normal: the interpolated one under the normal map of the material
     float3 vertex_normal; // the interpolated normal of the surface, facing as normal does
@@ -65,6 +66,12 @@ struct Mirai_Surface_Context {
     // metres: half its sprite across. 0 where no particle draws.
     float particle_random;
     float particle_radius;
+    // Its color at its age (Mirai_Vfx_Visual.color), which the program uses
+    // as it will: white where no particle draws. vertex_color stays the color
+    // of the mesh of a Mesh particle, white on a quad, a ribbon or a beam.
+    float4 particle_color;
+    // The share of its life it lived, 0 to 1; 0 where no particle draws.
+    float particle_life;
 };
 // A vector or a point of the world in the space of the object of ctx, and back.
 float3 mirai_object_vector(Mirai_Surface_Context ctx, float3 v) {

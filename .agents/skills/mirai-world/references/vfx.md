@@ -274,9 +274,10 @@ fade), and drops unrequested effects.
 - Contract: `shaders/include/mirai_vfx.slang` ([Vfx domain][vfx-domain]); built-in `Orbit`
   (`plugins/vfx/shaders/orbit.slang`). `initialize` runs after effect defaults; `update` before
   effect forces; `render` writes draw records (`visual.data`/`given`/`random` -> sprite Surface
-  program; `visual.scale`/`orientation` -> the vertex stages, at `TURN_AT`); `//! births` replaces effect births (emit mode 3) over the seconds of the frame its
-  clock emitted in (`Emitter_Clock.program_until` -> `Gpu_Emitter.birth_limit`; none before it
-  starts), and its effect says `max_particles` (`particle_program_check` refuses it otherwise).
+  program; `visual.scale`/`orientation` -> the vertex stages, at `TURN_AT`); `//! births`
+  replaces effect births (emit mode 3) over the seconds of the frame its clock emitted in
+  (`Emitter_Clock.program_until` -> `Gpu_Emitter.birth_limit`; none before it starts), and its
+  effect says `max_particles` (`particle_program_check` refuses it otherwise).
 - Each active program supplies emit, simulate, and stage pipelines (`_hw` when tracing); sprite and
   mesh vertex pipelines are shared. Editor [debugging](vfx-editor.md#debugging) reads
   `emitter_ranges`.
@@ -291,6 +292,12 @@ fade), and drops unrequested effects.
 | `Simulate` (frame) | `surface` / `stage` clear / `volume light` / `finish` | Build new surface CDFs; clear entered grid cells; light volumes (`_hw`); indirect draws & tiled sort (ribbons, mesh runs) |
 | `Blend` (view) | `volumes` / `sprites` | Raymarch volumes; draw sorted sprites (`Billboard`/`Velocity`/`Horizontal`/`Beam`/`Ribbon`) & blended `Mesh` (`particle_mesh_blend.vert`, mesh normal), Surface program or flipbook/disc, `soft`, `Additive`/`Alpha`/`Multiply` (unlit, `FLAG_MULTIPLY`), `.Glass_Depth` split |
 | `Effect` / `Gbuffer` | `effects` / `meshes` | UI effect views; opaque/masked `Mesh` particles |
+
+A Surface program on a sprite or a blended mesh has the last word on its color: it reads
+`ctx.particle_color` and `ctx.particle_life` (the share of its life lived) with the `render` data,
+and the color of the vertices of a mesh apart, in `ctx.vertex_color` (white on quads, ribbons and
+beams). A G-buffer mesh gets none of them: the color of its particle tints what its program
+returns.
 
 An unlit sprite or blended mesh shows its color and the emission of its material or Surface
 program in the units of its emitter (`Particle_Info.emission_mode`, `PARTICLE_FLAG_RELATIVE`;
@@ -325,7 +332,8 @@ Local-space meshes take motion vectors from the emitter's `previous` rows
   propagation over a device-less catalog, analytical bounds, culling) and GPU (`gpu_test.odin`,
   shaders in `.mirai/test-shaders/vfx`): births/steps/pause/events/pools/capacity, ribbons
   (`two_ribbons.slang`), `Surface` on a posed skin (`testdata/stick.slang`), `World`
-  hits/friction, sprite Surface programs (`hand_over.slang`, `particle_data.slang`), grid
+  hits/friction, sprite Surface programs (`hand_over.slang`, `particle_data.slang`,
+  `particle_seen.slang`: life, color, mesh vertex color, view direction), grid
   stages/splats (`tally.slang`, `spread.slang`), weighted velocity-facing meshes, stage rays
   (`probe.slang`), program births (`sprinkle.slang`), volumes (`puff.slang`), world textures
   (`count_ground.slang`), channel rollback (`testdata/gather.slang`), fog/glass sorting,

@@ -12,7 +12,7 @@ struct Stage_Output {
     [[vk::location(0)]] float4 out_color : TEXCOORD0;
     [[vk::location(1)]] float3 out_light : TEXCOORD1;
     [[vk::location(2)]] float4 out_uv : TEXCOORD2;
-    [[vk::location(3)]] float2 out_blend_depth : TEXCOORD3;
+    [[vk::location(3)]] float3 out_blend_depth_life : TEXCOORD3;
     [[vk::location(4)]] nointerpolation float out_seed : TEXCOORD4;
     [[vk::location(5)]] float3 out_world : TEXCOORD5;
     [[vk::location(6)]] nointerpolation float4 out_data0 : TEXCOORD6;
@@ -23,6 +23,7 @@ struct Stage_Output {
     [[vk::location(12)]] nointerpolation uint material : TEXCOORD12;
     [[vk::location(11)]] nointerpolation float2 out_random_radius : TEXCOORD11;
     [[vk::location(13)]] float3 out_normal : TEXCOORD13;
+    [[vk::location(14)]] float4 out_vertex_color : TEXCOORD14;
 };
 
 [shader("vertex")]
@@ -54,11 +55,13 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
     float3 world = particle_world(params.emitter, p.position) + particle_mesh_vector(params.emitter, rotation, v.position * look.size * scale, turned);
     output.out_normal = particle_mesh_normal(params.emitter, rotation, v.normal, scale, turned);
     output.position = view_clip(world);
-    // The color of the mesh tints it as it tints the mesh in the G-buffer.
-    output.out_color = float4(material_vertex_tint(row, v.color.rgb), 1.0) * look.color;
+    // The color of the particle, and that of the mesh apart: a material without a
+    // program tints by both, as the G-buffer does; a program reads each.
+    output.out_color = look.color;
+    output.out_vertex_color = v.color;
     output.out_light = (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_LIT) != 0u ? particle_light(p) : emission_render_units(float3(1.0), (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_RELATIVE) != 0u);
     output.out_uv = float4(v.uv, v.uv1);
-    output.out_blend_depth = float2(0.0, dot(world - frame.camera_position.xyz, frame.camera_forward.xyz));
+    output.out_blend_depth_life = float3(0.0, dot(world - frame.camera_position.xyz, frame.camera_forward.xyz), particle_life(p));
     output.out_seed = float(p.seed & 1023u) * 0.37;
     output.out_world = world;
     output.out_data0 = look.data[0]; output.out_data1 = look.data[1]; output.out_data2 = look.data[2]; output.out_data3 = look.data[3];
