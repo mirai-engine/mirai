@@ -35,8 +35,9 @@ Role :: enum u8 {Reader,Node,Writer,Admin}
 Member :: struct {
     key:Key,
     role:Role,
-    name:string,   // of the person
-    device:string, // of the machine
+    name:string,    // of the person
+    device:string,  // of the machine
+    address:string, // host:port where every member reaches it, "" when none: a server's
 }
 
 Org_Repo :: struct {
@@ -67,7 +68,7 @@ Org_Head :: struct #packed {
     time:i64,
     members:u16,
     repos:u16,
-} // + name, members × (Key, Role, name, device), repos × (Repo_Id, public u8, name), Signature; names are a length byte and their bytes
+} // + name, members × (Key, Role, name, device, address), repos × (Repo_Id, public u8, name), Signature; texts are a length byte and their bytes
 
 name_valid :: proc(name:string) -> bool {
     return len(name)>0 && len(name)<=NAME_MAX && utf8.valid_string(name)
@@ -78,7 +79,7 @@ org_encode :: proc(o:^Org,identity:^Identity,allocator:=context.allocator) -> (b
     if len(o.members)>MEMBERS_MAX || len(o.repos)>ORG_REPOS_MAX {return nil,.Too_Large}
     if identity.key!=o.signer || o.version==0 || !name_valid(o.name) {return nil,.Invalid_Argument}
     for m,i in o.members {
-        if !name_valid(m.name) || !name_valid(m.device) || m.role>max(Role) {return nil,.Invalid_Argument}
+        if !name_valid(m.name) || !name_valid(m.device) || m.role>max(Role) || len(m.address)>255 {return nil,.Invalid_Argument}
         if i>0 && !key_less(o.members[i-1].key,m.key) {return nil,.Invalid_Argument}
     }
     for r,i in o.repos {
@@ -93,6 +94,7 @@ org_encode :: proc(o:^Org,identity:^Identity,allocator:=context.allocator) -> (b
         write_value(&w,m.role)
         write_name(&w,m.name)
         write_name(&w,m.device)
+        write_name(&w,m.address)
     }
     for r in o.repos {
         write_value(&w,r.id)
@@ -129,6 +131,7 @@ org_decode :: proc(bytes:[]u8,allocator:=context.allocator) -> (o:Org,error:Erro
         m.role=read_value(&r,Role)
         m.name=tail_string(&r)
         m.device=tail_string(&r)
+        m.address=tail_string(&r)
         ok&&=m.role<=max(Role) && name_valid(m.name) && name_valid(m.device) && (i==0 || key_less(o.members[i-1].key,m.key))
     }
     for &x,i in o.repos {
@@ -197,7 +200,7 @@ org_signs :: proc(held,next:^Org) -> bool {
     if len(next.members)!=len(held.members) {return false}
     for m,i in next.members {
         h:=held.members[i]
-        if m.key!=h.key || m.role!=h.role || m.name!=h.name || m.device!=h.device {return false}
+        if m.key!=h.key || m.role!=h.role || m.name!=h.name || m.device!=h.device || m.address!=h.address {return false}
     }
     return true
 }

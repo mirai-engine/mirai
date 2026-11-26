@@ -43,6 +43,7 @@ Agent_Options :: struct {
     beacon:bool,    // say on the LAN where it listens, and dial the members that say it
     node:bool,      // keep every repository of its orgs whole and the derived data its writers publish
     peers:[]string, // host:port to dial besides the addresses it knows
+    public:string,  // host:port where every member reaches this machine (a server's): what an org it joins lists
     web_login:proc(data:rawptr,org_member:Key,name,password:string) -> bool, // a server's web view: a member names its sign-in
     web_data:rawptr,
 }
@@ -563,8 +564,9 @@ peer_read_run :: proc(p:^Peer) {
             org:=read_value(&r,Org_Id)
             name:=tail_string(&r)
             device:=tail_string(&r)
+            public:=tail_string(&r)
             if r.short || !joining {return}
-            if !agent_admit(a,p,org,name,device) {return}
+            if !agent_admit(a,p,org,name,device,public) {return}
         case .Welcome:
             org:=read_value(&r,Org_Id)
             address:=read_value(&r,store.Hash)
@@ -1045,6 +1047,7 @@ agent_join :: proc(a:^Agent,text:string) -> (org:Org_Id,error:Error) {
     append(&body,..o[:])
     write_text(&body,a.team.name)
     write_text(&body,a.team.device)
+    write_text(&body,a.options.public)
     for {
         sync.mutex_lock(&p.lock)
         ready,done:=p.ready,p.done
@@ -1069,11 +1072,14 @@ agent_join :: proc(a:^Agent,text:string) -> (org:Org_Id,error:Error) {
 
 // The inviting end: takes an invite the peer proved and makes it a member.
 @(private)
-agent_admit :: proc(a:^Agent,p:^Peer,org:Org_Id,name,device:string) -> bool {
+agent_admit :: proc(a:^Agent,p:^Peer,org:Org_Id,name,device,public:string) -> bool {
     sync.mutex_lock(&a.lock)
     role,invited,e:=team_invite_take(&a.team,org,&p.conn.hs)
     if e==.None {
-        member:=Member{key=p.conn.peer,role=role,name=invited!=""?invited:name,device=device}
+        address:=public
+        // A server that names no address is reached where it dialed from, at the port it listens on.
+        if address=="" && role==.Node && p.port>0 {address=fmt.tprintf("%s:%d",net.address_to_string(p.remote.address,context.temp_allocator),p.port)}
+        member:=Member{key=p.conn.peer,role=role,name=invited!=""?invited:name,device=device,address=address}
         e=team_member_set(&a.team,org,member)
     }
     sync.mutex_unlock(&a.lock)
@@ -1263,6 +1269,7 @@ agent_dial_members :: proc(a:^Agent) {
         if e!=.None {continue}
         for m in o.members {
             if m.key==own {continue}
+            if m.address!="" {append(&targets,Target{m.key,strings.clone(m.address,context.temp_allocator)})}
             for address in team_peer_addresses(&a.team,m.key) {append(&targets,Target{m.key,address})}
             sync.mutex_lock(&a.lock)
             if b,ok:=a.beacons[m.key];ok {append(&targets,Target{m.key,strings.clone(b,context.temp_allocator)})}

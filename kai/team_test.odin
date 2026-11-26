@@ -170,7 +170,7 @@ org_records_hold_only_when_signed_by_who_may :: proc(t:^testing.T) {
     if !testing.expect_value(t,pe,store.Error.None) {return}
     defer store.close(&peer)
     ana,ben,cal,eve,stranger:=identity_make(),identity_make(),identity_make(),identity_make(),identity_make()
-    members:=[]Member{{ana.key,.Admin,"Ana","Mac"},{ben.key,.Admin,"Ben","PC"},{cal.key,.Writer,"Cal","PC"},{eve.key,.Reader,"Eve","Mac"}}
+    members:=[]Member{{ana.key,.Admin,"Ana","Mac",""},{ben.key,.Admin,"Ben","PC",""},{cal.key,.Writer,"Cal","PC",""},{eve.key,.Reader,"Eve","Mac",""}}
     slice.sort_by(members,proc(a,b:Member) -> bool {return key_less(a.key,b.key)})
     o:=Org{id=random_id(Org_Id),version=1,name="studio",members=members}
     first,we:=org_write(&s,&o,&ana,1)
