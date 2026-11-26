@@ -22,22 +22,9 @@ Driver_Input :: struct {
     has_base:bool, // false: both sides added the file
 }
 
-Anchor_Kind :: enum u8 {File,Lines,Structural}
-
-// A place in a file a comment hangs on.
-Anchor :: struct {
-    kind:Anchor_Kind,
-    line:u32,  // Lines: the first line, from 1
-    lines:u32, // Lines: how many
-    key:u64,   // Structural: what a driver names, as an entity's id
-    field:u64, // Structural: a table or field under it, by the hash of its name
-}
-
 Driver :: struct {
     data:rawptr,
     merge:proc(data:rawptr,input:^Driver_Input,out:^[dynamic]u8) -> Driver_Result,
-    // known false: not a file this driver knows; moved false: what the anchor named is gone
-    anchor:proc(data:rawptr,from,to:[]u8,anchor:^Anchor) -> (moved,known:bool),
 }
 
 // Asks the drivers, then text and binary, until one knows the file.
@@ -55,16 +42,6 @@ drivers_merge :: proc(drivers:[]Driver,input:^Driver_Input,out:^[dynamic]u8) -> 
         if result!=.Unsupported {return}
     }
     return .Unsupported
-}
-
-// Moves an anchor with the first driver that knows the file, else as text
-// for lines. False when what it named is gone.
-drivers_anchor :: proc(drivers:[]Driver,from,to:[]u8,anchor:^Anchor) -> bool {
-    for d in drivers {
-        if d.anchor==nil {continue}
-        if moved,known:=d.anchor(d.data,from,to,anchor);known {return moved}
-    }
-    return text_anchor(from,to,anchor)
 }
 
 // A file is binary when a NUL appears in its first 8000 bytes.
@@ -111,20 +88,4 @@ text_merge :: proc(_:rawptr,input:^Driver_Input,out:^[dynamic]u8) -> Driver_Resu
 binary_merge :: proc(_:rawptr,input:^Driver_Input,out:^[dynamic]u8) -> Driver_Result {
     append(out,..input.ours)
     return .Conflicted
-}
-
-// Moves the lines of an anchor to where they are in to; false when its first
-// line is gone.
-@(private)
-text_anchor :: proc(from,to:[]u8,anchor:^Anchor) -> bool {
-    if anchor.kind!=.Lines {return true}
-    lines:=make([dynamic]diff.Line,context.temp_allocator)
-    if _,e:=diff.lines(string(from),string(to),&lines,context.temp_allocator);e!=.None {return false}
-    for l in lines {
-        if l.op==.Same && u32(l.old)==anchor.line {
-            anchor.line=u32(l.new)
-            return true
-        }
-    }
-    return false
 }

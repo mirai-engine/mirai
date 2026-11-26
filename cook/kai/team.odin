@@ -160,6 +160,7 @@ clone_checkout :: proc(p:^Project,t:^vcs.Team) -> (bookmark:string,error:vcs.Err
 // the whole org: the working change closes first when it changed a file or
 // has a description (closing describes it), and the bookmark moves to what it
 // closed, or to the working copy's parent when there was nothing to close.
+// A change with a file in conflict is refused.
 publish :: proc(p:^Project,t:^vcs.Team,name:string,closing:string,changed:^[dynamic]string) -> (revision:vcs.Revision,error:vcs.Error) {
     project_of(p,t) or_return
     if !vcs.bookmark_name_valid(name) {
@@ -183,6 +184,13 @@ publish :: proc(p:^Project,t:^vcs.Team,name:string,closing:string,changed:^[dyna
             return {},.Invalid_Argument
         }
         revision=c.parents[0]
+    }
+    // The org's machines take what main names as it is: a conflict in it is resolved first.
+    if published,e:=vcs.change_get(w.repo.s,revision,context.temp_allocator);e==.None {
+        if totals,te:=vcs.tree_totals(w.repo.s,published.tree);te==.None && totals.conflicts>0 {
+            t.why=fmt.tprintf("%d files of the change are in conflict: resolve them in the Kai tab, then publish",totals.conflicts)
+            return {},.Invalid_Argument
+        }
     }
     bookmark_move(p,t,name,revision) or_return
     return revision,.None

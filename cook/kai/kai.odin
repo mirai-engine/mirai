@@ -20,7 +20,7 @@ Asset_Driver :: struct {
 // changed apart is a conflict whose partial result keeps ours there. A file
 // that is not an asset is left to the next driver.
 driver :: proc(d:^Asset_Driver) -> vcs.Driver {
-    return {data=d,merge=asset_merge,anchor=asset_anchor}
+    return {data=d,merge=asset_merge}
 }
 
 // Tracks what a project owns: not its generated folder nor version control
@@ -83,22 +83,4 @@ kind_valid :: proc(types:^asset.Types,bytes:[]u8) -> bool {
     if asset.scene_read(&scene,types,bytes)!=.None {return false}
     asset.scene_destroy(&scene)
     return true
-}
-
-// A structural anchor stays while its entity is in the scene; lines do not
-// apply to an asset.
-@(private)
-asset_anchor :: proc(data:rawptr,from,to:[]u8,anchor:^vcs.Anchor) -> (moved,known:bool) {
-    d:=(^Asset_Driver)(data)
-    scene:asset.Scene
-    if asset.scene_read(&scene,d.types,to)!=.None {return false,false}
-    defer asset.scene_destroy(&scene)
-    switch anchor.kind {
-    case .File: return true,true
-    case .Lines: return false,true
-    case .Structural:
-        _,found:=asset.scene_entity_find(&scene,base.Entity_Id(anchor.key))
-        return found,true
-    }
-    return false,true
 }

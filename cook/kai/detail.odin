@@ -10,8 +10,7 @@ import "mirai:std/serial"
 import "mirai:store"
 import vcs "mirai:kai"
 
-// What a change did to one file, as the editor and kai.log and kai.proposal
-// show it: a text file as its lines with their numbers, the runs it did not
+// What a change did to one file, as the editor and kai.log show it: a text file as its lines with their numbers, the runs it did not
 // touch folded; an asset as the rows and fields the structural driver tells
 // apart; a binary or oversized file as its sizes. Bounded: past DETAIL_ROWS
 // rows the rest is only counted, and a line keeps DETAIL_LINE bytes.

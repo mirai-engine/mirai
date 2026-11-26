@@ -141,3 +141,37 @@ a_project_publishes_to_main_and_a_paired_machine_pulls_it :: proc(t:^testing.T) 
     edited,_:=read(root,"assets/readme.txt")
     testing.expect_value(t,edited,"edited on the PC\n")
 }
+
+// A change with a file in conflict is not published: the org's machines take
+// what main names as it is.
+@(test)
+a_change_in_conflict_is_not_published :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-team-conflict")
+    if folder=="" {return}
+    mac:Team_Machine
+    if !team_open(t,&mac,folder,"Ana") {return}
+    defer team_close(&mac)
+    root:=strings.concatenate({mac.folder,"/game"},context.temp_allocator)
+    write(t,root,"project.mirai","{\"name\": \"Lighthouse\"}\n")
+    write(t,root,"a.txt","base\n")
+    p:Project
+    if !testing.expect_value(t,project_create(&p,root,&mac.s),vcs.Error.None) {return}
+    defer project_close(&p)
+    org,_:=vcs.team_org_create(&mac.team,"studio")
+    project_join(&p,&mac.team,org,false)
+    w:=&p.workspace
+    base_change,_:=new_change(w,nil,"base",nil)
+    sides:[2]vcs.Revision
+    for text,k in ([2]string{"ours\n","theirs\n"}) {
+        new_change(w,{base_change},"",nil)
+        write(t,root,"a.txt",text)
+        sides[k],_=new_change(w,nil,"",nil,closing=text)
+        sides[k],_=revision_find(w,"@-")
+    }
+    _,me:=new_change(w,sides[:],"",nil)
+    testing.expect_value(t,me,vcs.Error.None)
+    _,pe:=publish(&p,&mac.team,BOOKMARK_DEFAULT,"merge",nil)
+    testing.expectf(t,pe==.Invalid_Argument && strings.contains(mac.team.why,"conflict"),"refused: %v %s",pe,mac.team.why)
+    _,_,re:=vcs.repo_refs_head(&mac.s,org,p.workspace.repo.id,context.temp_allocator)
+    testing.expect_value(t,re,vcs.Error.Missing)
+}

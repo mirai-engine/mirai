@@ -5,11 +5,10 @@ import "core:strings"
 import vcs "mirai:kai"
 import "mirai:ui"
 
-// The Kai tab of the left panel, in three views. Changes: the working change
+// The Kai tab of the left panel, in two views. Changes: the working change
 // with its description, what it changed, each file with a check of whether
 // New change closes it, a file in conflict unfolded into its fields with the
-// side each takes, what refused the last snapshot with what resolves it, the
-// bookmarks (the workspace's, the org's and every device's) and the log.
+// side each takes, the bookmarks (the workspace's and the org's) and the log.
 // Undo takes back the newest operation; a click on a change of the log
 // shows the files it changed, each of which opens what the change did to it
 // (kai_detail.odin), and its button, or a click on a shared bookmark, starts

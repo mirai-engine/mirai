@@ -83,12 +83,6 @@ a_scene_merges_by_field_through_the_driver :: proc(t:^testing.T) {
     testing.expect(t,transform.position==[3]f32{5,0,0},"ours moved the lamp")
     testing.expect_value(t,light.intensity,7)
 
-    // A comment on the lamp follows it into the merge; one on an entity gone does not.
-    anchor:=vcs.Anchor{kind=.Structural,key=u64(LAMP)}
-    testing.expect(t,vcs.drivers_anchor(drivers[:],ours,merged_bytes,&anchor))
-    gone:=vcs.Anchor{kind=.Structural,key=0x99}
-    testing.expect(t,!vcs.drivers_anchor(drivers[:],ours,merged_bytes,&gone))
-
     // Both moved the lamp apart: a conflict, written with ours where they disagree.
     apart:=scene_file(t,&types,proc(scene:^asset.Scene) {
         moved:=Test_Transform{position={0,9,0},rotation=1,scale={1,1,1}}
