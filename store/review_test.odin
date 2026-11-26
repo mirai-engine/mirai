@@ -48,165 +48,42 @@ a_sweep_keeps_every_chunk_under_a_deep_live_root :: proc(t:^testing.T) {
     test_object_bytes(t,&fresh,root,whole)
 }
 
-// A writer passes its look at the newest generation, a whole sweep retires
-// what it found stored meanwhile, and then the writer commits: what it named
-// is still read, and after the next sweep too.
+// A writer that runs keeps its open pack locked: a sweep leaves the pack and
+// what it committed alone. Once its writer ends, which lets the lock go, a
+// sweep folds the pack up to its last commit and removes it, and what a ref
+// names in it stays.
 @(test)
-a_commit_paused_across_a_sweep_keeps_what_it_names :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"store-paused");if folder=="" {return}
-    now:=time.now()
-    data:=test_bytes(300<<10,21)
-    address:=test_dead_object(t,folder,data,time.time_add(now,-2*GRACE))
-    writer,ok:=test_store(t,folder);if !ok {return}
-    sweeper,_:=test_store(t,folder)
-    defer close(&sweeper)
-    testing.expect(t,chunk_has(&writer,address))
-    again,_:=put(&writer,data,now)
-    testing.expect(t,again==address)
-    Paused :: struct {sweeper:^Store,now:time.Time,done:bool}
-    paused:=Paused{&sweeper,now,false}
-    hooks:=Hooks{data=&paused,step=proc(data:rawptr,step:Sweep_Step) {
-        p:=(^Paused)(data)
-        if step!=.Verified || p.done {return}
-        p.done=true
-        sweep(p.sweeper,nil,p.now)
-    }}
-    writer.state.hooks=&hooks
-    error:=ref_set(&writer,"keep","paused",address,now)
-    writer.state.hooks=nil
-    testing.expect(t,error==.None && paused.done,"the commit runs across a sweep")
-    {
-        fresh,_:=test_store(t,folder)
-        defer close(&fresh)
-        test_object_bytes(t,&fresh,address,data)
-    }
-    close(&writer)
-    _,sweep_error:=sweep(&sweeper,nil,now)
-    testing.expect_value(t,sweep_error,Error.None)
-    fresh,_:=test_store(t,folder)
-    defer close(&fresh)
-    test_object_bytes(t,&fresh,address,data)
-}
-
-// A writer of another machine whose lease went unrefreshed for the lease age
-// is still writing: what it commits after a sweep judged it gone is read.
-@(test)
-a_live_writer_whose_lease_went_stale_keeps_its_commits :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"store-stale-writer");if folder=="" {return}
-    now:=time.now()
-    w,ok:=test_store(t,folder);if !ok {return}
-    first,second:=test_bytes(90000,31),test_bytes(90000,32)
-    a1,_:=put(&w,first)
-    testing.expect_value(t,ref_set(&w,"keep","one",a1),Error.None)
-    test_lease_remote_stale(t,&w,now)
-    s,_:=test_store(t,folder)
-    defer close(&s)
-    _,sweep_error:=sweep(&s,nil,now)
-    testing.expect_value(t,sweep_error,Error.None)
-    a2,_:=put(&w,second)
-    testing.expect_value(t,ref_set(&w,"keep","two",a2),Error.None)
-    close(&w)
-    sweep(&s,nil,now)
-    fresh,_:=test_store(t,folder)
-    defer close(&fresh)
-    for c in ([]struct{name:string,data:[]u8}{{"one",first},{"two",second}}) {
-        got,error:=ref_get(&fresh,"keep",c.name)
-        if testing.expectf(t,error==.None,"ref %s: %v",c.name,error) {test_object_bytes(t,&fresh,got,c.data)}
-    }
-}
-
-// Rewrites the lease of w's writer as one of another machine older than the
-// lease age.
-@(private)
-test_lease_remote_stale :: proc(t:^testing.T,w:^Store,now:time.Time) {
-    name:[2+32]u8
-    copy(name[:],"w-")
-    text:[64]u8
-    copy(name[2:],writer_text(w.state.writer.id,&text))
-    buffer:[PATH_BYTES]u8
-    path,_:=join(&buffer,w.root,"leases",string(name[:]))
-    elsewhere:=Holder{pid=1,start=1}
-    copy(elsewhere.host[:],"another-machine")
-    testing.expect_value(t,lease_write(w,path,elsewhere,0,nil,time.time_add(now,-2*LEASE_MAX_AGE)),Error.None)
-}
-
-// Two sweeps find the claim of a holder that ended; one takes it while the
-// other is past its mark, and what they mark differs (a ref removed
-// between). Exactly one publishes the next generation, and every pack the
-// newest generation names is there.
-@(test)
-two_sweeps_taking_a_stale_claim_publish_once :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"store-claims");if folder=="" {return}
+a_pack_whose_writer_ended_is_folded_and_a_live_one_kept :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"store-ended-writer");if folder=="" {return}
     now:=time.now()
     old:=time.time_add(now,-2*GRACE)
-    data:=test_bytes(200<<10,41)
-    {
-        k,_:=test_store(t,folder)
-        big:=make([]u8,(PACK_SMALL)+(1<<20),context.temp_allocator)
-        random_fill(42,0,big)
-        address,_:=put(&k,big,old)
-        commit(&k,old)
-        ref_set(&k,"keep","big",address,old)
-        kept,_:=put(&k,data)
-        ref_set(&k,"keep","data",kept)
-        close(&k)
-    }
-    a,_:=test_store(t,folder)
-    defer close(&a)
-    b,_:=test_store(t,folder)
-    defer close(&b)
-    c,_:=test_store(t,folder)
-    defer close(&c)
-    // The claim of a process that ended.
-    buffer:[PATH_BYTES]u8
-    owner,_:=join(&buffer,folder,SWEEP_FOLDER,"owner")
-    ended:=Sweep_Claim{holder=holder_self()}
-    ended.holder.pid=0
-    testing.expect(t,os.write_entire_file(owner,mem.ptr_to_bytes(&ended))==nil)
-    Pair :: struct {a,b:^Store,now:time.Time,a_judged,go_a,b_marked,go_b:sync.Sema,result_a,result_b:Error}
-    pair:=Pair{a=&a,b=&b,now=now}
-    hooks_a:=Hooks{data=&pair,step=proc(data:rawptr,step:Sweep_Step) {
-        p:=(^Pair)(data)
-        if step==.Claimed {
-            sync.sema_post(&p.a_judged)
-            sync.sema_wait(&p.go_a)
+    w,ok:=test_store(t,folder);if !ok {return}
+    defer close(&w)
+    named,dead:=test_bytes(90000,31),test_bytes(90000,32)
+    named_address,_:=put(&w,named,old)
+    dead_address,_:=put(&w,dead,old)
+    testing.expect_value(t,ref_set(&w,"keep","named",named_address,old),Error.None)
+    pack:=w.state.writer.pack
+    path_buffer:[PATH_BYTES]u8
+    path,_:=pack_path(&w,"packs",w.state.packs[pack].id,&path_buffer)
+    s,_:=test_store(t,folder)
+    defer close(&s)
+    Case :: struct {name:string,ended:bool}
+    for c in ([]Case{{"running",false},{"ended",true}}) {
+        if c.ended {
+            // As the system does when the process ends: the writer's lock goes, its pack stays unsealed.
+            file_unlock(w.state.writer.file)
         }
-    }}
-    hooks_b:=Hooks{data=&pair,step=proc(data:rawptr,step:Sweep_Step) {
-        p:=(^Pair)(data)
-        if step==.Marked {
-            sync.sema_post(&p.b_marked)
-            sync.sema_wait(&p.go_b)
-        }
-    }}
-    a.state.hooks=&hooks_a
-    b.state.hooks=&hooks_b
-    ta:=thread.create_and_start_with_poly_data(&pair,proc(p:^Pair) {_,p.result_a=sweep(p.a,nil,p.now)})
-    sync.sema_wait(&pair.a_judged)
-    tb:=thread.create_and_start_with_poly_data(&pair,proc(p:^Pair) {_,p.result_b=sweep(p.b,nil,p.now)})
-    sync.sema_wait(&pair.b_marked)
-    // What b marked live is dead by the time a marks.
-    testing.expect_value(t,ref_remove(&c,"keep","big"),Error.None)
-    sync.sema_post(&pair.go_a)
-    thread.join(ta)
-    sync.sema_post(&pair.go_b)
-    thread.join(tb)
-    thread.destroy(ta)
-    thread.destroy(tb)
-    testing.expect(t,pair.result_a==.None && pair.result_b==.None)
-    fresh,_:=test_store(t,folder)
-    defer close(&fresh)
-    g:=&fresh.state.generation
-    for gp in g.packs {
-        name:[PACK_NAME]u8
-        path,_:=join(&buffer,folder,"packs",pack_name({gp.writer,gp.seq},&name))
-        testing.expectf(t,os.exists(path),"the generation names %s, which is there",path)
+        swept,error:=sweep(&s,nil,now)
+        testing.expectf(t,error==.None && !swept.busy,"%s: %v",c.name,error)
+        testing.expectf(t,os.exists(path)!=c.ended,"%s: the pack is removed %v",c.name,c.ended)
+        fresh,_:=test_store(t,folder)
+        test_object_bytes(t,&fresh,named_address,named)
+        testing.expectf(t,chunk_has(&fresh,dead_address)!=c.ended,"%s: the unnamed object is dropped %v",c.name,c.ended)
+        close(&fresh)
     }
-    got,error:=ref_get(&fresh,"keep","data")
-    if testing.expect_value(t,error,Error.None) {test_object_bytes(t,&fresh,got,data)}
 }
 
-// A ref of one writer to what another committed: the commit flushes the
 // other's pack too, so the ref never reaches the disk before what it names.
 @(test)
 a_ref_flushes_the_packs_of_other_writers_it_names :: proc(t:^testing.T) {
@@ -218,6 +95,7 @@ a_ref_flushes_the_packs_of_other_writers_it_names :: proc(t:^testing.T) {
     data:=test_bytes(100<<10,51)
     address,_:=put(&a,data)
     testing.expect_value(t,commit(&a),Error.None)
+    testing.expect(t,chunk_has(&b,address),"b reads what a committed, so its put finds it")
     hooks:Hooks
     b.state.hooks=&hooks
     again,_:=put(&b,data)
@@ -233,39 +111,6 @@ a_ref_flushes_the_packs_of_other_writers_it_names :: proc(t:^testing.T) {
     testing.expect_value(t,ref_set(&b,"keep","other",other),Error.None)
     b.state.hooks=nil
     testing.expect_value(t,hooks.flushes,2)
-}
-
-// An address added to a lease after a sweep read the leases, of an object
-// outside the grace, is kept by that sweep and the next.
-@(test)
-an_address_added_to_a_lease_during_a_sweep_is_kept :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"store-lease-late");if folder=="" {return}
-    now:=time.now()
-    data:=test_bytes(300<<10,61)
-    address:=test_dead_object(t,folder,data,time.time_add(now,-2*GRACE))
-    holder,ok:=test_store(t,folder);if !ok {return}
-    defer close(&holder)
-    sweeper,_:=test_store(t,folder)
-    defer close(&sweeper)
-    lease,lease_error:=lease_open(&holder,"viewer",{},now)
-    if !testing.expect_value(t,lease_error,Error.None) {return}
-    defer lease_release(&lease)
-    Late :: struct {lease:^Lease,address:Hash,now:time.Time,error:Error,done:bool}
-    late:=Late{&lease,address,now,.None,false}
-    hooks:=Hooks{data=&late,step=proc(data:rawptr,step:Sweep_Step) {
-        l:=(^Late)(data)
-        if step!=.Collected || l.done {return}
-        l.done=true
-        l.error=lease_update(l.lease,{l.address},l.now)
-    }}
-    sweeper.state.hooks=&hooks
-    _,error:=sweep(&sweeper,nil,now)
-    sweeper.state.hooks=nil
-    testing.expect(t,error==.None && late.done && late.error==.None)
-    sweep(&sweeper,nil,now)
-    fresh,_:=test_store(t,folder)
-    defer close(&fresh)
-    test_object_bytes(t,&fresh,address,data)
 }
 
 // A sealed trailer whose check holds and whose extra's offset is near the
@@ -330,8 +175,7 @@ a_pack_cut_below_a_chunk_reads_as_an_error :: proc(t:^testing.T) {
     testing.expect_value(t,error,Error.Corrupt)
 }
 
-// A generation published while namespaces are listed leaves the names
-// listed whole.
+// A generation another value published leaves the names listed whole.
 @(test)
 listing_namespaces_across_a_new_generation_keeps_the_names :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"store-names");if folder=="" {return}
@@ -344,12 +188,8 @@ listing_namespaces_across_a_new_generation_keeps_the_names :: proc(t:^testing.T)
     defer close(&other)
     put(&other,test_bytes(100,92))
     commit(&other)
-    hooks:=Hooks{data=&other,step=proc(data:rawptr,step:Sweep_Step) {
-        if step==.Names {sweep((^Store)(data),nil)}
-    }}
-    s.state.hooks=&hooks
+    sweep(&other,nil)
     names,error:=ref_namespaces(&s,context.temp_allocator)
-    s.state.hooks=nil
     testing.expect_value(t,error,Error.None)
     testing.expect(t,len(names)==3 && names[0]=="alpha" && names[1]=="beta" && names[2]=="gamma",fmt.tprint(names))
 }

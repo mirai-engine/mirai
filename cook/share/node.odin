@@ -1,7 +1,6 @@
 package share
 
 import "base:runtime"
-import "core:crypto"
 import "core:fmt"
 import "core:strings"
 import "core:sync"
@@ -30,7 +29,7 @@ PEERS :: 8                 // connections of a node at once
 CONTROL_CHANNEL :: 0
 PRESENCE_CHANNEL :: 1
 EXCHANGE_CHANNEL :: 2
-LEASE_SECONDS :: 60.0      // between two refreshes of the lease
+LEASE_SECONDS :: 60.0      // between two updates of the lease with what the exchange wants
 @(private) WANTS :: 512
 @(private) EVENTS :: 64
 
@@ -389,17 +388,10 @@ node_lease :: proc(n:^Node,now:f64) {
         return
     }
     // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-    if lease,error:=node_lease_open(n.s,live);error==.None {
+    if lease,error:=store.lease_open(n.s,live);error==.None {
         n.lease=lease
         n.leased=true
     }
-}
-
-@(private)
-node_lease_open :: proc(s:^store.Store,live:[]store.Hash) -> (store.Lease,store.Error) {
-    random:[8]u8
-    crypto.rand_bytes(random[:])
-    return store.lease_open(s,fmt.tprintf("share-%016x",transmute(u64)random),live)
 }
 
 // The source a refresh of the library asks: refs of the peers with their

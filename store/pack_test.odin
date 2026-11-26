@@ -264,8 +264,9 @@ an_object_of_several_groups_reads_by_group_and_offset :: proc(t:^testing.T) {
     defer object_close(&o)
     chunk,at,error:=group_chunk(&o,0,(100<<10)+5)
     testing.expect(t,error==.None && at==5 && string(chunk[at:][:16])==string(groups[0][(100<<10)+5:][:16]),"a chunk of a group is found where its offset falls")
-    file,view,_,locate_error:=chunk_locate(&s,address_of_bytes(chunk))
-    testing.expect(t,locate_error==.None && view!=nil && file!=nil,"a chunk of a sealed pack is read mapped")
+    // Without a buffer only a mapping holds it.
+    stored,_,_,locate_error:=chunk_locate(&s,address_of_bytes(chunk),nil,true)
+    testing.expect(t,locate_error==.None && len(stored)>0,"a chunk of a sealed pack is read mapped")
 }
 
 @(private)
@@ -329,4 +330,36 @@ a_stream_put_on_workers_is_the_same_object :: proc(t:^testing.T) {
     test_object_bytes(t,&many,shared,data)
     again,_:=put(&many,data,nil,{system=&js,worker=jobs.OWNER})
     testing.expect(t,again==shared,"put again on the workers finds every chunk")
+}
+
+// A value that reads more packs than FILES_MAX, sealed and of a writer still
+// running, keeps at most FILES_MAX of their files open, and reads every one,
+// again once their files were closed.
+@(test)
+open_pack_files_stay_bounded :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"store-files");if folder=="" {return}
+    COUNT :: FILES_MAX+16
+    datas:[COUNT+1][]u8
+    addresses:[COUNT+1]Hash
+    for i in 0..<COUNT {
+        w,ok:=test_store(t,folder);if !ok {return}
+        datas[i]=test_bytes(1000+i,u64(700+i))
+        addresses[i],_=test_put(&w,datas[i])
+        close(&w)
+    }
+    running,ok:=test_store(t,folder);if !ok {return}
+    defer close(&running)
+    datas[COUNT]=test_bytes(5000,800)
+    addresses[COUNT],_=test_put(&running,datas[COUNT])
+    s,_:=test_store(t,folder)
+    defer close(&s)
+    for round in 0..<2 {
+        for data,i in datas {testing.expectf(t,test_holds(&s,addresses[i],data),"round %d: object %d reads",round,i)}
+        open:=0
+        for p in s.state.packs {
+            if p.file!=nil {open+=1}
+        }
+        testing.expectf(t,open<=FILES_MAX && open==s.state.files,"round %d: %d files open, %d counted",round,open,s.state.files)
+    }
+    testing.expect(t,len(s.state.packs)>FILES_MAX,"more packs than files")
 }

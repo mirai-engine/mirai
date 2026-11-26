@@ -12,10 +12,14 @@ import "core:time"
 // named by its root; a ref names an address. Several Store values and
 // processes share one root: readers take a pack's frames only up to its last
 // commit, and an index generation, written only by a sweep, folds the sealed
-// packs.
+// packs. Readers take no lock. A batch holds the root's lock shared from its
+// first put until its commit, and a sweep holds it exclusive, so a sweep never
+// runs between a batch's lookups and the commit that names what they found.
+// One Store value serves every thread of a process: its state is guarded by
+// one mutex, and a ^Store may be handed to any thread.
 
 // The first line of the root's LAYOUT file; another one is refused.
-LAYOUT :: "mirai store 4\n"
+LAYOUT :: "mirai store 5\n"
 ROOT_MAX :: 1024 // bytes of a root path
 NAME_MAX :: 128  // bytes of a ref namespace or name
 
@@ -26,9 +30,12 @@ BATCH_MAX :: 16<<20  // bytes written since the last commit that commit on their
 @(private)
 PATH_BYTES :: ROOT_MAX+256
 
+@(private)
+Lock_Mode :: enum u8 {Shared,Exclusive}
+
 Error :: enum u8 {
     None,
-    Missing,            // no chunk, object or ref with that name; from commit: a chunk the batch named went missing beside a sweep, so the batch was dropped and is put again
+    Missing,            // no chunk, object or ref with that name
     Corrupt,            // bytes that do not match their address, or a damaged file of the root
     Invalid_Argument,
     Out_Of_Memory,
@@ -57,7 +64,6 @@ Store :: struct {
     allocator:runtime.Allocator, // of root
     state:^State,
     read_index:Maybe(Error),
-    retired_scanned:bool,
 }
 
 // What a Store value knows of its root, shared by its copies and guarded by
@@ -68,19 +74,22 @@ State :: struct {
     allocator:runtime.Allocator, // the heap: of everything the state holds and the store's own scratch
     lock:sync.Mutex,
     written:sync.Cond, // signalled when a write in flight lands
+    gate:sync.Mutex,   // taken before lock by whoever changes how root_lock is held
+    root_lock:^os.File,
+    shared:bool,       // root_lock is held shared: a batch is open or an operation entered
+    entered:int,       // operations between batch_enter and batch_leave
     packs:[dynamic]Pack,
     pack_index:map[Pack_Id]int,
+    files:int,         // packs whose file is open
+    clock:u64,         // of the uses of pack files
     generation:Generation,
     table:Table,
-    retired:Table, // chunks of the packs of retired/ this value read, only to read what a commit still names
     refs:map[string]Ref_Value, // the newest ref frame of each name in the packs the generation does not hold
     tombs:map[Tomb_Key]struct{},
     touched:map[Hash]i64, // newest Touch of a chunk in the packs the generation does not hold
     writer:Writer,
     stages:[dynamic]^Stage,
     builders:[dynamic]^Object_Writer,
-    recent:[dynamic]Recent, // frames other writers committed while a sweep records them
-    recording:bool,
     scrub_pack:int,
     scrub_at:int,
     hooks:^Hooks,
@@ -94,7 +103,6 @@ Hooks :: struct {
     limited:bool,
     undeletable:bool, // removing a file fails, as one mapped by a process on Windows
     space:i64, // bytes the volume still takes while limited
-    step:proc(data:rawptr,step:Sweep_Step),
     flushing:proc(data:rawptr), // before each flush
     data:rawptr,
 }
@@ -107,11 +115,10 @@ open :: proc(root:string,allocator:=context.allocator) -> (s:Store,error:Error) 
     for c in transmute([]u8)trimmed {
         if c==0 {return {},.Invalid_Argument}
     }
-    files_limit_raise()
     folder_make(trimmed) or_return
     fresh:=layout_check(trimmed) or_return
     buffer:[PATH_BYTES]u8
-    for folder in ([?]string{"packs","index","retired","leases","tmp",SWEEP_FOLDER}) {
+    for folder in ([?]string{"packs","index","leases","tmp"}) {
         folder_make(join(&buffer,trimmed,folder) or_return) or_return
     }
     if fresh {
@@ -131,6 +138,13 @@ open :: proc(root:string,allocator:=context.allocator) -> (s:Store,error:Error) 
     state.allocator=runtime.heap_allocator()
     s={root=string(cloned),allocator=allocator,state=state}
     state_init(&s)
+    lock_buffer:[PATH_BYTES]u8
+    state.root_lock,error=io_open(&s,join(&lock_buffer,s.root,"lock") or_return,{.Read,.Write,.Create})
+    if error!=.None {
+        state_destroy(&s)
+        delete(s.root,allocator)
+        return {},error
+    }
     sync.mutex_lock(&state.lock)
     error=refresh_locked(&s)
     sync.mutex_unlock(&state.lock)
@@ -253,26 +267,6 @@ file_write :: proc(s:^Store,root,path:string,chunks:[][]u8,modified:Maybe(time.T
     return error
 }
 
-// file_write that never replaces path: taken is true when path was there.
-@(private)
-file_publish :: proc(s:^Store,path:string,chunks:[][]u8) -> (taken:bool,error:Error) {
-    temp_buffer:[PATH_BYTES]u8
-    temp,file:=temp_create(s,s.root,&temp_buffer) or_return
-    at:i64
-    for chunk in chunks {
-        if error=io_write_at(s,file,chunk,at);error!=.None {break}
-        at+=i64(len(chunk))
-    }
-    if error==.None {error=io_sync(s,file)}
-    os.close(file)
-    if error==.None {
-        if h:=hooks_of(s);h!=nil {h.renames+=1}
-        taken,error=rename_new(temp,path)
-    }
-    if error!=.None || taken {file_remove(temp)}
-    return
-}
-
 // A new file of the root's tmp folder, open to write; its path is in buffer.
 @(private)
 temp_create :: proc(s:^Store,root:string,buffer:^[PATH_BYTES]u8) -> (path:string,file:^os.File,error:Error) {
@@ -283,18 +277,6 @@ temp_create :: proc(s:^Store,root:string,buffer:^[PATH_BYTES]u8) -> (path:string
         if create_error!=.Invalid_Argument {return "",nil,create_error}
     }
     return "",nil,.Io
-}
-
-// A new folder of the root's tmp folder; its path is in buffer.
-@(private)
-temp_folder :: proc(root,prefix:string,buffer:^[PATH_BYTES]u8) -> (path:string,error:Error) {
-    for _ in 0..<TEMP_ATTEMPTS {
-        path=temp_name(root,prefix,buffer) or_return
-        made:=os.make_directory(path)
-        if made==nil {return path,.None}
-        if made!=.Exist {return "",os_error(made)}
-    }
-    return "",.Io
 }
 
 @(private)

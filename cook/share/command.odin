@@ -211,17 +211,11 @@ share_command :: proc(args:[]string,output,errors:io.Writer) -> int {
     if !mapped {fmt.wprintfln(output,"The router mapped no port, so only machines on this network can join; from another network, the joiner's router must map one, or this one must allow UPnP, NAT-PMP or PCP.")}
     fmt.wprintln(output,"Stop with Ctrl+C.")
     events:[EVENTS]Event
-    status_at,lease_at:=0.0,0.0
+    status_at:=0.0
     last:Node_Totals
     for {
         now:=wire.host_time(&h.host)
         node_pump(n,now)
-        if now-lease_at>=LEASE_SECONDS {
-            lease_at=now
-            if error:=offer_refresh(n);error!=.None {
-                fmt.wprintfln(errors,"mirai share: the project lease could not be refreshed:",error)
-            }
-        }
         for e in node_events(n,events[:]) {event_print(output,e,node_totals(n).connected)}
         if now-status_at>=STATUS_SECONDS {
             status_at=now
@@ -250,7 +244,7 @@ Offer :: struct {
 // its folders, files and what the packages it pins need held by the lease of
 // the node. Taking it again after a change offers the new snapshot, and a
 // joined peer that joins again gets only what differs. Jobs of
-// worker, when given, read the files. In allocator. No concurrent offer or offer_refresh of n.
+// worker, when given, read the files. In allocator. No concurrent offer of n.
 // Keep s open through node_destroy.
 offer :: proc(
     n:^Node,s:^store.Store,root:string,secret:u64,worker:=jobs.Worker_Ref{},
@@ -276,7 +270,7 @@ offer :: proc(
     packages,_:=asset.root_packages_in(s,root,allocator)
     o.problems=packages.problems
     for e in o.snapshot.entries {append(&served,e.address)}
-    lease,lease_error:=node_lease_open(s,served[:])
+    lease,lease_error:=store.lease_open(s,served[:])
     if lease_error!=.None {
         return {},fmt.aprintf("the project lease could not be kept (%v)",
             lease_error,allocator=allocator)
@@ -291,12 +285,6 @@ offer :: proc(
     n.offer_lease=lease
     lease={}
     return
-}
-
-// Refresh the published offer on the thread that owns it, while it is still offered.
-offer_refresh :: proc(n:^Node) -> store.Error {
-    if n==nil || n.offer_lease.store==nil {return .Invalid_Argument}
-    return store.lease_update(&n.offer_lease,n.offer_lease.live)
 }
 
 // What the packages the project at root pins need: their manifests and the

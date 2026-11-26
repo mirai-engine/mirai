@@ -20,52 +20,50 @@ test_dead_object :: proc(t:^testing.T,root:string,data:[]u8,at:time.Time) -> (ad
     return
 }
 
-// A writer that found the chunks of a dead object already stored names them
-// with a ref, committed at each point of a sweep: before it, after the mark,
-// after the generation is published and after the recheck. No committed put
-// is lost: the object reads, then and after the next sweep.
+// A sweep never runs while a batch is open, of another value or of its own,
+// or while another sweep holds the root: it returns busy and drops nothing.
+// Once the holder lets go, a sweep runs, and what the batch's commit names of
+// what it found stored stays.
 @(test)
-a_sweep_beside_writers_loses_no_committed_put :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"store-beside");if folder=="" {return}
+a_sweep_refuses_while_a_batch_is_open_and_loses_no_commit :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"store-busy");if folder=="" {return}
     now:=time.now()
     old:=time.time_add(now,-2*GRACE)
-    When :: enum {Before,Marked,Published,Rechecked}
-    for point in When {
-        root:=fmt.tprintf("%s/%v",folder,point)
-        data:=test_bytes(400<<10,u64(point)+7)
+    Hold :: enum {Batch_Of_Another_Value,Operation_Of_This_Value,Another_Sweep}
+    for hold in Hold {
+        root:=fmt.tprintf("%s/%v",folder,hold)
+        data:=test_bytes(400<<10,u64(hold)+7)
         address:=test_dead_object(t,root,data,old)
         sweeper,ok:=test_store(t,root);if !ok {return}
         writer,_:=test_store(t,root)
-        Work :: struct {t:^testing.T,writer:^Store,data:[]u8,address:Hash,step:Sweep_Step,point:When,now:time.Time,done:bool}
-        work:=Work{t=t,writer=&writer,data=data,address=address,point=point,now=now}
-        run :: proc(w:^Work) {
-            if w.done {return}
-            w.done=true
-            again,error:=put(w.writer,w.data,w.now)
-            testing.expectf(w.t,error==.None && again==w.address,"%v: the put finds the object",w.point)
-            testing.expectf(w.t,w.writer.state.writer.frames>0 || len(w.writer.state.writer.deduped)>0,"%v: the writer named stored chunks",w.point)
-            testing.expect_value(w.t,ref_set(w.writer,"keep","object",w.address,w.now),Error.None)
+        other:^os.File
+        switch hold {
+        case .Batch_Of_Another_Value:
+            // The writer finds the chunks stored and names them only when it commits.
+            again,error:=put(&writer,data,now)
+            testing.expect(t,error==.None && again==address && len(writer.state.writer.deduped)>0)
+        case .Operation_Of_This_Value:
+            testing.expect_value(t,batch_enter(&sweeper),Error.None)
+        case .Another_Sweep:
+            other,_=file_open(join_test(root,"lock",0)[:len(root)+5])
+            locked,_:=file_lock(other,.Exclusive,false)
+            testing.expect(t,locked)
         }
-        hooks:=Hooks{data=&work,step=proc(data:rawptr,step:Sweep_Step) {
-            w:=(^Work)(data)
-            if (step==.Marked && w.point==.Marked) || (step==.Published && w.point==.Published) || (step==.Rechecked && w.point==.Rechecked) {run(w)}
-        }}
-        // The writer's view is read before the sweep, so its lookups find the old copy.
-        testing.expect(t,chunk_has(&writer,address),"the writer sees the object")
-        if point==.Before {run(&work)}
-        sweeper.state.hooks=&hooks
-        _,error:=sweep(&sweeper,nil,now)
-        sweeper.state.hooks=nil
-        testing.expectf(t,error==.None && work.done,"%v: %v",point,error)
-        close(&writer)
+        busy,error:=sweep(&sweeper,nil,now)
+        testing.expectf(t,error==.None && busy.busy && busy.packs==0 && chunk_has(&sweeper,address),"%v: the sweep refuses",hold)
+        switch hold {
+        case .Batch_Of_Another_Value: testing.expect_value(t,ref_set(&writer,"keep","object",address,now),Error.None)
+        case .Operation_Of_This_Value: batch_leave(&sweeper)
+        case .Another_Sweep: os.close(other)
+        }
+        swept,again_error:=sweep(&sweeper,nil,now)
+        testing.expectf(t,again_error==.None && !swept.busy,"%v: the sweep runs once the holder lets go",hold)
+        kept:=hold==.Batch_Of_Another_Value
         fresh,_:=test_store(t,root)
-        named,ref_error:=ref_get(&fresh,"keep","object")
-        testing.expectf(t,ref_error==.None && named==address,"%v: the ref reads",point)
-        test_object_bytes(t,&fresh,address,data)
-        _,again_error:=sweep(&sweeper,nil,now)
-        testing.expect_value(t,again_error,Error.None)
-        test_object_bytes(t,&fresh,address,data)
+        testing.expectf(t,chunk_has(&fresh,address)==kept,"%v: the object is kept %v",hold,kept)
+        if kept {test_object_bytes(t,&fresh,address,data)}
         close(&fresh)
+        close(&writer)
         close(&sweeper)
     }
 }
@@ -92,7 +90,7 @@ compaction_keeps_every_live_chunk_and_drops_the_dead :: proc(t:^testing.T) {
     testing.expect_value(t,commit(&s,now),Error.None)
     // Named: a ref; leased; given; the rest is dead.
     testing.expect_value(t,ref_set(&s,"keep","zero",addresses[0],old),Error.None)
-    lease,lease_error:=lease_open(&s,"holder",{addresses[1]},now)
+    lease,lease_error:=lease_open(&s,{addresses[1]})
     testing.expect_value(t,lease_error,Error.None)
     defer lease_release(&lease)
     before,_:=usage(&s)
@@ -142,8 +140,9 @@ compaction_keeps_every_live_chunk_and_drops_the_dead :: proc(t:^testing.T) {
     for a,i in addresses[:3] {test_object_bytes(t,&reread,a,datas[i])}
 }
 
-// A retired pack that will not delete (one a process maps on Windows) is
-// skipped, counted, and deleted by a later sweep.
+// A pack that will not delete (one a process maps on Windows) leaves packs/,
+// is skipped and counted, and deleted by the next sweep, which also removes
+// what writes that stopped left in tmp/.
 @(test)
 a_pack_that_will_not_delete_is_skipped_and_counted :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"store-undeletable");if folder=="" {return}
@@ -151,17 +150,22 @@ a_pack_that_will_not_delete_is_skipped_and_counted :: proc(t:^testing.T) {
     test_dead_object(t,folder,test_bytes(300<<10,1),time.time_add(now,-2*GRACE))
     s,ok:=test_store(t,folder);if !ok {return}
     defer close(&s)
-    retired:=strings.concatenate({folder,"/retired"},context.temp_allocator)
     hooks:=Hooks{undeletable=true}
     s.state.hooks=&hooks
     swept,error:=sweep(&s,nil,now)
     s.state.hooks=nil
     testing.expect_value(t,error,Error.None)
-    testing.expect(t,swept.packs==1 && swept.skipped==1,"the retired pack is skipped")
+    testing.expect(t,swept.packs==1 && swept.skipped==1,"the pack is skipped")
+    packs,_:=usage(&s)
+    testing.expect_value(t,packs.packs,0)
+    stale,fresh:=join_test(folder,"tmp/stale",0),join_test(folder,"tmp/fresh",0)
+    testing.expect(t,os.write_entire_file(stale,[]u8{1})==nil && os.write_entire_file(fresh,[]u8{1})==nil)
+    test_set_time(t,stale,time.time_add(now,-2*TMP_STALE))
     again,_:=sweep(&s,nil,now)
     testing.expect(t,again.skipped==0 && again.bytes>=300<<10,"and deleted later")
-    left,_:=os.read_all_directory_by_path(retired,context.temp_allocator)
-    testing.expect_value(t,len(left),0)
+    left,_:=os.read_all_directory_by_path(strings.concatenate({folder,"/tmp"},context.temp_allocator),context.temp_allocator)
+    for e in left {testing.expectf(t,!strings.has_prefix(e.name,GONE_PREFIX),"%s is deleted",e.name)}
+    testing.expect(t,!os.exists(stale) && os.exists(fresh),"sweep removes only stale temporary files")
 }
 
 // A pack a sweep deletes that the sweeping value lent to a caller stays mapped
@@ -199,22 +203,18 @@ a_deleted_pack_this_value_lent_is_held_not_freed :: proc(t:^testing.T) {
     }
 }
 
-// A full volume is No_Space, and a sweep still frees it: what an earlier
-// sweep retired goes before anything is written.
+// A full volume is No_Space, and a sweep still frees it: a pack of the
+// generation that holds nothing live goes before anything is written.
 @(test)
 a_full_volume_is_no_space_and_a_sweep_frees_it :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"store-space");if folder=="" {return}
     now:=time.now()
-    test_dead_object(t,folder,test_bytes(2<<20,3),time.time_add(now,-2*GRACE))
+    dead:=test_dead_object(t,folder,test_bytes(2<<20,3),time.time_add(now,-2*GRACE))
     s,ok:=test_store(t,folder);if !ok {return}
     defer close(&s)
-    // Another writer runs, so the first sweep leaves what it retires.
-    other,_:=test_store(t,folder)
-    put(&other,test_bytes(10,4))
-    testing.expect_value(t,commit(&other),Error.None)
-    first,_:=sweep(&s,nil,now)
-    testing.expect(t,first.packs==1 && first.bytes==0,"the retired pack waits while another writer runs")
-    close(&other)
+    // Kept once, the pack joins the generation.
+    first,_:=sweep(&s,{dead},now)
+    testing.expect(t,first.packs==0 && s.state.generation.number==1,"the pack is in the generation")
     hooks:=Hooks{limited=true}
     s.state.hooks=&hooks
     defer s.state.hooks=nil
@@ -223,7 +223,7 @@ a_full_volume_is_no_space_and_a_sweep_frees_it :: proc(t:^testing.T) {
     testing.expect_value(t,error,Error.No_Space)
     swept,sweep_error:=sweep(&s,nil,now)
     testing.expect_value(t,sweep_error,Error.None)
-    testing.expect(t,swept.bytes>=2<<20,"the sweep frees what was retired")
+    testing.expect(t,swept.bytes>=2<<20,"the sweep frees the dead pack")
     address,put_error:=put(&s,test_bytes(5000,5))
     testing.expect_value(t,put_error,Error.None)
     testing.expect_value(t,commit(&s),Error.None)
@@ -302,8 +302,11 @@ what_is_put_again_is_refreshed_after_a_quarter_of_grace :: proc(t:^testing.T) {
     testing.expect(t,error==.None && !chunk_has(&s,address),"and goes once nothing refreshes it")
 }
 
+// A lease keeps what it names now while its holder runs, of any value of
+// the process; a lease released, and one whose holder ended (its lock free),
+// keeps nothing and goes.
 @(test)
-fresh_leases_keep_their_current_addresses :: proc(t:^testing.T) {
+a_lease_holds_while_its_holder_runs :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"store-leases");if folder=="" {return}
     s,ok:=test_store(t,folder);if !ok {return}
     defer close(&s)
@@ -311,90 +314,30 @@ fresh_leases_keep_their_current_addresses :: proc(t:^testing.T) {
     defer close(&other)
     now:=time.now()
     old:=time.time_add(now,-2*GRACE)
-    stale:=time.time_add(now,-2*LEASE_MAX_AGE)
-    hashes:[4]Hash
+    hashes:[5]Hash
     for &hash,i in hashes {hash,_=test_put(&s,test_bytes(123,u64(180+i)),old)}
-    fresh,open_error:=lease_open(&s,"editor",{hashes[0]},now)
-    if !testing.expect_value(t,open_error,Error.None) {return}
-    defer lease_release(&fresh)
-    updated:=[1]Hash{hashes[1]}
-    fresh_buffer,claim_buffer:[PATH_BYTES]u8
-    fresh_path,_:=lease_path(&fresh,&fresh_buffer)
-    claimed,claim_error:=sweep_claim(&other,fresh_path,.Lease,"editor",&claim_buffer)
-    if !testing.expect_value(t,claim_error,Error.None) {return}
-    testing.expect_value(t,lease_update(&fresh,updated[:],stale),Error.None)
-    testing.expect_value(t,sweep_restore(fresh_path,claimed),Error.None)
-    modified,time_error:=os.modification_time_by_path(fresh_path)
-    testing.expect(t,time_error==nil && older_than(modified,now,LEASE_MAX_AGE),"the replacement stays in place")
-    collected,make_error:=make(Live_Set,1,s.allocator)
-    if !testing.expect(t,make_error==nil) {return}
-    defer delete(collected)
-    holds,collect_error:=lease_collect(&other,&collected,fresh_path,now,holder_self())
-    testing.expect(t,collect_error==.None && holds,"the lease of a holder that runs here holds however old its time")
-    testing.expect(t,hashes[1] in collected && !(hashes[0] in collected))
-    infos:=make([dynamic]Lease_Info,context.temp_allocator)
-    testing.expect_value(t,leases_collect(&other,&collected,now,&infos),Error.None)
-    named:=false
-    for &info in infos {named||=string(info.name[:info.name_len])=="editor"}
-    testing.expect(t,named,"a lease listed in its folder is known by its name")
-    released,released_error:=lease_open(&s,"released",{hashes[3]},now)
+    held,held_error:=lease_open(&s,{hashes[0]})
+    if !testing.expect_value(t,held_error,Error.None) {return}
+    defer lease_release(&held)
+    testing.expect_value(t,lease_update(&held,{hashes[1]}),Error.None)
+    theirs,theirs_error:=lease_open(&other,{hashes[2]})
+    if !testing.expect_value(t,theirs_error,Error.None) {return}
+    defer lease_release(&theirs)
+    released,released_error:=lease_open(&other,{hashes[3]})
     if !testing.expect_value(t,released_error,Error.None) {return}
     testing.expect_value(t,lease_release(&released),Error.None)
-
-    // Leases this process did not open: who holds them decides, else their time.
-    // The value that wrote the objects sweeps, so that its own pack is folded.
-    self:=holder_self()
-    ended:=self
-    ended.start+=1
-    elsewhere:=Holder{pid=self.pid,start=self.start}
-    copy(elsewhere.host[:],"another-machine")
-    Case :: struct {name:string,holder:Holder,at:time.Time,holds:bool}
-    cases:=[]Case{
-        {"asleep",self,time.time_add(now,-24*time.Hour),true},  // suspended, or a clock that jumped forward
-        {"crashed",ended,now,false},                             // a pid given again to another process
-        {"gone",{host=self.host},now,false},                     // pid 0: no process
-        {"remote-fresh",elsewhere,now,true},
-        {"remote-stale",elsewhere,stale,false},
-    }
-    kept:=make([dynamic]Hash,context.temp_allocator)
-    append(&kept,..hashes[:])
-    for c,k in cases {
-        hash,_:=test_put(&s,test_bytes(200,u64(300+k)),old)
-        buffer:[PATH_BYTES]u8
-        path:=join(&buffer,folder,"leases",c.name) or_continue
-        testing.expect_value(t,lease_write(&s,path,c.holder,0,{hash},c.at),Error.None)
-        defer file_remove(path)
-        _,sweep_error:=sweep(&s,kept[:],now)
-        append(&kept,hash)
-        testing.expect_value(t,sweep_error,Error.None)
-        testing.expectf(t,chunk_has(&s,hash)==c.holds && os.exists(path)==c.holds,"%s: the lease holds %v",c.name,c.holds)
-    }
-    _,sweep_error:=sweep(&s,nil,now)
-    testing.expect_value(t,sweep_error,Error.None)
-    for hash,i in hashes {testing.expectf(t,chunk_has(&s,hash)==(i==1),"object %d",i)}
-}
-
-// What a sweep that stopped left claimed comes back, and stale temporary
-// files go.
-@(test)
-sweep_settles_what_a_stopped_sweep_claimed :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"store-claims");if folder=="" {return}
-    s,ok:=test_store(t,folder);if !ok {return}
-    defer close(&s)
-    now:=time.now()
-    lease,lease_error:=lease_open(&s,"holder",{},now)
-    if !testing.expect_value(t,lease_error,Error.None) {return}
-    defer lease_release(&lease)
-    lease_buffer,claim_buffer:[PATH_BYTES]u8
-    lease_file,_:=lease_path(&lease,&lease_buffer)
-    sweep_claim(&s,lease_file,.Lease,"holder",&claim_buffer)
-    stale,fresh:=join_test(folder,"tmp/stale",0),join_test(folder,"tmp/fresh",0)
-    testing.expect(t,os.write_entire_file(stale,[]u8{1})==nil && os.write_entire_file(fresh,[]u8{1})==nil)
-    test_set_time(t,stale,time.time_add(now,-2*TMP_STALE))
-    _,error:=sweep(&s,nil,now)
-    testing.expect_value(t,error,Error.None)
-    testing.expect(t,os.is_file(lease_file),"a claimed lease comes back")
-    claims,_:=os.read_all_directory_by_path(strings.concatenate({folder,"/tmp/sweep"},context.temp_allocator),context.temp_allocator)
-    testing.expect_value(t,len(claims),0)
-    testing.expect(t,!os.exists(stale) && os.exists(fresh),"sweep removes only stale temporary files")
+    // A lease whose holder ended: the system let its lock go.
+    ended:=path_in(folder,"leases","ended")
+    payload:=make([]u8,len(LEASE_MAGIC)+size_of(Hash),context.temp_allocator)
+    copy(payload,LEASE_MAGIC)
+    copy(payload[len(LEASE_MAGIC):],hashes[4][:])
+    testing.expect(t,os.write_entire_file(ended,payload)==nil)
+    swept,error:=sweep(&s,nil,now)
+    testing.expect(t,error==.None && !swept.busy)
+    kept:=[len(hashes)]bool{false,true,true,false,false}
+    for hash,i in hashes {testing.expectf(t,chunk_has(&s,hash)==kept[i],"object %d is kept %v",i,kept[i])}
+    testing.expect(t,!os.exists(ended),"the lease of a holder that ended goes")
+    buffer:[PATH_BYTES]u8
+    held_path,_:=lease_path(&held,&buffer)
+    testing.expect(t,os.exists(held_path),"a held lease stays")
 }
