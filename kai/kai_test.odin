@@ -114,7 +114,6 @@ a_snapshot_rehashes_only_changed_files :: proc(t:^testing.T) {
     testing.expect_value(t,report.files,4)
 }
 
-@(private="file")
 expect_refused :: proc(t:^testing.T,bytes:[]u8,decode:proc(bytes:[]u8) -> Error,name:string,versioned:=false,loc:=#caller_location) {
     testing.expect_value(t,decode(bytes),Error.None,loc=loc)
     for n in 0..<len(bytes) {
@@ -231,7 +230,7 @@ hostile_kai_records_are_refused :: proc(t:^testing.T) {
     if !opened {return}
     defer store.close(&f.s)
     // A kind's version is in the meta of its object's root, from VERSIONS: one of another is refused there.
-    for kind in ([]Object_Kind{.Change,.Operation,.Log_Page,.Device_Refs,.Overlay_Record,.Envelopes}) {
+    for kind in ([]Object_Kind{.Change,.Operation,.Org,.Repo_Refs,.DDC_Set}) {
         p,_:=store.put_begin(&f.s)
         store.put_write(&p,change_bytes)
         meta:=object_meta(kind)
@@ -280,51 +279,6 @@ hostile_kai_records_are_refused :: proc(t:^testing.T) {
         st.conflicts=make([dynamic]Materialized,context.temp_allocator)
         return state_decode(b,&st,context.temp_allocator)
     },"a workspace state",versioned=true)
-
-    // Previews a peer publishes for the web view: what the encoders make is
-    // taken, and texts past their bounds or with control bytes, another head,
-    // a count that is no number and anything a PNG header does not say are not.
-    summary,_:=preview_summary_encode("mesh",{{"Vertices","788"},{"Names","a\tb\nc"}},context.temp_allocator)
-    testing.expect_value(t,preview_check(.Summary,summary),Error.None)
-    rows:=[]Preview_Row{{'~',"Lamp","Transform.position: 0 -> 5"},{'+',"","Light"}}
-    detail,_:=preview_detail_encode(&Preview_Detail{changed=1,added=1,rows=rows},context.temp_allocator)
-    testing.expect_value(t,preview_check(.Detail,detail),Error.None)
-    many:=make([]Preview_Fact,PREVIEW_FACTS_MAX+1,context.temp_allocator)
-    for &f in many {f={"label","value"}}
-    _,e=preview_summary_encode("mesh",many,context.temp_allocator)
-    testing.expect_value(t,e,Error.Too_Large)
-    long:=strings.repeat("x",PREVIEW_VALUE_MAX+1,context.temp_allocator)
-    hostile:=[]struct {kind:Preview_Kind,text:string}{
-        {.Summary,""},
-        {.Summary,"kai-summary 2\nmesh\n"},
-        {.Summary,"kai-summary 1\nmesh"},
-        {.Summary,"kai-summary 1\n\n"},
-        {.Summary,"kai-summary 1\nmesh\nno tab\n"},
-        {.Summary,"kai-summary 1\nmesh\na\tb\tc\n"},
-        {.Summary,"kai-summary 1\nmesh\n\tvalue\n"},
-        {.Summary,"kai-summary 1\nmesh\na\tb\r\n"},
-        {.Summary,"kai-summary 1\nmesh\na\t\xff\n"},
-        {.Summary,strings.concatenate({"kai-summary 1\nmesh\na\t",long,"\n"},context.temp_allocator)},
-        {.Summary,strings.concatenate({"kai-summary 1\nmesh\n",strings.repeat("a\tb\n",PREVIEW_FACTS_MAX+1,context.temp_allocator)},context.temp_allocator)},
-        {.Detail,"kai-detail 1\n1\t2\t3\n"},
-        {.Detail,"kai-detail 1\n1\t2\t3\t-4\n"},
-        {.Detail,"kai-detail 1\n1\t2\t3\t4\t5\n"},
-        {.Detail,"kai-detail 1\n0\t0\t0\t0\n*\tname\ttext\n"},
-        {.Detail,"kai-detail 1\n0\t0\t0\t0\n+\tname\n"},
-        {.Detail,"kai-detail 1\n0\t0\t0\t9999999999\n"},
-        {.Thumbnail,"\x89PNG\r\n\x1a\nnot a png"},
-        {.Thumbnail,"kai-summary 1\nmesh\n"},
-    }
-    for x in hostile {
-        testing.expectf(t,preview_check(x.kind,transmute([]u8)x.text)!=.None,"a %v preview %q is refused",x.kind,x.text)
-    }
-    // A PNG of 2x2 pixels, and one whose header says more than PREVIEW_SIDE_MAX.
-    png:=[]u8{0x89,'P','N','G','\r','\n',0x1a,'\n',0,0,0,13,'I','H','D','R',0,0,0,2,0,0,0,2,8,6,0,0,0,0,0,0,0, 0,0,0,0,'I','E','N','D',0xae,0x42,0x60,0x82}
-    testing.expect_value(t,preview_check(.Thumbnail,png),Error.None)
-    wide:=slice.clone(png,context.temp_allocator)
-    wide[18]=0x10
-    testing.expect_value(t,preview_check(.Thumbnail,wide),Error.Corrupt)
-    testing.expect(t,preview_key(.Summary,{},{0=1})!=preview_key(.Thumbnail,{},{0=1}) && preview_key(.Detail,{0=1},{0=2})!=preview_key(.Detail,{0=2},{0=1}),"a key names the kind and the sides")
 }
 
 @(test)
@@ -501,70 +455,29 @@ a_prune_drops_old_operations_and_the_sweep_reclaims_what_only_they_reached :: pr
     testing.expect_value(t,tx_rewrite(&rewrite_tx,repo_working(&r),working_revision),Error.None)
     testing.expect_value(t,tx_commit(&rewrite_tx,.Snapshot,"attach"),Error.None)
     kept=working_revision
-    published_change:=Change{id=random_id(Change_Id),tree=tree(&f.s,"published\n"),author=identity.key,created=1,written=1,attachments={{1,attached}},description="only a device names it"}
+    published_change:=Change{id=random_id(Change_Id),tree=tree(&f.s,"published\n"),author=identity.key,created=1,written=1,attachments={{1,attached}},description="only the shared bookmarks name it"}
     published,_:=change_put(&f.s,&published_change,&identity)
-    _,pe:=device_refs_publish(&f.s,{0=1},&identity,{{"work",published}},1)
-    testing.expect_value(t,pe,Error.None)
-    // Overlay records: one of a revision only old operations reach, and two of the kept working
-    // copy, the second following the first.
     sealed :: proc(t:^testing.T,s:^store.Store,text:string) -> store.Hash {
         address,e:=store.put(s,transmute([]u8)text)
         testing.expect_value(t,e,store.Error.None)
         return address
     }
-    seal :: proc(t:^testing.T,s:^store.Store,identity:^Identity,commit:Revision,tree:store.Hash) {
-        r:=Overlay_Record{head={commit=commit,project={0=7},scope={0=7},epoch=1,tree_root=tree,time=time.now()._nsec}}
-        _,e:=overlay_record_write(s,identity,&r,{},0)
-        testing.expect_value(t,e,Error.None)
-    }
-    gone_tree,older_tree,newer_tree:=sealed(t,&f.s,"sealed tree of the first"),sealed(t,&f.s,"sealed tree, before"),sealed(t,&f.s,"sealed tree, after")
-    seal(t,&f.s,&identity,first,gone_tree)
-    seal(t,&f.s,&identity,kept,older_tree)
-    seal(t,&f.s,&identity,kept,newer_tree)
-    // Every other kind of Kai object, which only the links inside Kai records reach: logs of every
-    // kind, one of many pages, a proposal with a check, a keyring's envelopes, derived data, the
-    // kept verdicts and what came from an org.
-    o:Test_Org
-    test_org_make(t,&o);defer test_org_destroy(&o)
-    bob:=&o.bob.devices[0]
-    for i in 0..<3*LOG_PAGE_ENTRIES {test_move(t,&o.project,"main",published,bob,o.org.items[0].address,i64(20+i))}
-    proposal:Log
-    log_init(&proposal);defer log_destroy(&proposal)
-    _,e:=proposal_open(&proposal,o.project.id,"main","work","",bob,30,{},o.org.items[0].address)
-    testing.expect_value(t,e,Error.None)
-    _,e=proposal_revise(&proposal,{{published_change.id,published}},bob,31,{},o.org.items[0].address)
-    testing.expect_value(t,e,Error.None)
-    printed:=sealed(t,&f.s,"what the check printed")
-    _,e=proposal_check(&proposal,published,"test",.Passed,printed,bob,32,{},o.org.items[0].address)
-    testing.expect_value(t,e,Error.None)
-    envelopes,ee:=object_put(&f.s,.Envelopes,slice.to_bytes([]Envelope{{dh={0=1}}}))
-    testing.expect_value(t,ee,Error.None)
-    keyring:Log
-    log_init(&keyring);defer log_destroy(&keyring)
-    _,e=log_append(&keyring,.Keyring_Genesis,body_make(Keyring_Genesis_Body{org=o.org.id,project=o.project.id,scope={0=7}}),&o.alice.devices[0],40,{},o.org.items[0].address)
-    testing.expect_value(t,e,Error.None)
-    _,e=log_append(&keyring,.Epoch_Add,body_make(Epoch_Add_Body{epoch=1,devices=1,envelopes=envelopes}),&o.alice.devices[0],41,{},o.org.items[0].address)
-    testing.expect_value(t,e,Error.None)
-    logs:=[]^Log{&o.alice.log,&o.bob.log,&o.org,&o.project,&proposal,&keyring}
-    for l in logs {
-        _,se:=log_save(&f.s,l)
-        testing.expect_value(t,se,Error.None)
-    }
-    // A user no org admitted yet, as a node keeps it in a local namespace.
-    _,e=log_save_in(&f.s,&o.carol.log,"kai-local-waiting")
-    testing.expect_value(t,e,Error.None)
+    // The other kinds of Kai object, which only the links inside Kai records
+    // reach: two versions of an org, a repository's shared bookmarks and
+    // derived data.
+    members:=[1]Member{{key=identity.key,role=.Admin,name="Ana",device="Mac"}}
+    org:=Org{id={0=7},version=1,name="studio",members=members[:]}
+    first_org,oe:=org_write(&f.s,&org,&identity,1)
+    testing.expect_value(t,oe,Error.None)
+    repos:=[1]Org_Repo{{id={0=8},name="game"}}
+    org.version,org.prev,org.repos=2,first_org,repos[:]
+    _,oe=org_write(&f.s,&org,&identity,2)
+    testing.expect_value(t,oe,Error.None)
+    _,pe:=repo_refs_publish(&f.s,&org,{0=8},&identity,{{"main",published}},3)
+    testing.expect_value(t,pe,Error.None)
     built:=sealed(t,&f.s,"a cook's output")
-    _,e=ddc_publish(&f.s,o.org.id,&identity,{0=9},{built},nil,1)
+    _,e:=ddc_publish(&f.s,org.id,&identity,{0=9},{built},1)
     testing.expect_value(t,e,Error.None)
-    landed,le:=object_put(&f.s,.Landings,slice.to_bytes([]store.Hash{{0=1}}))
-    testing.expect_value(t,le,Error.None)
-    name:[64]u8
-    testing.expect_value(t,store.ref_set(&f.s,LANDINGS_NAMESPACE,log_name(o.project.id,&name),landed),store.Error.None)
-    p:Provenance
-    provenance_init(&p,context.temp_allocator)
-    p.received[published]={}
-    p.dirty=true
-    testing.expect_value(t,provenance_save(&p,&f.s,o.org.id),Error.None)
     loose:=sealed(t,&f.s,"what nothing names")
     before:=r.op
     old:=make([dynamic]store.Hash,context.temp_allocator)
@@ -587,34 +500,15 @@ a_prune_drops_old_operations_and_the_sweep_reclaims_what_only_they_reached :: pr
     for op in old {testing.expectf(t,object_present(&f.s,op)==(op==before),"%v: only the operation the workspace's ref names stays",op)}
     testing.expect(t,!object_present(&f.s,first),"a revision only old operations reached is reclaimed")
     testing.expect(t,!object_present(&f.s,loose),"an object nothing reaches is reclaimed")
-    for l in logs {
-        whole:Log
-        log_init(&whole,l.id,context.temp_allocator)
-        testing.expectf(t,log_open(&f.s,&whole,l.id,l.kind)==.None && len(whole.items)==len(l.items),"a log of kind %v reads whole after the sweep",l.kind)
-    }
-    waiting:Log
-    log_init(&waiting,{},context.temp_allocator)
-    waiting_address,_:=store.ref_get(&f.s,"kai-local-waiting",log_name(o.carol.log.id,&name))
-    _,we2:=log_load(&f.s,&waiting,waiting_address,false)
-    testing.expect(t,we2==.None && len(waiting.items)==len(o.carol.log.items),"a log of a local namespace reads whole")
     records:=make([dynamic]DDC_Record,context.temp_allocator)
-    testing.expect_value(t,ddc_lookup(&f.s,o.org.id,{0=9},&records),Error.None)
+    testing.expect_value(t,ddc_lookup(&f.s,org.id,{0=9},&records),Error.None)
     testing.expect(t,len(records)==1 && object_present(&f.s,records[0].output_root) && object_present(&f.s,built),"derived data kept stays whole")
-    for address in ([]store.Hash{printed,envelopes,landed}) {testing.expectf(t,object_present(&f.s,address),"%v: what a log entry or a local ref names stays",address)}
-    q:Provenance
-    provenance_init(&q,context.temp_allocator)
-    provenance_load(&q,&f.s,o.org.id)
-    testing.expect(t,published in q.received,"what came from an org stays known")
+    testing.expect(t,object_present(&f.s,first_org),"every version of an org stays: a peer walks them back")
     testing.expect(t,object_present(&f.s,attached) && object_present(&f.s,attached_kept),"what a kept change attaches survives the sweep")
-    testing.expect_value(t,record_error(&f.s,{0=7},{0=7},first),Error.Missing)
-    testing.expect(t,!object_present(&f.s,gone_tree),"the overlay of a revision the prune let go goes with it")
-    held,_,he:=overlay_record_get(&f.s,{0=7},{0=7},kept,context.temp_allocator)
-    testing.expect(t,he==.None && held.tree_root==newer_tree && object_present(&f.s,newer_tree),"the record a kept revision's ref names stays whole")
-    testing.expect(t,!object_present(&f.s,older_tree) && !object_present(&f.s,held.prev),"the records before it, which nothing reads, go")
     for revision in ([]Revision{kept,published,repo_working(&r)}) {
         files:=make([dynamic]File,context.temp_allocator)
         c,ce:=change_get(&f.s,revision,context.temp_allocator)
-        testing.expect(t,ce==.None && tree_files(&f.s,c.tree,&files,context.temp_allocator)==.None,"what a view or a device's ref reaches stays whole")
+        testing.expect(t,ce==.None && tree_files(&f.s,c.tree,&files,context.temp_allocator)==.None,"what a view or the shared bookmarks reach stays whole")
     }
 
     // After the prune every operation undoes; the prune and what came before it do not.
@@ -817,41 +711,22 @@ a_switch_cut_midway_recovers_on_status :: proc(t:^testing.T) {
 }
 
 // A change splits by paths in one operation: the first half keeps its id,
-// parents and description with the files picked over its parents, a conflict
-// it inherits and its parents' private files; the second, on it, keeps the
-// whole tree and its private files, and what pointed at the change follows it.
-// What is not a file the change touched is refused with why. One undo gives the
-// view before; an edit on disk after the last snapshot reaches the next one.
-// Every other rewrite (describe, abandon of a parent, rebase) carries the
-// change's private files onto what it writes in its one operation, those of
-// a scope the device that rewrites does not read too; a restore gives it
-// those of the change it restores from, and a new change its parent's.
+// parents and description with the files picked over its parents and a
+// conflict it inherits; the second, on it, keeps the whole tree, and what
+// pointed at the change follows it. What is not a file the change touched is
+// refused with why. One undo gives the view before; an edit on disk after the
+// last snapshot reaches the next one.
 @(test)
 a_change_splits_by_paths_and_undoes_in_one_operation :: proc(t:^testing.T) {
     f,ok:=fixture(t,"kai-split");if !ok {return}
     defer store.close(&f.s)
-    o:Test_Org
-    test_org_make(t,&o);defer test_org_destroy(&o)
-    scope,vault:=random_id(Scope_Id),random_id(Scope_Id)
-    scope_add(t,&o,scope,.Reader,true,20,"secrets/**")
-    scope_add(t,&o,vault,.Admin,true,20,"vault/**")
-    refold(t,&o)
-    alice,bob:=device_of(&o.alice,0),device_of(&o.bob,0)
-    kl,vl:Log
-    log_init(&kl);defer log_destroy(&kl)
-    log_init(&vl);defer log_destroy(&vl)
-    kf,kv:Keyring_Fold
-    testing.expect_value(t,keyring_create(&kf,&kl,&o.fold,&f.s,o.project.id,scope,&alice,21),Error.None)
-    defer keyring_fold_destroy(&kf)
-    testing.expect_value(t,keyring_create(&kv,&vl,&o.fold,&f.s,o.project.id,vault,&alice,21),Error.None)
-    defer keyring_fold_destroy(&kv)
-    routing:=Overlay_Routing{org=&o.fold,project=o.project.id,keyrings={&kf,&kv},device=alice}
+    alice,bob:=identity_make(),identity_make()
     root,other:=folder_of(&f,"a"),folder_of(&f,"b")
-    for file in ([][2]string{{"keep.txt","keep"},{"edit.txt","v1"},{"gone.txt","bye"},{"art/a.txt","a1"},{"art/b.txt","b1"},{"d","dee"},{"f.txt","1\n2\n3\n"},{"secrets/key.txt","old secret"},{"vault/plan.txt","admins only"}}) {
+    for file in ([][2]string{{"keep.txt","keep"},{"edit.txt","v1"},{"gone.txt","bye"},{"art/a.txt","a1"},{"art/b.txt","b1"},{"d","dee"},{"f.txt","1\n2\n3\n"}}) {
         write(t,root,file[0],file[1])
     }
     w,b:Workspace
-    if !testing.expect_value(t,workspace_create(&w,root,&f.s,o.alice.devices[0],overlay=&routing),Error.None) {return}
+    if !testing.expect_value(t,workspace_create(&w,root,&f.s,alice),Error.None) {return}
     defer workspace_close(&w)
     origin:=repo_working(&w.repo)
 
@@ -870,7 +745,6 @@ a_change_splits_by_paths_and_undoes_in_one_operation :: proc(t:^testing.T) {
     write(t,root,"new.txt","new",40*time.Minute)
     write(t,root,"art/a.txt","a2",40*time.Minute)
     write(t,root,"art/c.txt","c2",40*time.Minute)
-    write(t,root,"secrets/key.txt","new secret",40*time.Minute)
     os.remove(strings.concatenate({root,"/gone.txt"},context.temp_allocator))
     os.remove(strings.concatenate({root,"/d"},context.temp_allocator))
     write(t,root,"d/x.txt","x",40*time.Minute)
@@ -885,19 +759,16 @@ a_change_splits_by_paths_and_undoes_in_one_operation :: proc(t:^testing.T) {
     testing.expect_value(t,bookmark_set(&w.repo,"wip",split),Error.None)
     child,_:=change_new(&w.repo,{split},"child")
     testing.expect_value(t,workspace_switch(&w,split),Error.None)
-    testing.expect_value(t,workspace_add(&b,other,&w,o.bob.devices[0]),Error.None)
+    testing.expect_value(t,workspace_add(&b,other,&w,bob),Error.None)
     defer workspace_close(&b)
     testing.expect_value(t,workspace_switch(&b,split),Error.None)
 
-    routing_bob:=Overlay_Routing{org=&o.fold,project=o.project.id,keyrings={&kf,&kv},device=bob}
-    b.repo.overlay=&routing_bob
     Refusal :: struct {paths:[]string,says:string}
     refusals:=[]Refusal{
         {nil,"no path picked"},
         {{"art/../x"},"not a path"},
         {{"missing.txt"},"did not add, change or remove"},
         {{"f.txt"},"did not add, change or remove"},          // a conflict it inherits
-        {{"secrets/key.txt"},"did not add, change or remove"}, // private: never in the public tree
         {{"edit.txt","gone.txt","new.txt","art","d","d/x.txt"},"with new"},
         {{"d/x.txt"},"d and d/x.txt"},
     }
@@ -911,13 +782,11 @@ a_change_splits_by_paths_and_undoes_in_one_operation :: proc(t:^testing.T) {
     write(t,root,"edit.txt","v3, on disk",30*time.Minute)
     before:=b.repo.view_address
     why:string
-    // A split cut after its objects and before its commit moved nothing: neither its operation
-    // nor the records of its overlays.
+    // A split cut after its objects and before its commit moved nothing.
     b.repo.cut_commit=true
-    cut_first,cut_second,ce:=change_split(&b.repo,split,{"new.txt","gone.txt","art","d","d/x.txt"},nil,&why)
+    cut_first,_,ce:=change_split(&b.repo,split,{"new.txt","gone.txt","art","d","d/x.txt"},nil,&why)
     testing.expect_value(t,ce,Error.Io)
-    testing.expect(t,b.repo.view_address==before,"the view is the one before the cut split")
-    testing.expect(t,cut_first!={} && record_error(&f.s,o.project.id,scope,cut_first)==.Missing && record_error(&f.s,o.project.id,scope,cut_second)==.Missing,"no overlay record of the cut split was set")
+    testing.expect(t,b.repo.view_address==before && cut_first!={},"the view is the one before the cut split")
     first,second,se:=change_split(&b.repo,split,{"new.txt","gone.txt","art","d","d/x.txt"},nil,&why)
     if !testing.expectf(t,se==.None,"%v %s",se,why) {return}
     after:=b.repo.view_address
@@ -926,7 +795,7 @@ a_change_splits_by_paths_and_undoes_in_one_operation :: proc(t:^testing.T) {
     a,_:=change_get(&f.s,first,context.temp_allocator)
     z,_:=change_get(&f.s,second,context.temp_allocator)
     testing.expect(t,a.id==before_split.id && a.created==before_split.created && a.description=="work" && slice.equal(a.parents,before_split.parents),"the first keeps the change's id, parents and text")
-    testing.expect(t,a.author==o.bob.devices[0].key && slice.contains(a.coauthors,o.alice.devices[0].key),"the author that did not sign is a coauthor")
+    testing.expect(t,a.author==bob.key && slice.contains(a.coauthors,alice.key),"the author that did not sign is a coauthor")
     testing.expect(t,z.id!=a.id && z.description=="" && len(z.parents)==1 && z.parents[0]==first && z.tree==before_split.tree,"the second is the whole tree on the first")
     paths_of :: proc(s:^store.Store,from,to:store.Hash) -> string {
         diffs:=make([dynamic]Diff,context.temp_allocator)
@@ -951,21 +820,11 @@ a_change_splits_by_paths_and_undoes_in_one_operation :: proc(t:^testing.T) {
     }
     moved_change,_:=change_get(&f.s,moved,context.temp_allocator)
     testing.expect(t,moved!=child && len(moved_change.parents)==1 && moved_change.parents[0]==second && moved_change.tree==tree_of(t,&f.s,child),"the child moves onto the second as it was")
-    opened,oe:=open_files(t,&f.s,&kf,&alice,first)
-    testing.expect(t,oe==.None && opened["secrets/key.txt"]=="old secret","the first has its parents' private files")
-    opened,oe=open_files(t,&f.s,&kf,&alice,second)
-    testing.expect(t,oe==.None && opened["secrets/key.txt"]=="new secret","the second has the change's private files")
 
     testing.expect_value(t,op_undo(&b.repo,b.repo.op),Error.None)
     testing.expect(t,b.repo.view_address==before,"one undo gives the view before the split")
-    // Records are kept by revision and an operation writes only those of revisions it made: the
-    // view an undo gives back reads its private files as they were, and so does a redo.
-    opened,oe=open_files(t,&f.s,&kf,&alice,split)
-    testing.expect(t,oe==.None && opened["secrets/key.txt"]=="new secret","the change split and undone has its private files")
     testing.expect_value(t,op_undo(&b.repo,b.repo.op),Error.None)
     testing.expect(t,b.repo.view_address==after,"undoing the undo splits again")
-    opened,oe=open_files(t,&f.s,&kf,&alice,second)
-    testing.expect(t,oe==.None && opened["secrets/key.txt"]=="new secret","the split done again has the second's private files")
 
     // The working copy kept its files, and the edit on disk reaches the second.
     testing.expect_value(t,read(root,"edit.txt"),"v3, on disk")
@@ -974,54 +833,6 @@ a_change_splits_by_paths_and_undoes_in_one_operation :: proc(t:^testing.T) {
     now,_:=change_get(&f.s,report.revision,context.temp_allocator)
     testing.expect(t,now.id==z.id && now.parents[0]==first,"the working copy is the second")
     testing.expect_value(t,paths_of(&f.s,z.tree,now.tree),"edit.txt")
-    opened,oe=open_files(t,&f.s,&kf,&alice,report.revision)
-    testing.expect(t,oe==.None && opened["secrets/key.txt"]=="new secret","the next snapshot follows the second's private files")
-
-    // Each rewrite by bob, who reads one scope and not the other, carries the change's records
-    // in its operation: alice opens both scopes on what it wrote, bob only his, and one undo
-    // gives the change back with its own.
-    Private :: struct {secret,vault:string,bob:Error}
-    private_at :: proc(t:^testing.T,s:^store.Store,kf,kv:^Keyring_Fold,alice,bob:^Overlay_Device,revision:Revision) -> (p:Private) {
-        opened,_:=open_files(t,s,kf,alice,revision)
-        p.secret=opened["secrets/key.txt"]
-        opened,_=open_files(t,s,kv,alice,revision)
-        p.vault=opened["vault/plan.txt"]
-        _,p.bob=open_files(t,s,kv,bob,revision)
-        if opened,_=open_files(t,s,kf,bob,revision);opened["secrets/key.txt"]!=p.secret {p.secret="bob reads another"}
-        return
-    }
-    want:=Private{"new secret","admins only",.Unauthorized}
-    testing.expect_value(t,repo_refresh(&b.repo),Error.None)
-    held:=report.revision
-    testing.expect_value(t,private_at(t,&f.s,&kf,&kv,&alice,&bob,held),want)
-    Rewrite_Kind :: enum {New,Describe,Restore,Abandon_Parent,Rebase}
-    for kind in Rewrite_Kind {
-        before_view:=b.repo.view_address
-        e:Error
-        rewritten:Revision
-        switch kind {
-        case .New: rewritten,e=change_new(&b.repo,{held},"next")
-        case .Describe: _,e=change_describe(&b.repo,held,"described")
-        case .Restore: _,e=change_restore(&b.repo,held,first)
-        case .Abandon_Parent: e=change_abandon(&b.repo,first)
-        case .Rebase: _,e=change_rebase(&b.repo,held,{origin})
-        }
-        if !testing.expectf(t,e==.None,"%v: %v",kind,e) {return}
-        o,_:=op_get(&f.s,b.repo.op,context.temp_allocator)
-        for rw in o.rewrites {
-            if rw.from==held {rewritten=rw.to}
-        }
-        if !testing.expectf(t,rewritten!={},"%v rewrites the change",kind) {return}
-        before_want:=want
-        if kind==.Restore {want.secret="old secret"}
-        testing.expectf(t,private_at(t,&f.s,&kf,&kv,&alice,&bob,rewritten)==want,"%v carries the private files: %v",kind,private_at(t,&f.s,&kf,&kv,&alice,&bob,rewritten))
-        after_view:=b.repo.view_address
-        testing.expect_value(t,op_undo(&b.repo,b.repo.op),Error.None)
-        testing.expectf(t,b.repo.view_address==before_view && private_at(t,&f.s,&kf,&kv,&alice,&bob,held)==before_want,"undoing %v gives the change back with its private files",kind)
-        testing.expect_value(t,op_undo(&b.repo,b.repo.op),Error.None)
-        testing.expectf(t,b.repo.view_address==after_view && private_at(t,&f.s,&kf,&kv,&alice,&bob,rewritten)==want,"doing %v again keeps them",kind)
-        held=rewritten
-    }
 }
 
 @(test)
@@ -1029,7 +840,7 @@ kai_imports_stay_engine_agnostic :: proc(t:^testing.T) {
     folder,_:=os.split_path(#file)
     listed,e:=os.read_all_directory_by_path(folder,context.temp_allocator)
     testing.expect(t,e==nil)
-    allowed_exact:=[]string{"mirai:store","mirai:exchange","mirai:net"}
+    allowed_exact:=[]string{"mirai:store"}
     sources:=0
     for info in listed {
         if !strings.has_suffix(info.name,".odin") {continue}
@@ -1127,10 +938,4 @@ workspace_switch :: proc(w:^Workspace,revision:Revision) -> Error {
     workspace_point(&tx,w.repo.workspace,revision) or_return
     tx_commit(&tx,.Workspace,"switch workspace") or_return
     return checkout(w,c.tree)
-}
-
-@(private="file")
-record_error :: proc(s:^store.Store,project:Log_Id,scope:Scope_Id,commit:Revision) -> Error {
-    _,_,e:=overlay_record_get(s,project,scope,commit,context.temp_allocator)
-    return e
 }

@@ -21,7 +21,6 @@ KAI_MAGIC :: u32('K')|u32('A')<<8|u32('I')<<16|u32('1')<<24
 Change_Id :: distinct [16]u8 // random at creation, kept across rewrites
 Revision :: store.Hash        // the address of one Change object
 Key :: distinct [32]u8        // Ed25519 public key
-Dh_Key :: distinct [32]u8     // X25519 static public key
 Signature :: distinct [64]u8
 Repo_Id :: distinct [16]u8
 Workspace_Id :: distinct [16]u8
@@ -42,19 +41,14 @@ Identity :: struct {
 }
 
 Object_Kind :: enum u8 {
-    None,Folder,Conflict,Change,View,Operation,Stat_Index,Log,Device_Refs,DDC_Set,DDC_Output,Log_Page,
-    Overlay_Record,Overlay_Tree,Overlay_File,Overlay_Blob,Envelopes,Landings,Provenance,
-    Grant, // not an object: the bytes of a grant, in a Grant entry or a grant's text
+    None,Folder,Conflict,Change,View,Operation,Stat_Index,DDC_Set,DDC_Output,Org,Repo_Refs,Note,Invite,
 }
 
 // The format of each kind of object, which the meta of its root carries:
 // meta_check refuses any other, so changing a kind's format is one line here.
-// A log's entries travel outside their pages too, and carry the version of
-// Log_Page in their own head.
 VERSIONS :: [Object_Kind]u16{
-    .None=0,.Folder=1,.Conflict=2,.Change=2,.View=1,.Operation=3,.Stat_Index=1,.Log=2,.Device_Refs=2,
-    .DDC_Set=2,.DDC_Output=2,.Log_Page=4,.Overlay_Record=2,.Overlay_Tree=2,.Overlay_File=1,.Overlay_Blob=2,
-    .Envelopes=1,.Landings=1,.Provenance=1,.Grant=1,
+    .None=0,.Folder=1,.Conflict=2,.Change=2,.View=1,.Operation=3,.Stat_Index=1,
+    .DDC_Set=3,.DDC_Output=3,.Org=1,.Repo_Refs=1,.Note=1,.Invite=1,
 }
 
 Error :: enum u8 {
@@ -72,6 +66,7 @@ Error :: enum u8 {
     Unauthorized,     // a signature, or the right of its author, does not hold
     Rollback,         // a signed record not newer than the one held
     Expired,          // past the time a signed record allows
+    Unreachable,      // no peer answered at the address
     Other_Store,      // the repository of a workspace is not in the store it is opened with
     Pruned,           // an operation behind a prune of the operation log, which undo does not cross
     Merged,           // an operation that only merged what workspaces wrote apart, which has nothing of its own to undo
@@ -91,9 +86,10 @@ error_text :: proc(error:Error) -> string {
     case .Stale: return "the workspace's change is gone from the repository: switch to another change"
     case .Other_Store: return "the repository of this folder's workspace is not in this store: open it with the store it was made in, or delete its .mirai/kai folder to start a new history here"
     case .Unsupported: return "the file system cannot do it here"
-    case .Unauthorized: return "a signature or the right of its author does not hold: fetch the logs of the org again, or ask an admin for the right"
+    case .Unauthorized: return "a signature or the role of its signer does not hold: ask an admin of the org for the role"
     case .Rollback: return "a record older than the one held: a peer offered stale refs, fetch from another"
-    case .Expired: return "the signed record is past its time: ask its issuer for a new one"
+    case .Expired: return "the invite is used or past its time: ask for a new one"
+    case .Unreachable: return "no Kai peer answered at that address: check that its editor or mirai kai serve runs and that the port is open"
     case .Pruned: return "that operation is behind a prune of the operation log, which undo does not cross: restore an older change with mirai kai restore instead"
     case .Merged: return "that operation only merged what two workspaces of the repository wrote apart and made no edit of its own: undo the operation under it that made the edit, from the workspace that made it"
     }
@@ -195,6 +191,19 @@ meta_check :: proc "contextless" (meta:[]u8,kind:Object_Kind,extra:int) -> Error
     versions:=VERSIONS
     if head.magic!=KAI_MAGIC || head.kind!=kind || head.reserved!=0 || head.version!=versions[kind] {return .Corrupt}
     return .None
+}
+
+// The kind of the Kai record at address; None when it is none.
+object_kind :: proc(s:^store.Store,address:store.Hash) -> Object_Kind {
+    o,e:=store.object_open(s,address)
+    if e!=.None {return .None}
+    defer store.object_close(&o)
+    meta:=store.object_meta(&o)
+    if len(meta)<size_of(Meta) {return .None}
+    head:=(^Meta)(raw_data(meta))^
+    versions:=VERSIONS
+    if head.magic!=KAI_MAGIC || head.kind>max(Object_Kind) || head.version!=versions[head.kind] {return .None}
+    return head.kind
 }
 
 // Random bytes for ids.
@@ -331,6 +340,22 @@ hex_parse :: proc(text:string,out:[]u8) -> bool {
         b=high<<4|low
     }
     return true
+}
+
+// A string of at most 255 bytes, its length first.
+@(private)
+tail_string :: proc "contextless" (r:^Reader) -> string {
+    n:=read_value(r,u8)
+    return string(read_bytes(r,int(n)))
+}
+
+@(private)
+hex_value :: proc "contextless" (c:u8) -> (u8,bool) {
+    switch c {
+    case '0'..='9': return c-'0',true
+    case 'a'..='f': return c-'a'+10,true
+    }
+    return 0,false
 }
 
 @(private)
