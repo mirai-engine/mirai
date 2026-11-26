@@ -466,7 +466,7 @@ editor_kai_publishes_to_main_and_a_launcher_pulls_it :: proc(t:^testing.T) {
     joined:^Api_Kai_Joined
     call,joined=kai_call(b,api_kai_join,&join,Api_Kai_Joined)
     if !kai_ok(t,call,"join") || !testing.expect_value(t,joined.name,"studio") {return}
-    testing.expect_value(t,projects_repositories_count(b),1)
+    testing.expect_value(t,projects_unpulled_count(b),1)
     folder:=fmt.tprintf("%s/pulled",base.test_folder(t,"kai-team-pull"))
     clone:=Api_Kai_Clone_Params{org="studio",repository=orgs.orgs[0].repositories[0].name,folder=folder}
     pulling:^Api_Kai_Clone

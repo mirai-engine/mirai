@@ -175,7 +175,7 @@ request_parse :: proc(input:[]u8) -> (p:Parse) {
 }
 
 REASONS :: [?]struct{status:int,text:string}{
-    {100,"Continue"},{200,"OK"},{201,"Created"},{204,"No Content"},{304,"Not Modified"},
+    {100,"Continue"},{200,"OK"},{201,"Created"},{204,"No Content"},{303,"See Other"},{304,"Not Modified"},
     {400,"Bad Request"},{401,"Unauthorized"},{403,"Forbidden"},{404,"Not Found"},{405,"Method Not Allowed"},
     {408,"Request Timeout"},{409,"Conflict"},{411,"Length Required"},{413,"Content Too Large"},{414,"URI Too Long"},
     {415,"Unsupported Media Type"},{417,"Expectation Failed"},{422,"Unprocessable Content"},{429,"Too Many Requests"},

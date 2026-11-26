@@ -440,3 +440,60 @@ a_pull_over_loopback_runs_at_tcp_speed :: proc(t:^testing.T) {
     testing.expect(t,len(missing)==0,"every object is here")
     fmt.printfln("a_pull_over_loopback_runs_at_tcp_speed: %d MB in 1000 files in %.3f s, %.1f MB/s",megabytes,seconds,f64(megabytes)/seconds)
 }
+
+// A server whose record of the org is a version behind (a machine joined
+// while it was off and the admin is off now) takes the newer record from the
+// machine that dials it, and then serves it: the newcomer pulls the
+// repository from the server alone.
+@(test)
+a_server_a_version_behind_learns_the_newcomer_from_it :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-behind")
+    if folder=="" {return}
+    mac,server,laptop:Machine
+    if !machine_open(t,&mac,folder,"Ana") || !machine_open(t,&server,folder,"cloud") || !machine_open(t,&laptop,folder,"Cal") {return}
+    defer machine_close(&mac)
+    defer machine_close(&server)
+    defer machine_close(&laptop)
+    org,_:=vcs_org(t,&mac)
+    repo:=random_id(Repo_Id)
+    team_repo_set(&mac.team,org,{id=repo,name="game"})
+    revision:=change_of(t,&mac.s,&mac.team.identity,{{"a.txt","the first version\n"}})
+    team_publish(&mac.team,org,repo,{{"main",revision}})
+    if !machine_start(t,&mac,0) || !machine_start(t,&server,0,node=true) || !machine_start(t,&laptop,-1) {return}
+    mac_address:=fmt.tprintf("127.0.0.1:%d",agent_port(&mac.agent))
+    node,_:=team_invite(&mac.team,org,.Node,"",{mac_address},context.temp_allocator)
+    if _,e:=agent_join(&server.agent,node);!testing.expect_value(t,e,Error.None) {return}
+    Whole :: struct {s:^store.Store,revision:Revision}
+    w:=Whole{&server.s,revision}
+    whole :: proc(data:rawptr) -> bool {
+        w:=(^Whole)(data)
+        missing:=make([dynamic]store.Hash,context.temp_allocator)
+        if !object_present(w.s,w.revision) {return false}
+        closure_walk(w.s,{w.revision},nil,&missing)
+        return len(missing)==0
+    }
+    if !testing.expect(t,until(20,&w,whole),"the server keeps the repository") {return}
+    // The server goes off; the laptop joins through the mac, which then goes off too.
+    server_port:=agent_port(&server.agent)
+    agent_stop(&server.agent)
+    server.running=false
+    invite,_:=team_invite(&mac.team,org,.Writer,"",{mac_address},context.temp_allocator)
+    if _,e:=agent_join(&laptop.agent,invite);!testing.expect_value(t,e,Error.None) {return}
+    agent_stop(&mac.agent)
+    mac.running=false
+    held,_,_:=team_org(&server.team,org)
+    testing.expect(t,org_member(&held,laptop.team.identity.key)<0,"the server does not know the laptop yet")
+    if !testing.expect_value(t,agent_start(&server.agent,&server.team,{port=server_port,host="127.0.0.1",node=true}),Error.None) {return}
+    server.running=true
+    team_link(&laptop.team,{local=random_id(Repo_Id),org=org,repo=repo})
+    agent_changed(&laptop.agent)
+    at:=Whole{&laptop.s,revision}
+    testing.expect(t,until(30,&at,whole),"the laptop pulls from the server alone")
+}
+
+@(private="file")
+vcs_org :: proc(t:^testing.T,m:^Machine) -> (Org_Id,Error) {
+    id,e:=team_org_create(&m.team,"studio")
+    testing.expect_value(t,e,Error.None)
+    return id,e
+}

@@ -555,10 +555,10 @@ peer_read_run :: proc(p:^Peer) {
     }
     c:=p.conn
     joining:=c.hs.proof!={}
-    if !joining && !agent_knows(a,c.peer) && p.dialed=="" {
-        conn_send(c,.Bye,transmute([]u8)string("this device is no member of an org this machine keeps: join with an invite from an admin"))
-        return
-    }
+    // A peer this machine's records do not list yet may hold a newer record
+    // that does: it stays when its Hello names an org held here, and reads
+    // nothing until a record lists it (agent_role, at every request).
+    vouched:=joining || p.dialed!="" || agent_knows(a,c.peer)
     if !peer_unique(a,p) {return}
     heads:=make([dynamic]Tell_Entry,context.temp_allocator)
     agent_heads(a,c.peer,&heads)
@@ -596,6 +596,12 @@ peer_read_run :: proc(p:^Peer) {
                 host:=net.address_to_string(p.remote.address,context.temp_allocator)
                 team_peer_seen(&a.team,c.peer,fmt.tprintf("%s:%d",host,port))
             }
+            at:=r.at
+            if !vouched && !hello_names_an_org(a,&r) {
+                conn_send(c,.Bye,transmute([]u8)string("this device is no member of an org this machine keeps: join with an invite from an admin"))
+                return
+            }
+            r.at=at
             if !peer_told(p,&r) {return}
         case .Tell:
             if !peer_told(p,&r) {return}
@@ -644,6 +650,19 @@ peer_read_run :: proc(p:^Peer) {
             conn_send(c,.Bye,transmute([]u8)string(ok?"web sign-in set":"this server keeps no web view for that device"))
         }
     }
+}
+
+// Whether the Tell's body at r names an org this machine holds.
+@(private)
+hello_names_an_org :: proc(a:^Agent,r:^Reader) -> bool {
+    count:=int(read_value(r,u16le))
+    if !count_fits(r,u64(count),size_of(Tell_Entry)) {return false}
+    held:=team_org_ids(&a.team)
+    for _ in 0..<count {
+        e:=read_value(r,Tell_Entry)
+        for id in held {if e.kind==.Org && id==e.org {return true}}
+    }
+    return false
 }
 
 // Whether p is the one connection kept to its key: of two, the one whose

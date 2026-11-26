@@ -5,20 +5,19 @@ import "core:os"
 import "core:strings"
 import "mirai:platform"
 import "mirai:project"
+import ka "mirai:cook/kai"
 import "mirai:std/base"
 import "mirai:ui"
 
-// The Repositories of the projects screen: the repositories of the orgs this
-// machine is in, each pulled into a folder with one click (kai.clone) and
-// opened, with how far its pull is in chunks and bytes as the agent counts
-// them. Team and pairing shows the Kai tab's Team view, so a machine with no
-// project names itself, joins its org with an invite or makes one from here.
-// The team opens the first time the view shows.
+// The org side of the projects screen. All projects lists, after the projects
+// of this machine, the repositories of its orgs it has not pulled, each pulled
+// into a folder of the location with one click (kai.clone) and opened, with
+// how far its pull is in chunks and bytes as the agent counts them. Team and
+// pairing shows the Kai tab's Team view in place of the list, so a machine
+// with no project names itself, joins its org with an invite or makes one.
 
-REPOSITORIES_BUTTONS :: 260 // of the row of the location: its icon, Change and Team and pairing
-
-// The Repositories view, in place of the list of projects.
-projects_repositories_build :: proc(s:^Session,width:f32) {
+// Team and pairing, in place of the list: where pulls go, then the Team view.
+projects_team_build :: proc(s:^Session,width:f32) {
     p:=s.projects
     ctx:=s.gui.ctx
     if s.kai==nil {return}
@@ -30,55 +29,57 @@ projects_repositories_build :: proc(s:^Session,width:f32) {
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),gap=8,align_y=.Center}) {
         location:=strings.trim_space(string(p.location[:p.location_length]))
         ui.icon(ctx,ui.icon_user(u8(User_Icon.Folder)),ui.tone(ctx,"text_faint"),13)
-        // The folder fades past the room the buttons leave.
         text:=fmt.tprintf("Pulls go to %s",projects_path_shown(p,location))
         size:=ui.metric(ctx,"font_small")
-        ui.label(ctx,text,size,ui.tone(ctx,"text_muted"),min(ui.text_width(&ctx.font,text,size)+2,max(width-REPOSITORIES_BUTTONS,40)),fade=true)
-        if ui.button(ctx,ui.id(ctx,"repositories_location"),{label="Change",variant="ghost",height=24,size=ui.metric(ctx,"font_small"),disabled=busy}).clicked {
+        ui.label(ctx,text,size,ui.tone(ctx,"text_muted"),min(ui.text_width(&ctx.font,text,size)+2,max(width-120,40)),fade=true)
+        if ui.button(ctx,ui.id(ctx,"projects_location"),{label="Change",variant="ghost",height=24,size=ui.metric(ctx,"font_small"),disabled=busy}).clicked {
             if !platform.dialog_show(s.app.platform,{kind=.Open_Folder,tag=DIALOG_PROJECT_LOCATION}) {notify(s,"A file dialog is already open")}
         }
-        ui.spacer(ctx)
-        if ui.button(ctx,ui.id(ctx,"repositories_team"),{label="Team and pairing",icon=ui.icon_user(u8(User_Icon.Users)),variant="toggle",active=p.team,height=28}).clicked {p.team=!p.team}
     }
-    if ui.scroll_area(ctx,ui.id(ctx,"repositories_list"),&p.scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=2}) {
-        switch {
-        case p.team || !t.opened || t.team.name=="":
-            if t.opened && t.team.name=="" {kai_line(ctx,"Name yourself and this machine, then join your org with an invite from one of its machines, or make an org, to see its repositories here.","text")}
-            kai_team_build(s)
-        case:
-            projects_repositories_rows(s,busy)
-        }
-    }
+    if ui.scroll_area(ctx,ui.id(ctx,"projects_team_view"),&p.scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=2}) {kai_team_build(s)}
 }
 
-// The rows of the repositories, or what to do while there are none.
-@(private="file")
-projects_repositories_rows :: proc(s:^Session,busy:bool) {
-    p:=s.projects
+// The repositories of the orgs this machine has not pulled, under the
+// projects of All projects; one pulling stays while it pulls.
+projects_org_rows :: proc(s:^Session,busy:bool,needle:string) {
+    if s.kai==nil || s.kai.team==nil {return}
     ctx:=s.gui.ctx
-    v:=&s.kai.team.view
-    if len(v.repositories)==0 {
-        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=6,padding={0,24,0,0},align_x=.Center}) {
-            ui.label(ctx,"No repositories yet",ui.metric(ctx,"font"),ui.tone(ctx,"text_muted"),font=ui.FONT_SEMIBOLD)
-            text:="Publish a project to main from the Kai tab of its editor, here or on another machine of your org."
-            if len(v.orgs)==0 {text="Make an org, or join one with an invite from a member, in Team and pairing."}
-            if ui.box(ctx,{width=ui.fixed(380),height=ui.FIT}) {
-                style:=ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
-                style.align_x=.Center
-                ui.text(ctx,text,style)
+    t:=s.kai.team
+    head:=false
+    for &r,i in t.view.repositories {
+        o:=&t.view.orgs[r.org]
+        x:=&o.repos[r.repo]
+        if !projects_unpulled(t,o,x) {continue}
+        if needle!="" && !strings.contains(strings.to_lower(x.name,context.temp_allocator),needle) && !strings.contains(strings.to_lower(o.name,context.temp_allocator),needle) {continue}
+        if !head {
+            head=true
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),align_y=.End,padding={4,0,0,4}}) {
+                ui.label(ctx,"FROM YOUR ORGS, NOT ON THIS MACHINE",ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_caption"),font=ui.FONT_SEMIBOLD)
             }
         }
-        return
-    }
-    needle:=strings.to_lower(strings.trim_space(string(p.search[:p.search_length])),context.temp_allocator)
-    for &r,i in v.repositories {
-        o:=&v.orgs[r.org]
-        x:=&o.repos[r.repo]
-        if needle!="" && !strings.contains(strings.to_lower(x.name,context.temp_allocator),needle) && !strings.contains(strings.to_lower(o.name,context.temp_allocator),needle) {continue}
         ui.id_push(ctx,ui.id(ctx,"repository",i))
         projects_repository_row(s,&r,busy)
         ui.id_pop(ctx)
     }
+}
+
+// Whether a repository of an org is not on this machine: no workspace of it, or one being pulled.
+@(private="file")
+projects_unpulled :: proc(t:^Kai_Team,o:^ka.Org_View,x:^ka.Repo_View) -> bool {
+    pulling:=t.clone.stage!=.None && t.clone.org==o.id && t.clone.repo==x.id
+    return !x.linked || pulling
+}
+
+// How many repositories of the orgs this machine has not pulled.
+projects_unpulled_count :: proc(s:^Session) -> int {
+    if s.kai==nil || s.kai.team==nil {return 0}
+    t:=s.kai.team
+    n:=0
+    for r in t.view.repositories {
+        o:=&t.view.orgs[r.org]
+        if projects_unpulled(t,o,&o.repos[r.repo]) {n+=1}
+    }
+    return n
 }
 
 // A repository: its tile, name and org, what main is, and Pull, or how its
@@ -130,10 +131,4 @@ projects_repository_row :: proc(s:^Session,r:^Kai_Repository,busy:bool) {
             }
         }
     }
-}
-
-// How many repositories the tab counts: those the team read last, once it opened.
-projects_repositories_count :: proc(s:^Session) -> int {
-    if s.kai==nil || s.kai.team==nil {return 0}
-    return len(s.kai.team.view.repositories)
 }

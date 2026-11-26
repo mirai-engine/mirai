@@ -466,8 +466,16 @@ kai_pull :: proc(t:^vcs.Team,org_text,repo_text,folder:string) -> int {
         fmt.eprintfln("mirai kai pull: %q names no repository of %s: mirai kai org show lists them",repo_text,o.name)
         return 1
     }
+    // The loop below frees the temp allocator: what it prints after is kept apart.
+    name_buffer:[vcs.NAME_MAX]u8
+    org_name:=string(name_buffer[:copy(name_buffer[:],o.name)])
     root:=project.path_absolute(folder,context.temp_allocator)
-    p:=new(ka.Project,context.temp_allocator)
+    root_buffer:[1024]u8
+    root=string(root_buffer[:copy(root_buffer[:],root)])
+    // On the heap: the loop below frees the temp allocator, and a workspace does not move.
+    p,pe:=new(ka.Project)
+    if pe!=nil {return kai_failed("pull",.Out_Of_Memory)}
+    defer free(p)
     if ka.project_clone(p,t,root,t.store,org,repo)!=.None {return kai_why("pull",t)}
     defer ka.project_close(p)
     agent:vcs.Agent
@@ -477,14 +485,14 @@ kai_pull :: proc(t:^vcs.Team,org_text,repo_text,folder:string) -> int {
     for {
         bookmark,e:=ka.clone_checkout(p,t)
         if e==.None {
-            fmt.printfln("%s holds %s of %s.",root,bookmark!=""?bookmark:"its files",o.name)
+            fmt.printfln("\n%s holds %s of %s.",root,bookmark!=""?bookmark:"its files",org_name)
             return 0
         }
         if e!=.Missing || time.tick_since(started)>10*time.Minute {return kai_why("pull",t)}
         pulls:=make([dynamic]vcs.Pull,context.temp_allocator)
         vcs.agent_pulls(&agent,&pulls)
         for x in pulls {
-            if x.repo==repo {fmt.printf("\r%d chunks, %.1f MB...",x.chunks,f64(x.bytes)/f64(1<<20))}
+            if x.repo==repo {fmt.printf("\r%d chunks, %.1f MB%s",x.chunks,f64(x.bytes)/f64(1<<20),x.whole?", writing the files...":"...")}
         }
         time.sleep(200*time.Millisecond)
         free_all(context.temp_allocator)

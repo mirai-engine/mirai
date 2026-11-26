@@ -86,8 +86,7 @@ Projects :: struct {
     shown:bool,     // the screen covers the editor: always in a launcher
     launcher:bool,  // this editor only chooses a project
     show_all:bool,  // false: recent projects; true: all projects discovered on this machine
-    repositories:bool, // the Repositories of the orgs this machine serves, in place of the list (kai_launcher.odin)
-    team:bool,      // Repositories shows the team and pairing
+    team:bool,      // Team and pairing in place of the list (kai_launcher.odin)
     recent:project.Recent_Projects,
     rows:[PROJECTS_ALL_CAPACITY]Projects_Row, // shown list, read when the screen opens or switches view
     row_count:int,
@@ -867,22 +866,24 @@ projects_content :: proc(s:^Session,popup:bool) {
     count:=p.row_count
     typing:=ctx.edit.id!=0
     open:=false
+    if p.show_all {kai_team_open(s)}
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(32),gap=8,align_y=.Center}) {
-        list:=!p.repositories
+        list:=!p.team
         if ui.button(ctx,ui.id(ctx,"projects_tab_recent"),{label="Recent",variant="toggle",active=list && !p.show_all,height=30,disabled=busy}).clicked && (p.show_all || !list) {
-            p.show_all,p.repositories=false,false
+            p.show_all,p.team=false,false
             p.scroll=0
             projects_rows_read(s)
         }
-        // A tab's count goes inside it, after its title.
-        if ui.button(ctx,ui.id(ctx,"projects_tab_all"),{label="All projects",detail=projects_count_text(p.all_count),variant="toggle",active=list && p.show_all,height=30,disabled=busy}).clicked && (!p.show_all || !list) {
-            p.show_all,p.repositories=true,false
+        // A tab's count goes inside it, after its title: the projects here and those of the orgs not pulled.
+        if ui.button(ctx,ui.id(ctx,"projects_tab_all"),{label="All projects",detail=projects_count_text(p.all_count+projects_unpulled_count(s)),variant="toggle",active=list && p.show_all,height=30,disabled=busy}).clicked && (!p.show_all || !list) {
+            p.show_all,p.team=true,false
             p.scroll=0
             projects_rows_read(s)
         }
-        if ui.button(ctx,ui.id(ctx,"projects_tab_repositories"),{label="Repositories",detail=projects_count_text(projects_repositories_count(s)),variant="toggle",active=p.repositories,height=30,disabled=busy}).clicked && list {
-            p.repositories=true
+        if ui.button(ctx,ui.id(ctx,"projects_team"),{label="Team and pairing",icon=ui.icon_user(u8(User_Icon.Users)),variant="toggle",active=p.team,height=30}).clicked {
+            p.team=!p.team
             p.scroll=0
+            if p.team {kai_team_open(s)}
         }
         ui.spacer(ctx)
         search:=ui.id(ctx,"projects_search")
@@ -893,8 +894,8 @@ projects_content :: proc(s:^Session,popup:bool) {
         if list && ui.button(ctx,ui.id(ctx,"projects_open"),{label="Open",variant="accent",width=72,height=30,center=true,disabled=busy || projects_chosen(p)<0}).clicked {open=true}
         if popup && ui.icon_button(ctx,ui.id(ctx,"projects_close"),.Cross,28).clicked {projects_hide(s)}
     }
-    if p.repositories {
-        projects_repositories_build(s,projects_content_width(s,popup))
+    if p.team {
+        projects_team_build(s,projects_content_width(s,popup))
         if p.error_length>0 {ui.label(ctx,string(p.error[:p.error_length]),ui.metric(ctx,"font_small"),ui.tone(ctx,"danger_soft"),0,fade=true)}
         return
     }
@@ -918,7 +919,8 @@ projects_content :: proc(s:^Session,popup:bool) {
             projects_recent_save(s)
             projects_rows_read(s)
         }
-        if count==0 {
+        if p.show_all {projects_org_rows(s,busy,needle)}
+        if count==0 && (!p.show_all || projects_unpulled_count(s)==0) {
             empty:="No projects found on this machine" if p.show_all else "No project was opened on this machine yet"
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(PROJECTS_ROW),align_x=.Center,align_y=.Center}) {
                 ui.label(ctx,empty,ui.metric(ctx,"font"),ui.tone(ctx,"text_muted"))
