@@ -177,6 +177,19 @@ mirai_import_writes_assets_that_mirai_asset_verifies :: proc(t:^testing.T) {
     refreshed:=import_run(kept,"--refresh",root_folder)
     testing.expectf(t,refreshed.code==0 && strings.contains(refreshed.out,"4 packages, 0 ingested"),"%d: %s%s",refreshed.code,refreshed.out,refreshed.err)
 
+    // Several files in one command: each has its report, the options are of all, and one that
+    // fails is said and does not stop the others.
+    second:=fmt.tprintf("%s/second.png",folder)
+    _=os.write_entire_file(second,data)
+    many:=import_run(kept,bricks,fmt.tprintf("%s/missing.png",folder),second,"--rebuild")
+    testing.expectf(t,many.code==1 && strings.count(many.out,"\npackage ")+(1 if strings.has_prefix(many.out,"package ") else 0)==2 && strings.contains(many.out,"2 of 3 files imported"),"%d: %s%s",many.code,many.out,many.err)
+    testing.expect(t,strings.contains(many.err,"missing.png") && !strings.contains(many.err,"second.png") && !strings.contains(many.err,"bricks_color.png"),many.err)
+    list,_,_=asset.packages_load(root_folder,context.temp_allocator)
+    testing.expect_value(t,len(list.packages),5)
+    // An option that is not of every file refuses the one it is not of, by its name.
+    mixed:=import_run(kept,bricks,copy,"--srgb")
+    testing.expect(t,mixed.code==2 && strings.contains(mixed.err,"vase.obj") && strings.contains(mixed.out,"1 of 2 files imported"),mixed.err)
+
     // Misuse and failures.
     testing.expect_value(t,import_run(kept,copy,"--lods","some").code,2)
     testing.expect_value(t,import_run(kept,copy,"--front","up").code,2)
