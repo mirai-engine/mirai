@@ -8,6 +8,7 @@
 //! mirai constant RIBBON_PIECES_SHIFT uint ../runtime/gpu.odin
 //! mirai constant DRAW_LOOK_BYTES uint ../runtime/gpu.odin
 //! mirai constant POSE_AT uint ../runtime/gpu.odin
+//! mirai constant TURN_AT uint ../runtime/gpu.odin
 //! mirai constant FLAG_MULTIPLY uint ../runtime/gpu.odin
 //! mirai constant RIBBON_PIECES uint ../runtime/gpu.odin
 //! mirai constant TRAILS_PER_SECOND uint ../runtime/gpu.odin
@@ -470,6 +471,8 @@ uint particle_drawn(uint slot, uint i) { return particle_lists[particle_emitters
 // after it the pose it was born with: the turn of its emitter (a quaternion,
 // snorm16 a component, of the space its particles are in) and, of a ribbon,
 // the metres from its head to it and its whole length, which the sort finds.
+// Last, at TURN_AT, what its program gives of how it is placed: its turn in
+// the world (a quaternion as the pose; zero: none) and its scale, in halves.
 uint particle_draw_look_at(uint slot, uint index) {
     return particle_emitters[slot].program.w + index * DRAW_LOOK_BYTES;
 }
@@ -484,6 +487,19 @@ float4 particle_pose_unpack(uint2 w) {
     float4 q = float4(int4(int(w.x << 16u) >> 16, int(w.x) >> 16, int(w.y << 16u) >> 16, int(w.y) >> 16)) / 32767.0;
     float squared = dot(q, q);
     return squared > 1e-6 ? q * rsqrt(squared) : float4(0.0, 0.0, 0.0, 1.0);
+}
+
+// Two floats as the halves of a word, and back, by the conversions of the
+// device: f32tof16 and f16tof32 of Slang go through 16-bit types.
+uint particle_halves_pack(float2 value) {
+    return spirv_asm {
+        result:$$uint = OpExtInst glsl450 PackHalf2x16 $value
+    };
+}
+float2 particle_halves_unpack(uint halves) {
+    return spirv_asm {
+        result:$$float2 = OpExtInst glsl450 UnpackHalf2x16 $halves
+    };
 }
 
 // The turn of a basis of three axes at right angles, as a quaternion.
@@ -618,6 +634,8 @@ struct Particle_Look {
     float4 data[4]; // Mirai_Vfx_Visual.data and given
     uint given;
     float random;
+    float3 scale;       // Mirai_Vfx_Visual.scale: over that of its effect
+    float4 orientation; // Mirai_Vfx_Visual.orientation: zero, the facing of its effect
 };
 Particle_Look particle_look(uint slot, Particle p) {
     Particle_Look look;
@@ -633,6 +651,8 @@ Particle_Look particle_look(uint slot, Particle p) {
     look.data[0] = float4(0.0); look.data[1] = float4(0.0); look.data[2] = float4(0.0); look.data[3] = float4(0.0);
     look.given = 0u;
     look.random = float(p.seed >> 8u) * (1.0 / 16777216.0);
+    look.scale = float3(1.0);
+    look.orientation = float4(0.0);
     return look;
 }
 
@@ -731,25 +751,26 @@ float3x3 particle_mesh_rotation(uint slot, Particle p, float4 pose) {
 
 // A vector of the space of its mesh in the world, by the rows of its emitter
 // in a frame: one that tumbles, or that its emitter turns when its particles
-// move with it, turns in the space of its emitter; the others in the world,
-// grown by the scale of its emitter along each axis.
-float3 particle_mesh_vector_by(uint slot, float4 rows[3], float3x3 rotation, float3 v) {
+// move with it, turns in the space of its emitter; the others, and one whose
+// program gives its turn (turned), in the world, grown by the scale of its
+// emitter along each axis.
+float3 particle_mesh_vector_by(uint slot, float4 rows[3], float3x3 rotation, float3 v, bool turned) {
     uint facing = particle_emitters[slot].mesh.y;
     bool local = (particle_emitters[slot].range.w & PARTICLE_FLAG_LOCAL) != 0u;
-    if (facing == PARTICLE_FACING_TUMBLE || facing == PARTICLE_FACING_EMITTER && local) {
+    if (!turned && (facing == PARTICLE_FACING_TUMBLE || facing == PARTICLE_FACING_EMITTER && local)) {
         float3 turned = mul(rotation, v);
         return local ? transform_vector(rows, turned) : turned;
     }
     float3 scale = float3(length(float3(rows[0].x, rows[1].x, rows[2].x)), length(float3(rows[0].y, rows[1].y, rows[2].y)), length(float3(rows[0].z, rows[1].z, rows[2].z)));
     return mul(rotation, v * scale);
 }
-float3 particle_mesh_vector(uint slot, float3x3 rotation, float3 v) {
-    return particle_mesh_vector_by(slot, particle_emitters[slot].world, rotation, v);
+float3 particle_mesh_vector(uint slot, float3x3 rotation, float3 v, bool turned) {
+    return particle_mesh_vector_by(slot, particle_emitters[slot].world, rotation, v, turned);
 }
 
-// The normal of a mesh particle, of a normal of its mesh: across the scale of its effect.
-float3 particle_mesh_normal(uint slot, float3x3 rotation, float3 n) {
-    return particle_unit(particle_mesh_vector(slot, rotation, n / particle_scale(slot)), n);
+// The normal of a mesh particle, of a normal of its mesh: across its scale.
+float3 particle_mesh_normal(uint slot, float3x3 rotation, float3 n, float3 scale, bool turned) {
+    return particle_unit(particle_mesh_vector(slot, rotation, n / max(scale, float3(1e-6)), turned), n);
 }
 
 #endif

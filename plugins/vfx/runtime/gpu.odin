@@ -26,8 +26,9 @@ STEP :: f32(1.0/30) // the longest step a simulation takes
 TRAILS_PER_SECOND :: 30 // Trail events of a particle in each second of its life
 BEAM_PIECES :: 16
 RIBBON_PIECES :: 8 // most pieces a ribbon cuts the curve between two of its particles into
-DRAW_LOOK_BYTES :: 112 // what a particle shows in the frame (particle_draw_look), then the pose it was born with and where it is along its ribbon
+DRAW_LOOK_BYTES :: 128 // what a particle shows in the frame (particle_draw_look): its look, the pose it was born with and where it is along its ribbon, then the turn and the scale its program gives it
 POSE_AT :: 96 // bytes of the look of a particle to its pose
+TURN_AT :: 112 // and to the turn and the scale of its program
 STEPS :: 8
 FRAME_MAX :: f32(0.25) // seconds a frame simulates at most
 

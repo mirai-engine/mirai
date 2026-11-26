@@ -6,8 +6,9 @@
 // leaves each end along the mean of the directions to its neighbours, wide
 // across its path toward the camera or along the +Y its emitter had where each
 // particle was born, its texture along the metres from its head. The scale of
-// the effect stretches the x and y of a quad and the width of a ribbon or a
-// beam. The program of the emitter has the last word on what it shows.
+// the effect, by that the program of the emitter gives the particle, stretches
+// the x and y of a quad and the width of a ribbon or a beam. The program of
+// the emitter has the last word on what it shows.
 #define PARTICLE_STATES_READ
 #include "particle_programs.slang"
 
@@ -103,7 +104,8 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         look = along_t < 0.5 ? la : lb;
         look.color = lerp(la.color, lb.color, along_t);
         look.size = lerp(la.size, lb.size, along_t);
-        half_size = look.size * 0.5 * particle_scale(params.emitter).x;
+        look.scale = lerp(la.scale, lb.scale, along_t);
+        half_size = look.size * 0.5 * particle_look_scale(params.emitter, look).x;
         float3 side = cross(along, to_eye(center));
         if (particle_emitters[params.emitter].ribbon_axis == PARTICLE_RIBBON_AXIS_EMITTER_UP) {
             // The +Y of its emitter where each end was born, across the path.
@@ -138,7 +140,7 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         float3 center = particle_world(slot, p.position) + t * end + 4.0 * t * (1.0 - t) * arc;
         float3 side = cross(end + 4.0 * (1.0 - 2.0 * t) * arc, to_eye(center));
         side = dot(side, side) > 1e-12 ? normalize(side) : frame.view[0].xyz;
-        half_size = look.size * 0.5 * particle_scale(slot).x;
+        half_size = look.size * 0.5 * particle_look_scale(slot, look).x;
         world = center + side * c.x * half_size;
         uv = float2(corner.x, t);
         light = (particle_emitters[slot].range.w & PARTICLE_FLAG_LIT) != 0u ? particle_light(p) : emission_render_units(float3(1.0), (particle_emitters[slot].range.w & PARTICLE_FLAG_RELATIVE) != 0u);
@@ -152,7 +154,7 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         float3 right = frame.view[0].xyz;
         float3 up = frame.view[1].xyz;
         float s = sin(p.rotation), co = cos(p.rotation);
-        float2 extent = half_size * particle_scale(params.emitter).xy;
+        float2 extent = half_size * particle_look_scale(params.emitter, look).xy;
         if (particle_emitters[params.emitter].kinds.y == PARTICLE_RENDER_VELOCITY) {
             float3 velocity = particle_world_vector(params.emitter, p.velocity);
             float3 axis = velocity - to_camera * dot(velocity, to_camera);

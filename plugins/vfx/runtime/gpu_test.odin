@@ -2477,3 +2477,56 @@ program_births_wait_for_their_emitter_to_emit :: proc(t: ^testing.T) {
 	testing.expect(t, particles_alive(f) > 0, "once its emitter emits, its program starts particles")
 	expect_clean(t, f.device)
 }
+
+// A Mesh particle takes the turn in the world and the scale along each axis
+// its program gives it, in place of the facing of its effect, in the G-buffer
+// and blended over it (testdata/lay_across.slang).
+@(test)
+mesh_particles_take_the_turn_and_the_scale_of_their_program :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 128, 128, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	gpu.scene_set_environment(r, {direction = {0.2, 0.4, 1}, color = {1, 1, 1}, illuminance = 4 * math.PI, enabled = true, indirect = 1, scattering = 1}, {sky = {0.02, 0.02, 0.02}})
+	glow := gpu.DEFAULT_MATERIAL
+	glow.base_color, glow.alpha_mode = {1, 1, 1}, .Additive
+	gpu.materials_set(r, {glow})
+	stick, added := stick_mesh(r)
+	if !testing.expect(t, added) {return}
+	program := erender.program_find(&f.assets, "Lay_Across", .Vfx)
+	if !testing.expect(t, program != nil, "testdata has the Vfx program Lay_Across") {return}
+	camera := gpu.Camera{position = {0, 0, 3}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	for _ in 0 ..< 3 {testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)}
+	// The opaque one above, the additive one below; neither turns by its effect.
+	heights := [2]f32{0.7, -0.7}
+	sticks: [2]Emitter_Desc
+	for &e, i in sticks {
+		e = test_emitter(u64(i + 1), {0, heights[i], 0})
+		e.info.render, e.info.lifetime, e.info.size, e.info.lit = .Mesh, {30, 30}, {1, 1}, i == 0
+		e.program = {id = program.id, attributes = u32(program.attributes)}
+		base.text_set(e.info.program[:], program.name)
+		if i == 1 {e.material, e.blended, e.info.emission_mode, e.info.intensity = 1, true, .Relative, 1}
+		if !testing.expect(t, mesh_choices(&e, f.app.renderer, {stick}, {1})) {return}
+	}
+	frames_of_one(t, f, sticks[:], 12, camera)
+	pixels, w, _, ok := gpu.renderer_capture(r)
+	testing.expect(t, ok, r.error)
+	if !ok {return}
+	defer delete(pixels)
+	sky := pixel(pixels, w, project(r, camera, {0, 0, 0}))
+	for y, i in heights {
+		name := "blended" if i == 1 else "opaque"
+		for x in ([]f32{-0.35, 0.35}) {
+			along := pixel(pixels, w, project(r, camera, {x, y, 0}))
+			testing.expectf(t, along[0] > sky[0] + 30, "the %s stick lies along x, as its program turns it: at x %v %v, the sky %v", name, x, along, sky)
+		}
+		thick := pixel(pixels, w, project(r, camera, {0.2, y + 0.12, 0}))
+		testing.expectf(t, thick[0] > sky[0] + 30, "the %s stick is three times as thick along y: %v, the sky %v", name, thick, sky)
+		beyond := pixel(pixels, w, project(r, camera, {0.2, y + 0.3, 0}))
+		testing.expectf(t, abs(beyond[0] - sky[0]) < 10, "and no more: %v, the sky %v", beyond, sky)
+	}
+	expect_clean(t, f.device)
+}

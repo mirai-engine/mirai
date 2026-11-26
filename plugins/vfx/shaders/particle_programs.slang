@@ -493,7 +493,19 @@ Particle_Look particle_draw_look(uint slot, uint index) {
     float4 w = asfloat(particle_data.Load4(at + 16u));
     look.size = w.x; look.frame = w.y; look.random = w.z; look.given = asuint(w.w);
     for (uint i = 0u; i < 4u; i++) look.data[i] = (look.given & (1u << i)) != 0u ? asfloat(particle_data.Load4(at + 32u + i * 16u)) : float4(0.0);
+    uint4 placed = particle_data.Load4(at + TURN_AT);
+    look.orientation = any(placed.xy != uint2(0u)) ? particle_pose_unpack(placed.xy) : float4(0.0);
+    look.scale = float3(particle_halves_unpack(placed.z), particle_halves_unpack(placed.w).x);
     return look;
+}
+// Whether the program of a particle gives the turn of its mesh, and the scale
+// of the particle along each axis: that of its effect by that of its program.
+bool particle_look_turned(Particle_Look look) { return dot(look.orientation, look.orientation) > 0.0; }
+float3 particle_look_scale(uint slot, Particle_Look look) { return particle_scale(slot) * look.scale; }
+// The rotation of a Mesh particle: the turn its program gives, else as its effect faces it.
+float3x3 particle_look_rotation(uint slot, uint index, Particle p, Particle_Look look) {
+    if (particle_look_turned(look)) return particle_quat_matrix(look.orientation);
+    return particle_mesh_rotation(slot, p, particle_pose(slot, index));
 }
 #ifdef PARTICLES_WRITABLE
 void particle_draw_look_store(uint slot, uint index, Particle_Look look) {
@@ -501,6 +513,10 @@ void particle_draw_look_store(uint slot, uint index, Particle_Look look) {
     particle_data.Store4(at, asuint(look.color));
     particle_data.Store4(at + 16u, uint4(asuint(look.size), asuint(look.frame), asuint(look.random), look.given));
     for (uint i = 0u; i < 4u; i++) if ((look.given & (1u << i)) != 0u) particle_data.Store4(at + 32u + i * 16u, asuint(look.data[i]));
+    // A turn that is no rotation (zero, not finite) is none.
+    float turn = dot(look.orientation, look.orientation);
+    uint2 turned = turn > 1e-12 && turn < 1e12 ? particle_pose_pack(look.orientation * rsqrt(turn)) : uint2(0u);
+    particle_data.Store4(at + TURN_AT, uint4(turned, particle_halves_pack(look.scale.xy), particle_halves_pack(float2(look.scale.z, 0.0))));
 }
 #endif
 
@@ -513,10 +529,12 @@ Particle_Look particle_program_look(uint slot, uint index, Particle p) {
     particle_parameters(slot, packed);
     Mirai_Vfx_Visual visual;
     visual.color = look.color; visual.size = look.size; visual.frame = look.frame; visual.data = look.data; visual.given = look.given; visual.random = look.random;
+    visual.scale = look.scale; visual.orientation = look.orientation;
     Mirai_Vfx_Context ctx = particle_program_context(slot, particle_frame_step().w, 0.0);
     ctx.particle = index;
     if (mirai_vfx_render(program, packed, particle_attributes(slot, index), ctx, particle_program_value(slot, p), visual)) {
         look.color = visual.color; look.size = max(visual.size, 0.0); look.frame = visual.frame; look.data = visual.data; look.given = visual.given; look.random = saturate(visual.random);
+        look.scale = max(visual.scale, float3(0.0)); look.orientation = visual.orientation;
     }
     return look;
 }

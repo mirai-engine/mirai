@@ -48,9 +48,11 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
     uint index = particle_drawn(params.emitter, instance_id);
     Particle p = particles[index];
     Particle_Look look = particle_draw_look(params.emitter, index);
-    float3x3 rotation = particle_mesh_rotation(params.emitter, p, particle_pose(params.emitter, index));
-    float3 world = particle_world(params.emitter, p.position) + particle_mesh_vector(params.emitter, rotation, v.position * look.size * particle_scale(params.emitter));
-    output.out_normal = particle_mesh_normal(params.emitter, rotation, v.normal);
+    bool turned = particle_look_turned(look);
+    float3x3 rotation = particle_look_rotation(params.emitter, index, p, look);
+    float3 scale = particle_look_scale(params.emitter, look);
+    float3 world = particle_world(params.emitter, p.position) + particle_mesh_vector(params.emitter, rotation, v.position * look.size * scale, turned);
+    output.out_normal = particle_mesh_normal(params.emitter, rotation, v.normal, scale, turned);
     output.position = view_clip(world);
     // The color of the mesh tints it as it tints the mesh in the G-buffer.
     output.out_color = float4(material_vertex_tint(row, v.color.rgb), 1.0) * look.color;
