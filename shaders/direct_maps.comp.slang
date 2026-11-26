@@ -289,8 +289,8 @@ groupshared uint group_asks;
 void main(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID, uint index : SV_GroupIndex) {
     if (index == 0u) group_asks = 0u;
     GroupMemoryBarrierWithGroupSync();
-    uint asks = maps_point(int2(group.xy * uint(DIRECT_TILE) + local.xy));
-    if (asks != 0u) InterlockedOr(group_asks, asks);
+    uint asks = WaveActiveBitOr(maps_point(int2(group.xy * uint(DIRECT_TILE) + local.xy)));
+    if (WaveIsFirstLane() && asks != 0u) InterlockedOr(group_asks, asks);
     GroupMemoryBarrierWithGroupSync();
     if (group_asks != 0u || params.every != 0u) direct_tiles_list(int2(group.xy), params.every != 0u ? POINT_SAMPLED : group_asks, index);
 }

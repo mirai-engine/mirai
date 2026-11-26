@@ -1567,7 +1567,13 @@ pass_direct :: proc(p: ^Pass) -> bool {
 		rhi.cmd_timestamp(cmd, "direct tiles")
 		header := [DIRECT_TILES_HEADER]u32{DIRECT_TILES_SAMPLES + 1 = 1, DIRECT_TILES_SAMPLES + 2 = 1, DIRECT_TILES_RAYS + 1 = 1, DIRECT_TILES_RAYS + 2 = 1, DIRECT_TILES_SPREAD + 1 = DIRECT_SPREAD_RUN, DIRECT_TILES_SPREAD + 2 = 1}
 		if !upload_transient(r, cmd, header[:], tiles) {return false}
-		rhi.cmd_fill_buffer(cmd, tiles, DIRECT_TILES_HEADER * size_of(u32), 2 * u64(tiles_across.x * tiles_across.y) * size_of(u32), 0)
+		// Whether each tile of rays and each block is listed: the first words
+		// of their regions.
+		region := u64(tiles_across.x * tiles_across.y) * size_of(u32)
+		rays := u64(groups(tiles_across.x, 2) * groups(tiles_across.y, 2)) * size_of(u32)
+		run := u32(DIRECT_SPREAD_RUN / DIRECT_TILE)
+		rhi.cmd_fill_buffer(cmd, tiles, DIRECT_TILES_HEADER * size_of(u32), rays, 0)
+		rhi.cmd_fill_buffer(cmd, tiles, DIRECT_TILES_HEADER * size_of(u32) + region, u64(groups(tiles_across.x, run) * groups(tiles_across.y, run)) * size_of(u32), 0)
 		rhi.cmd_timestamp(cmd, "direct maps")
 		rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Maps, unlayered, unlayered)^)
 		set_params(cmd, &params)
