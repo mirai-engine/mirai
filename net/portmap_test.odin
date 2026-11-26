@@ -34,6 +34,19 @@ port_mapping_pcp_and_natpmp_codecs_reject_mismatched_or_truncated_replies :: pro
     for size in 0..<16 {_,_,ok=portmap_natpmp_response(nat[:size],7950);testing.expect(t,!ok)}
     _,_,ok=portmap_natpmp_response(nat[:],7951);testing.expect(t,!ok)
     nat[3]=1;_,_,ok=portmap_natpmp_response(nat[:],7950);testing.expect(t,!ok)
+    // A TCP port (Kai's): PCP names protocol 6, NAT-PMP takes opcode 2 and answers 130, and a
+    // reply for the other protocol is not taken.
+    tcp:=portmap_pcp_request(local,7350,external,nonce,3600,.TCP)
+    testing.expect_value(t,tcp[36],u8(6))
+    tcp[1]=0x81
+    _,_,ok=portmap_pcp_response(tcp[:],7350,nonce,.TCP);testing.expect(t,ok)
+    _,_,ok=portmap_pcp_response(tcp[:],7350,nonce,.UDP);testing.expect(t,!ok)
+    nat_tcp:=portmap_natpmp_request(7350,7350,3600,.TCP)
+    testing.expect_value(t,nat_tcp[1],u8(2))
+    nat={};nat[1]=130
+    portmap_put16(nat[8:10],7350);portmap_put16(nat[10:12],7350);portmap_put32(nat[12:16],3600)
+    _,_,ok=portmap_natpmp_response(nat[:],7350,.TCP);testing.expect(t,ok)
+    _,_,ok=portmap_natpmp_response(nat[:],7350,.UDP);testing.expect(t,!ok)
 }
 
 @(test)

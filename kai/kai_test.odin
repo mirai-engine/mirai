@@ -840,7 +840,7 @@ kai_imports_stay_engine_agnostic :: proc(t:^testing.T) {
     folder,_:=os.split_path(#file)
     listed,e:=os.read_all_directory_by_path(folder,context.temp_allocator)
     testing.expect(t,e==nil)
-    allowed_exact:=[]string{"mirai:store"}
+    allowed_exact:=[]string{"mirai:store","mirai:net"}
     sources:=0
     for info in listed {
         if !strings.has_suffix(info.name,".odin") {continue}

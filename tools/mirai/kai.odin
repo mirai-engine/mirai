@@ -338,7 +338,7 @@ kai_team :: proc(verb:string,t:^vcs.Team,a:^Kai_Args) -> int {
         port:=0
         if a.port!="" {port,_=strconv.parse_int(a.port)}
         agent:vcs.Agent
-        if vcs.agent_start(&agent,t,{port=port,beacon=true,public=a.public})!=.None {return kai_why(verb,t)}
+        if vcs.agent_start(&agent,t,{port=port,beacon=true,public=a.public,portmap=a.public==""})!=.None {return kai_why(verb,t)}
         defer vcs.agent_stop(&agent)
         fmt.printfln("Kai agent on TCP %d (%s); it runs until this process ends.",vcs.agent_port(&agent),strings.join(vcs.agent_addresses(&agent,context.temp_allocator),", ",context.temp_allocator))
         for {

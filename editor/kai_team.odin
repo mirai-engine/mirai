@@ -155,12 +155,13 @@ kai_team_close :: proc(s:^Session) {
     k.team=nil
 }
 
-// Starts the machine's agent in this process: "" or why it does not.
+// Starts the machine's agent in this process, which asks the router to
+// forward its port: "" or why it does not.
 kai_agent_start :: proc(s:^Session) -> string {
     t:=s.kai.team
     if t==nil || !t.opened {return "The Kai state of the store is not open"}
     if t.running {return ""}
-    options:=vcs.Agent_Options{port=0,beacon=true}
+    options:=vcs.Agent_Options{port=0,beacon=true,portmap=true}
     if s.kai.mesh_loopback {options={port=0,host="127.0.0.1"}}
     if vcs.agent_start(&t.agent,&t.team,options)!=.None {
         t.why_length=copy(t.why[:],t.team.why)
@@ -240,7 +241,7 @@ kai_team_read :: proc(s:^Session) {
         v.addresses=vcs.agent_addresses(&t.agent,a)
         v.peer_lines=make([]Kai_Line,len(peers),a)
         for p,k in peers {v.peer_lines[k]={fmt.aprintf("%s (%s)",p.device,p.name,allocator=a),fmt.aprintf("connected, %s",p.address,allocator=a)}}
-        if len(v.addresses)>0 {v.listening=fmt.aprintf("Listening on this LAN at %s. Machines on another network reach it only where your router forwards that port, or through a Kai server.",strings.join(v.addresses,", ",context.temp_allocator),allocator=a)}
+        if len(v.addresses)>0 {v.listening=fmt.aprintf("Listening at %s. When the router opens its port (UPnP, NAT-PMP or PCP), the first is where machines on other networks reach it; otherwise they need a forwarded port or a Kai server.",strings.join(v.addresses,", ",context.temp_allocator),allocator=a)}
         events:=make([dynamic]string,context.temp_allocator)
         vcs.agent_events(&t.agent,&events,context.temp_allocator)
         for e in events {log.infof("kai: %s",e)}

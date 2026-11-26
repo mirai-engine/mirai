@@ -8,6 +8,7 @@ import "core:strings"
 import "core:sync"
 import "core:thread"
 import "core:time"
+import wire "mirai:net"
 import "mirai:store"
 
 // The agent: what keeps a machine's orgs in sync with their other machines,
@@ -44,6 +45,7 @@ Agent_Options :: struct {
     node:bool,      // keep every repository of its orgs whole and the derived data its writers publish
     peers:[]string, // host:port to dial besides the addresses it knows
     public:string,  // host:port where every member reaches this machine (a server's): what an org it joins lists
+    portmap:bool,   // asks the router (PCP, NAT-PMP or UPnP) to forward its TCP port, so machines on other networks reach it with no server
     web_login:proc(data:rawptr,org_member:Key,name,password:string) -> bool, // a server's web view: a member names its sign-in
     web_data:rawptr,
 }
@@ -80,6 +82,8 @@ Agent :: struct {
     beacons:map[Key]string,  // where each member's beacon said it listens
     told:map[Tell_Key]store.Hash, // the heads the peers were told last
     events:[dynamic]string,
+    mapping:wire.Port_Mapping,
+    mapping_on:bool,
     pulls:[dynamic]Pull,
     waits:[dynamic]^Ddc_Wait,
     changed:bool,
@@ -161,6 +165,7 @@ agent_start :: proc(a:^Agent,team:^Team,options:Agent_Options,allocator:=context
         }
         a.listener,a.listening=socket,true
         if bound,be:=net.bound_endpoint(socket);be==nil {a.port=bound.port}
+        if options.portmap {a.mapping_on=wire.mapping_start(&a.mapping,u16(a.port),allocator,protocol=.TCP)}
         agent_thread(a,agent_accept_run)
     }
     agent_thread(a,agent_look_run)
@@ -193,6 +198,10 @@ agent_stop :: proc(a:^Agent) {
     }
     for p in peers {peer_free(p)}
     if a.listening {net.close(a.listener)}
+    if a.mapping_on {
+        wire.mapping_stop(&a.mapping)
+        wire.mapping_close(&a.mapping)
+    }
     agent_free(a)
 }
 
@@ -238,12 +247,18 @@ agent_generation :: proc(a:^Agent) -> u64 {return sync.atomic_load(&a.generation
 @(private)
 agent_moved :: proc(a:^Agent) {sync.atomic_add(&a.generation,1)}
 
-// Where this machine listens on its LAN, host:port, in allocator: what an
-// invite carries. A machine outside the LAN reaches it only where its router
-// forwards the port.
+// Where this machine listens, host:port, in allocator: what an invite
+// carries. The router's address first when it forwards the port (portmap),
+// then the LAN's; a machine outside the LAN reaches it only through the first.
 agent_addresses :: proc(a:^Agent,allocator:=context.allocator) -> []string {
     out:=make([dynamic]string,allocator)
     if !a.listening {return out[:]}
+    if a.mapping_on {
+        if status:=wire.mapping_poll(&a.mapping);status.phase==.Mapped && status.external.kind==.IP4 {
+            ip:=status.external.ip
+            text_add(&out,fmt.tprintf("%d.%d.%d.%d:%d",ip[0],ip[1],ip[2],ip[3],status.external.port),allocator)
+        }
+    }
     if a.options.host!="" && a.options.host!="0.0.0.0" {
         text_add(&out,fmt.tprintf("%s:%d",a.options.host,a.port),allocator)
         return out[:]
@@ -1202,6 +1217,7 @@ agent_ddc_published :: proc(a:^Agent,org:Org_Id,key:store.Hash,address:store.Has
 @(private)
 agent_look_run :: proc(a:^Agent) {
     last_dial:i64
+    mapped:=wire.Port_Mapping_Phase.Pending
     for {
         free_all(context.temp_allocator)
         sync.mutex_lock(&a.lock)
@@ -1231,6 +1247,13 @@ agent_look_run :: proc(a:^Agent) {
             peer_free(p)
         }
         agent_tell_changes(a)
+        // The router's answer changes what an invite carries.
+        if a.mapping_on {
+            if phase:=wire.mapping_poll(&a.mapping).phase;phase!=mapped {
+                mapped=phase
+                agent_moved(a)
+            }
+        }
         now:=time.now()._nsec
         if now-last_dial>=DIAL_SECONDS*i64(time.Second) {
             last_dial=now
