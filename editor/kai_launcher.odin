@@ -16,7 +16,7 @@ import "mirai:ui"
 // pairing shows the Kai tab's Team view in place of the list, so a machine
 // with no project names itself, joins its org with an invite or makes one.
 
-// Team and pairing, in place of the list: where pulls go, then the Team view.
+// Team, in place of the list: where pulls go, then the Team view.
 projects_team_build :: proc(s:^Session,width:f32) {
     p:=s.projects
     ctx:=s.gui.ctx

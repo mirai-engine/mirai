@@ -87,11 +87,12 @@ pulls what the shared bookmarks reach.
 - BOOKMARKS lists the workspace's bookmarks, then the repository's shared ones; a click starts a
   change on one and its arrow moves it to the working copy's parent for the whole org
   (`kai.bookmarks` with `move`).
-- Repositories of the projects screen, with its count in the tab: the repositories of the
-  machine's orgs, each pulled into a folder of the location with one click (`kai.clone`) and
-  opened once main's files are written, with how far the pull is in chunks and bytes as the agent
-  counts them; Cancel leaves a workspace a later pull goes on with. Team and pairing shows the Team
-  view there, so a machine with no project names itself, joins or makes an org.
+- All projects of the projects screen lists, after the projects of this machine, the
+  repositories of its orgs it has not pulled (the tab counts both), each pulled into a folder of
+  the location with one click (`kai.clone`) and opened once main's files are written, with how
+  far the pull is in chunks and bytes as the agent counts them; Cancel leaves a workspace a later
+  pull goes on with. Team, beside the tabs, shows the Team view in place of the list, so a machine
+  with no project names itself, joins or makes an org.
 - `kai.peers` gives where the agent listens, the machines connected and each repository's pull.
 - The imports of the editor take derived data the org's machines built on a miss and publish what
   they build (`ka.peers_open`), when the project is a workspace of an org's repository.

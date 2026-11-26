@@ -86,7 +86,7 @@ Projects :: struct {
     shown:bool,     // the screen covers the editor: always in a launcher
     launcher:bool,  // this editor only chooses a project
     show_all:bool,  // false: recent projects; true: all projects discovered on this machine
-    team:bool,      // Team and pairing in place of the list (kai_launcher.odin)
+    team:bool,      // Team in place of the list (kai_launcher.odin)
     recent:project.Recent_Projects,
     rows:[PROJECTS_ALL_CAPACITY]Projects_Row, // shown list, read when the screen opens or switches view
     row_count:int,
@@ -880,7 +880,7 @@ projects_content :: proc(s:^Session,popup:bool) {
             p.scroll=0
             projects_rows_read(s)
         }
-        if ui.button(ctx,ui.id(ctx,"projects_team"),{label="Team and pairing",icon=ui.icon_user(u8(User_Icon.Users)),variant="toggle",active=p.team,height=30}).clicked {
+        if ui.button(ctx,ui.id(ctx,"projects_team"),{label="Team",icon=ui.icon_user(u8(User_Icon.Users)),variant="toggle",active=p.team,height=30}).clicked {
             p.team=!p.team
             p.scroll=0
             if p.team {kai_team_open(s)}

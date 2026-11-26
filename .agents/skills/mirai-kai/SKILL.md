@@ -21,8 +21,9 @@ sign, and an agent on each machine that pulls what the org's other machines hold
 There is no account and no Git; a server (`mirai kai serve`) is an optional machine of the org
 that is always on. Kai itself is optional per project: a project without `.mirai/kai` has no
 history until it is [enabled](#start-a-project-on-kai). It is used from the Kai tab and the
-launcher's Repositories of the [editor](../mirai-editor/references/kai.md), from `mirai kai`, from
-the `kai.*` methods and, to read a server's repositories, from a browser.
+org repositories of the launcher's All projects in the
+[editor](../mirai-editor/references/kai.md), from `mirai kai`, from the `kai.*` methods and, to
+read a server's repositories, from a browser.
 
 - `std/diff` (layer 0): line diff and three-way merge; imports nothing of Mirai.
 - `kai` (layer 4): records, trees, conflicts, operations, workspaces, the org record, shared
@@ -92,7 +93,7 @@ the `kai.*` methods and, to read a server's repositories, from a browser.
    host:port a router forwards when the other machine is on another network (the editor and
    `mirai kai agent` ask the router themselves).
 3. The other machine runs `mirai kai join <invite>` (the editor: Team, Join), then `mirai kai pull
-   <org> <repository> <folder>` (the launcher's Repositories: Pull) to get main's files.
+   <org> <repository> <folder>` (the launcher's All projects: Pull) to get main's files.
 
 ### Run a server
 

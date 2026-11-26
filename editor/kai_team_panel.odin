@@ -8,7 +8,7 @@ import "mirai:platform"
 import "mirai:std/serial"
 import "mirai:ui"
 
-// The Team view of the Kai tab, which the launcher's Team and pairing shows
+// The Team view of the Kai tab, which the launcher's Team shows
 // too, and the Publish to main of the Changes view. They draw what
 // kai_team_read left in the team's arena; a button asks for its kai.* method,
 // which runs between frames as any call does.
