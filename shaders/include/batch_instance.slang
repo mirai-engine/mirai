@@ -6,6 +6,7 @@
 // (batch_instance_write), as render.batch_instance encodes it on the CPU.
 #ifndef MIRAI_BATCH_INSTANCE_SLANG
 #define MIRAI_BATCH_INSTANCE_SLANG
+#include "halves.slang"
 #include <shared_constants.slang>
 
 // A rotation of quat_pack (std/math) with 10 bits a component: the index of
@@ -74,7 +75,7 @@ void batch_instance_write(RWStructuredBuffer<uint> pool, uint at, float3 p, floa
     pool[at + 1u] = asuint(p.y);
     pool[at + 2u] = asuint(p.z);
     pool[at + 3u] = batch_rotation_pack(q);
-    pool[at + 4u] = f32tof16(scale.x) | f32tof16(scale.y) << 16u;
-    pool[at + 5u] = f32tof16(scale.z);
+    pool[at + 4u] = half_nearest(scale.x) | half_nearest(scale.y) << 16u;
+    pool[at + 5u] = half_nearest(scale.z);
 }
 #endif
