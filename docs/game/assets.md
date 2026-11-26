@@ -24,7 +24,7 @@ Put the file in `assets/`, in the folder of what it is for, and import it where 
 ```sh
 mirai import assets/player/hero.glb     # its materials and prefab go to assets/player/hero/
 mirai import assets/arena/rock_n.png    # its texture is listed as assets/arena/rock_n.tex
-mirai import assets/player/step.wav     # assets/player/step.sound
+mirai import assets/player/step.wav assets/player/land.wav   # .sound each; many files, one run
 ```
 
 - Formats: OBJ, glTF/GLB, USD, FBX; PNG, JPEG, TGA, BMP, GIF, PSD, HDR; WAV and Ogg Vorbis (mono

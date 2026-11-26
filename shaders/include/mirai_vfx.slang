@@ -47,8 +47,10 @@
 //
 //   uint births(Mirai_Vfx_Context ctx, Parameters p)
 //                      once a frame, how many particles the emitter starts
-//                      in it (at most its capacity), spread over the frame;
-//                      born counts those it started before
+//                      in it, spread over the seconds of the frame it emits
+//                      in (ctx.delta_time; none while it does not emit);
+//                      born counts those it started before. Its effect says
+//                      in max_particles how many live at once
 //
 // A line `//! prepare` says the program prepares, once a frame for each
 // emitter and before its births and steps, words its other functions read:
@@ -104,6 +106,13 @@ struct Mirai_Vfx_Visual {
     float4 data[4];
     uint given;
     float random;      // 0 to 1, what the material reads (Mirai_Surface_Context.particle_random); it starts from the seed of the particle
+    // Over the scale of its effect, along each axis that one stretches: the x
+    // and y of a quad, the width (x) of a ribbon or a beam, each axis of a
+    // mesh. It starts at 1.
+    float3 scale;
+    // The turn of a Mesh particle in the world, a unit quaternion (xyzw), in
+    // place of the facing of its effect. Zero, as it starts, leaves that facing.
+    float4 orientation;
 };
 // A point of a surface: where it is in the world, its normal, how fast it
 // moves, its uv, and the triangle and barycentrics (of its second and third

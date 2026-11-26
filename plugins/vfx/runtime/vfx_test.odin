@@ -1083,6 +1083,69 @@ an_animated_value_allocates_nothing_and_keeps_the_pool_grouped :: proc(t:^testin
     testing.expect(t,shown.desc.spec.owned && abs(shown.desc.info.colors[0].x-1.1)<1e-5)
 }
 
+// A program that gives the births of its emitter is told to give none until
+// the clock of the emitter emits: neither in a frame drawn before its first
+// tick, nor while it is not active. Shaders that arrive after the clock was
+// resolved resolve it again, with whether their program gives the births.
+@(test)
+program_births_follow_the_clock_of_their_emitter :: proc(t:^testing.T) {
+    f:=new(Emitters_Fixture)
+    defer free(f)
+    if !fixture_init(t,f) {return}
+    defer fixture_destroy(f)
+    folder:=base.test_folder(t,"vfx-program-births")
+    id:=base.Asset_Id{0x62697274,1}
+    layers:=[1]effect.Particle_Info{layer_of("Sprinkle",0)}
+    layers[0].max_particles=64
+    if !fake_effect(t,folder,id,layers[:]) {return}
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=folder})) {return}
+    defer host.assets_destroy(&assets)
+    defer assets.renderer=nil
+    r:=fake_programs(&assets,{{"Sprinkle",{"rate"}}})
+    f.app.assets=&assets
+    e:=fixture_emitter(f,Particle_Emitter{particle=id,loop=true})
+    limit :: proc(f:^Emitters_Fixture,e:core.Entity) -> f32 {
+        fixture_sync(f,{0,1},TICK)
+        return shown_find(&f.sync,e,0).desc.birth_limit
+    }
+    // The clock was resolved before the shaders said the program gives the births.
+    fixture_tick(f,TICK)
+    testing.expect(t,!clock_find(&f.clocks,e).emission.program_births)
+    r.programs.programs[0].births=true
+    f.app.shaders.reloads+=1
+    testing.expect_value(t,limit(f,e),f32(0))
+    fixture_tick(f,TICK)
+    testing.expect(t,clock_find(&f.clocks,e).emission.program_births,"the shaders that came resolve the clock again")
+    testing.expect_value(t,limit(f,e),f32(0))
+    start(&f.requests,e)
+    fixture_tick(f,TICK)
+    clock:=clock_find(&f.clocks,e)
+    testing.expect(t,clock.program_until==clock.time && limit(f,e)==f32(clock.time),"an emitter that emits gives births up to the time of its clock")
+    // Another emitter, drawn before its first tick: it has no clock yet.
+    late:=fixture_emitter(f,Particle_Emitter{particle=id,active=true,loop=true},{4,0,0})
+    testing.expect(t,clock_find(&f.clocks,late)==nil)
+    testing.expect_value(t,limit(f,late),f32(0))
+}
+
+// An effect whose program gives its births says how many particles live at
+// once: without max_particles its program does not run, and says why.
+@(test)
+a_program_that_gives_births_needs_max_particles :: proc(t:^testing.T) {
+    assets:=new(host.Assets,context.temp_allocator)
+    r:=fake_programs(assets,{{"Sprinkle",{"rate"}},{"Heat",{"heat"}}})
+    r.programs.programs[0].births=true
+    Case :: struct {program:string,max_particles:u32,runs:bool}
+    for c in ([]Case{{"Sprinkle",0,false},{"Sprinkle",64,true},{"Heat",0,true}}) {
+        info:=layer_of(c.program,0)
+        info.max_particles=c.max_particles
+        program:Program
+        problem:=particle_program_check(assets,&info,nil,nil,&program)
+        testing.expectf(t,(problem=="")==c.runs && (program.id!=0)==c.runs,"%s with max_particles %d: %q",c.program,c.max_particles,problem)
+        if !c.runs {testing.expectf(t,strings.contains(problem,"max_particles"),"it names the field to give: %q",problem)}
+    }
+}
+
 // layers.N. names a layer: its fields change that layer alone. A parameter
 // without it reaches every layer whose program declares it and leaves the
 // others; one no program declares is a problem of the primary layer. A burst

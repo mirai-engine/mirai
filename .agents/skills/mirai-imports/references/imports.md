@@ -127,11 +127,16 @@ across reimports (`asset.detach` clears it) unless overridden by `--parts auto|a
   (finalizing Fast builds from texture cache when `--final` is required). Deduplicates pins sharing
   one origin; never deletes missing sources; tracks file size/mtime in `Source_Hashes` (re-ingest
   USD stages after editing sublayers).
-- CLI: `mirai import <file> [--project P] [--folder F] [--final] [--release] [--from S]` and
+- CLI: `mirai import <file>... [--project P] [--folder F] [--final] [--release] [--from S]` and
   `mirai import --refresh <root>`. Project builds auto-refresh packages (`build.job_imports`).
+  Several files of one command share its options and its process (`import_file` per file:
+  the import program, the editor library and the peers of the project start once), each with its
+  report; one that fails is said, the others go on, and the exit code is the worst. Group a bulk
+  import by options (color images, `--normal` images, models), not one command per file.
 
 ```bash
 mirai import assets/hero.glb --project demo --front auto
+mirai import assets/fx/*.png --project demo --folder fx
 mirai import assets/walk.glb --project demo --skeleton <skeleton_id>
 mirai import --refresh demo --final --release
 ```

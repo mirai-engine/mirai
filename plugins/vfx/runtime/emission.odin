@@ -238,11 +238,14 @@ emitter_capacity :: proc(info:^effect.Particle_Info) -> u32 {
     return u32(clamp(total*1.25+16,16,f32(1<<20)))
 }
 
-// The effect inputs and the stamp of the entity's values as last resolved.
-emission_key :: proc(particle:base.Asset_Id,stamp:u64,revision:u64=0,preset:=effect.Particle_Preset.Default) -> u64 {
+// The effect inputs, the stamp of the entity's values and the shader
+// generation (its program says what the effect does) as last resolved.
+emission_key :: proc(particle:base.Asset_Id,stamp:u64,revision:u64=0,preset:=effect.Particle_Preset.Default,shaders:u64=0) -> u64 {
     key:=base.hash_combine(base.hash_combine(particle[0],particle[1]),stamp)
     if preset!=.Default {key=base.hash_combine(key,u64(preset))}
-    return (key if revision==0 else base.hash_combine(key,revision))|1
+    if revision!=0 {key=base.hash_combine(key,revision)}
+    if shaders!=0 {key=base.hash_combine(key,shaders)}
+    return key|1
 }
 
 // The stamp of the row of an entity, 0 without one: it moves when the row is

@@ -35,10 +35,13 @@ uint particle_birth_step(float age, float4 frame_step) {
     return born <= 0.0 ? 0u : min(uint(born / max(frame_step.y, 1e-6)), uint(frame_step.z) - 1u);
 }
 
+// The seconds of the clock of an emitter the frame covers (a range that starts,
+// those since its clock started), and those of them its emitter emitted in: up
+// to birth_limit, from where the frame starts and never before its clock did.
 float2 particle_birth_window(uint slot, float frame_dt) {
     float age = asfloat(particle_emitters[slot].data.z);
     float span = (particle_emitters[slot].range.w & PARTICLE_FLAG_RESET) != 0u ? max(age, frame_dt) : frame_dt;
-    float active = clamp(particle_emitters[slot].birth_limit - (age - span), 0.0, span);
+    float active = clamp(particle_emitters[slot].birth_limit - max(age - span, 0.0), 0.0, span);
     return float2(span, active);
 }
 

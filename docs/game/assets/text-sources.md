@@ -53,6 +53,9 @@ one grammar, with or without an editor.
 ]}
 ```
 
+- `position`, `rotation_deg` (degrees) and `scale` are local to the parent. Code that has a
+  rotation gives it whole as `rotation`, the quaternion `[x, y, z, w]`, which the scene keeps to
+  the last bit; an entity takes one of the two.
 - `preset` is a recipe (`cube`, `sphere`, `plane`, `point_light`, `sun`, `camera`...) or the card
   of a plugin (`spawn`, `fog`...): it gives the components, and `components` changes their fields
   or adds others. A field left out starts as its component does. Every component an entity has

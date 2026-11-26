@@ -2436,3 +2436,168 @@ unlit_particles_show_their_emission_in_their_own_units_in_daylight :: proc(t: ^t
 	testing.expectf(t, min(white[0], white[1], white[2]) > 200, "an emission past what the image holds saturates to white: %v", white)
 	expect_clean(t, f.device)
 }
+
+// A program that gives the births of its emitter starts none while the clock
+// of the emitter never emitted, whatever the frame covers of it (a frame
+// longer than the ticks of its clock, the first of its range), and starts
+// them once it emits (testdata/sprinkle.slang).
+@(test)
+program_births_wait_for_their_emitter_to_emit :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 96, 64, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	program := erender.program_find(&f.assets, "Sprinkle", .Vfx)
+	if !testing.expect(t, program != nil && program.births, "testdata has the Vfx program Sprinkle, which gives its births") {return}
+	waiting := test_emitter(1, {0, 0, 0})
+	waiting.info.lifetime = {30, 30}
+	waiting.owner = core.Entity(1)
+	waiting.program = {id = program.id, attributes = u32(program.attributes), births = true}
+	waiting.program.parameters[0][0] = 600
+	base.text_set(waiting.info.program[:], program.name)
+	TICK :: f32(1.0 / 60)
+	// Two ticks of the clock to each frame, the first of them one tick old.
+	frames :: proc(t: ^testing.T, f: ^Gpu_Fixture, e: ^Emitter_Desc, age: ^f32, count: int, emits: bool) {
+		for _ in 0 ..< count {
+			age^ += TICK if age^ == 0 else 2 * TICK
+			e.age = age^
+			if emits {e.birth_limit = age^}
+			testing.expect(t, frame_emitters(f, &f.sync, {e^}, 2 * TICK))
+			testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = FRONT, time = age^}), f.renderer.error)
+		}
+		rhi.device_wait_idle(f.device)
+	}
+	age: f32
+	frames(t, f, &waiting, &age, 6, false)
+	testing.expect_value(t, particles_alive(f), u32(0))
+	frames(t, f, &waiting, &age, 6, true)
+	testing.expect(t, particles_alive(f) > 0, "once its emitter emits, its program starts particles")
+	expect_clean(t, f.device)
+}
+
+// A Mesh particle takes the turn in the world and the scale along each axis
+// its program gives it, in place of the facing of its effect, in the G-buffer
+// and blended over it (testdata/lay_across.slang).
+@(test)
+mesh_particles_take_the_turn_and_the_scale_of_their_program :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 128, 128, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	gpu.scene_set_environment(r, {direction = {0.2, 0.4, 1}, color = {1, 1, 1}, illuminance = 4 * math.PI, enabled = true, indirect = 1, scattering = 1}, {sky = {0.02, 0.02, 0.02}})
+	glow := gpu.DEFAULT_MATERIAL
+	glow.base_color, glow.alpha_mode = {1, 1, 1}, .Additive
+	gpu.materials_set(r, {glow})
+	stick, added := stick_mesh(r)
+	if !testing.expect(t, added) {return}
+	program := erender.program_find(&f.assets, "Lay_Across", .Vfx)
+	if !testing.expect(t, program != nil, "testdata has the Vfx program Lay_Across") {return}
+	camera := gpu.Camera{position = {0, 0, 3}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	for _ in 0 ..< 3 {testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)}
+	// The opaque one above, the additive one below; neither turns by its effect.
+	heights := [2]f32{0.7, -0.7}
+	sticks: [2]Emitter_Desc
+	for &e, i in sticks {
+		e = test_emitter(u64(i + 1), {0, heights[i], 0})
+		e.info.render, e.info.lifetime, e.info.size, e.info.lit = .Mesh, {30, 30}, {1, 1}, i == 0
+		e.program = {id = program.id, attributes = u32(program.attributes)}
+		base.text_set(e.info.program[:], program.name)
+		if i == 1 {e.material, e.blended, e.info.emission_mode, e.info.intensity = 1, true, .Relative, 1}
+		if !testing.expect(t, mesh_choices(&e, f.app.renderer, {stick}, {1})) {return}
+	}
+	frames_of_one(t, f, sticks[:], 12, camera)
+	pixels, w, _, ok := gpu.renderer_capture(r)
+	testing.expect(t, ok, r.error)
+	if !ok {return}
+	defer delete(pixels)
+	sky := pixel(pixels, w, project(r, camera, {0, 0, 0}))
+	for y, i in heights {
+		name := "blended" if i == 1 else "opaque"
+		for x in ([]f32{-0.35, 0.35}) {
+			along := pixel(pixels, w, project(r, camera, {x, y, 0}))
+			testing.expectf(t, along[0] > sky[0] + 30, "the %s stick lies along x, as its program turns it: at x %v %v, the sky %v", name, x, along, sky)
+		}
+		thick := pixel(pixels, w, project(r, camera, {0.2, y + 0.12, 0}))
+		testing.expectf(t, thick[0] > sky[0] + 30, "the %s stick is three times as thick along y: %v, the sky %v", name, thick, sky)
+		beyond := pixel(pixels, w, project(r, camera, {0.2, y + 0.3, 0}))
+		testing.expectf(t, abs(beyond[0] - sky[0]) < 10, "and no more: %v, the sky %v", beyond, sky)
+	}
+	expect_clean(t, f.device)
+}
+
+// The Surface program of the material of a particle reads the share of its
+// life the particle lived, its color apart from that of its mesh (white on a
+// quad) and where the eye of the view is (testdata/particle_seen.slang).
+@(test)
+particle_programs_see_the_life_and_the_color_of_their_particle_apart_from_its_mesh :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 96, 64, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	surface := gpu.program_find(r, "Particle_Seen", .Surface)
+	if !testing.expect(t, surface != nil && surface.reads >= {.Particle, .View}, "testdata has the Surface program Particle_Seen, which reads its particle and the view") {return}
+	seen := gpu.DEFAULT_MATERIAL
+	seen.program_id, seen.alpha_mode = surface.id, .Additive
+	gpu.materials_set(r, {seen})
+	// A square that faces the camera, blue at its vertices.
+	blue := [3]f32{0, 0, 1}
+	square := []gpu.Mesh_Vertex {
+		{position = {-0.5, -0.5, 0}, normal = {0, 0, 1}, color = blue, tangent = {1, 0, 0, 1}},
+		{position = {0.5, -0.5, 0}, normal = {0, 0, 1}, color = blue, tangent = {1, 0, 0, 1}},
+		{position = {0.5, 0.5, 0}, normal = {0, 0, 1}, color = blue, tangent = {1, 0, 0, 1}},
+		{position = {-0.5, 0.5, 0}, normal = {0, 0, 1}, color = blue, tangent = {1, 0, 0, 1}},
+	}
+	mesh, made := gpu.mesh_add(r, square, []u32{0, 1, 2, 0, 2, 3})
+	if !testing.expect(t, made, r.error) {return}
+	gpu.scene_set_environment(r, {}, {sky = {0, 0, 0}})
+	GREEN :: [4]f32{0, 1, 0, 1}
+	MAGENTA :: [4]f32{1, 0, 1, 1}
+	Case :: struct {name: string, x: f32, color: [4]f32, age: f32, mesh: bool, shows: [3]bool}
+	// A quad faces the eye wherever it is; the square, only in front of it.
+	cases := []Case {
+		{"a young green quad", -3, GREEN, 0, false, {false, true, true}},
+		{"an old magenta quad", -1.5, MAGENTA, 9.5, false, {true, false, false}},
+		{"a young green mesh with blue vertices in front of the eye", 0, GREEN, 0, true, {false, true, true}},
+		{"a young green mesh with blue vertices seen from a side", 3, GREEN, 0, true, {false, false, true}},
+	}
+	emitters := make([]Emitter_Desc, len(cases), context.temp_allocator)
+	for c, i in cases {
+		e := &emitters[i]
+		e^ = test_emitter(u64(i + 1), {c.x, 0, 0})
+		e.material, e.info.lifetime, e.info.colors, e.info.intensity = 1, {10, 10}, {c.color, c.color}, 1
+		if c.mesh {
+			e.info.render, e.blended = .Mesh, true
+			if !testing.expect(t, mesh_choices(e, f.app.renderer, {mesh}, {1})) {return}
+		}
+	}
+	DT :: f32(1.0 / 60)
+	for i in 0 ..< 6 {
+		for &e, k in emitters {
+			e.spawns = test_burst(1) if i == 0 else {}
+			e.spawns[0].age = cases[k].age
+		}
+		testing.expect(t, frame_emitters(f, &f.sync, emitters, DT))
+		testing.expect(t, gpu.renderer_frame(r, {camera = FRONT, time = f32(i) * DT}), r.error)
+	}
+	rhi.device_wait_idle(f.device)
+	pixels, w, _, ok := gpu.renderer_capture(r)
+	testing.expect(t, ok, r.error)
+	if !ok {return}
+	defer delete(pixels)
+	for c in cases {
+		got := pixel(pixels, w, project(r, FRONT, {c.x, 0, 0}))
+		for shows, channel in c.shows {
+			testing.expectf(t, (got[channel] > 100) == shows && (got[channel] < 80) != shows, "%s shows %v of red (its life), green (the color of its particle) and blue (the life left by the color of its mesh): %v", c.name, c.shows, got)
+		}
+	}
+	expect_clean(t, f.device)
+}

@@ -5,10 +5,11 @@
 // light it receives, faded where it meets the scene behind it or the camera.
 // A material with a Surface program runs it at the point, facing the camera,
 // with uv0 in this frame of the flipbook, uv1 in the next, the color of the
-// particle as vertex_color, which it uses as it will, and what the particle
-// gives it (Mirai_Surface_Context.particle_data); another shows its base
-// color texture as the flipbook, blended between two frames, tinted by the
-// color of the particle.
+// particle (particle_color), which it uses as it will, the share of its life
+// it lived, the color of the mesh of a Mesh particle (vertex_color) and what
+// the particle gives it (Mirai_Surface_Context.particle_data); another shows
+// its base color texture as the flipbook, blended between two frames, tinted
+// by the color of the particle and, as its material says, by that of its mesh.
 // Radiance is premultiplied: additive emitters, and mesh particles of an
 // additive material, add it; the others cover what is behind by alpha. A
 // multiplying emitter darkens what is behind by its color instead, unlit. The
@@ -35,7 +36,7 @@ struct Stage_Input {
     [[vk::location(0)]] float4 in_color : TEXCOORD0;
     [[vk::location(1)]] float3 in_light : TEXCOORD1;
     [[vk::location(2)]] float4 in_uv : TEXCOORD2;
-    [[vk::location(3)]] float2 in_blend_depth : TEXCOORD3;
+    [[vk::location(3)]] float3 in_blend_depth_life : TEXCOORD3;
     [[vk::location(4)]] nointerpolation float in_seed : TEXCOORD4;
     [[vk::location(5)]] float3 in_world : TEXCOORD5;
     [[vk::location(6)]] nointerpolation float4 in_data0 : TEXCOORD6;
@@ -46,6 +47,7 @@ struct Stage_Input {
     [[vk::location(12)]] nointerpolation uint material : TEXCOORD12;
     [[vk::location(11)]] nointerpolation float2 in_random_radius : TEXCOORD11;
     [[vk::location(13)]] float3 in_normal : TEXCOORD13;
+    [[vk::location(14)]] float4 in_vertex_color : TEXCOORD14;
 };
 struct Stage_Output {
     [[vk::location(0)]] float4 out_color : SV_Target0;
@@ -55,12 +57,13 @@ struct Stage_Output {
 Mirai_Surface_Context sprite_context(Stage_Input input, float3 facing, float scene) {
     Mirai_Surface_Context ctx = material_context(input.in_world, facing, input.in_uv.xy, input.in_uv.zw, float2(frame.texturing.x), false);
     ctx.position_dx = ddx(input.in_world); ctx.position_dy = ddy(input.in_world);
-    ctx.vertex_color = input.in_color;
+    ctx.vertex_color = input.in_vertex_color;
+    ctx.particle_color = input.in_color;
     if (!depth_empty(scene)) ctx.scene_depth = depth_distance(scene);
     ctx.particle_data[0] = input.in_data0; ctx.particle_data[1] = input.in_data1;
     ctx.particle_data[2] = input.in_data2; ctx.particle_data[3] = input.in_data3;
     ctx.particle_given = input.in_given;
-    ctx.particle_random = input.in_random_radius.x; ctx.particle_radius = input.in_random_radius.y;
+    ctx.particle_random = input.in_random_radius.x; ctx.particle_radius = input.in_random_radius.y; ctx.particle_life = input.in_blend_depth_life.z;
     return ctx;
 }
 
@@ -69,7 +72,7 @@ Stage_Output main(Stage_Input input, float4 pixel_position : SV_Position) {
     Stage_Output output;
 
     int2 pixel = int2(pixel_position.xy);
-    float depth = input.in_blend_depth.y;
+    float depth = input.in_blend_depth_life.y;
     if (params.pass != 0u) {
         float layer = glass_depth.Load(int3(pixel, 0)).r;
         bool in_front = layer > 0.0 && depth <= layer * 1.0001 + 1e-4;
@@ -85,7 +88,8 @@ Stage_Output main(Stage_Input input, float4 pixel_position : SV_Position) {
     float scene = g_depth.Load(int3(pixel, 0)).r;
     float3 base_color, emission;
     float alpha;
-    float4 tint = input.in_color;
+    // The color of a mesh tints it as it tints the mesh in the G-buffer.
+    float4 tint = input.in_color * float4(material_vertex_tint(m, input.in_vertex_color.rgb), 1.0);
     Material_Sample values;
     // A quad faces the eye; a mesh its normal, turned toward the eye.
     float3 facing = to_eye(input.in_world);
@@ -107,7 +111,7 @@ Stage_Output main(Stage_Input input, float4 pixel_position : SV_Position) {
             // A mesh reads its texture through the map of its material, at the uv of its vertices.
             texel = material_texel(m.textures[MATERIAL_MAP_BASE_COLOR], material_map_uv(m, MATERIAL_MAP_BASE_COLOR, input.in_uv.xy, input.in_uv.zw), frame.texturing.x);
         } else if (material_has(m.textures[MATERIAL_MAP_BASE_COLOR])) {
-            texel = lerp(material_texel(m.textures[MATERIAL_MAP_BASE_COLOR], input.in_uv.xy, frame.texturing.x), material_texel(m.textures[MATERIAL_MAP_BASE_COLOR], input.in_uv.zw, frame.texturing.x), input.in_blend_depth.x);
+            texel = lerp(material_texel(m.textures[MATERIAL_MAP_BASE_COLOR], input.in_uv.xy, frame.texturing.x), material_texel(m.textures[MATERIAL_MAP_BASE_COLOR], input.in_uv.zw, frame.texturing.x), input.in_blend_depth_life.x);
         }
         base_color = m.base_color * texel.rgb;
         emission = m.emission * texel.rgb;

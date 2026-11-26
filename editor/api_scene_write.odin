@@ -62,6 +62,7 @@ Api_Scene_Write_Entity :: struct {
     delete:bool `mirai:"optional,label=true takes the entity away with what hangs from it; it declares nothing else. A member of an instance of a prefab is turned off instead"`,
     position:[3]f32 `mirai:"optional,label=local to the parent; [0,0,0] when left out"`,
     rotation_deg:[3]f32 `mirai:"optional,label=[0,0,0] or that of its preset when left out"`,
+    rotation:[4]f32 `mirai:"optional,label=in place of rotation_deg, the quaternion [x,y,z,w] itself, kept to the last bit: what code that has one gives"`,
     scale:[3]f32 `mirai:"optional,label=[1,1,1] or that of its preset when left out"`,
     visible:bool `mirai:"optional,label=true when left out"`,
     enabled:bool `mirai:"optional,label=true when left out; false turns the entity and everything under it off: their components keep their values and no system sees them"`,

@@ -6,6 +6,7 @@ import "core:testing"
 import "core:time"
 import "mirai:asset"
 import "mirai:cook/records"
+import "mirai:core"
 import "mirai:std/base"
 import "mirai:std/geom"
 
@@ -93,4 +94,11 @@ what_the_writer_writes_is_what_the_repack_of_the_cook_writes :: proc(t:^testing.
         testing.expect_value(t,error,asset.Error.None)
         testing.expectf(t,string(bytes)==string(repacked),"%s: the writer and a repack write other bytes (%d and %d)",what==0?"mesh":"records",len(bytes),len(repacked))
     }
+}
+
+// A transform goes to the document of a scene as the keys of its entity, its
+// rotation whole.
+@(test)
+a_transform_is_written_as_the_keys_of_its_entity :: proc(t:^testing.T) {
+    testing.expect_value(t,transform(core.Transform{position={1,2.5,-3},rotation=quaternion(w=0.5,x=0.5,y=-0.5,z=0.5),scale={1,1,2}}),`"position":[1,2.5,-3],"rotation":[0.5,-0.5,0.5,0.5],"scale":[1,1,2]`)
 }

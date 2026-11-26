@@ -21,7 +21,8 @@ instance hidden fields).
   it; `facing` = `Tumble`, `Velocity` along `-Z` above `PARTICLE_MESH_FACING_SPEED`, or `Emitter`,
   the emitter's turn at birth; sorted mesh effects allow 1 mesh). `Beam` draws a camera-facing
   strip with optional +Y arc. `scale` (0 on an axis: 1, `effect.particle_scale`) stretches quads
-  in x/y, ribbon and beam width by x, meshes per axis.
+  in x/y, ribbon and beam width by x, meshes per axis; program `visual.scale` multiplies it per
+  particle, and `visual.orientation` (world quaternion; zero keeps `facing`) turns a mesh.
 - **Blending**: `blend` (`Additive`, `Alpha`, `Multiply`) is of sprites, ribbons and beams; a `Mesh`
   blends by its material's `alpha_mode` (`asset.alpha_blended`: `Blend`/`Additive` draw in `Blend`,
   `Additive` with alpha 0). `effect.particle_field_applies` hides what does not apply in the
@@ -273,7 +274,10 @@ fade), and drops unrequested effects.
 - Contract: `shaders/include/mirai_vfx.slang` ([Vfx domain][vfx-domain]); built-in `Orbit`
   (`plugins/vfx/shaders/orbit.slang`). `initialize` runs after effect defaults; `update` before
   effect forces; `render` writes draw records (`visual.data`/`given`/`random` -> sprite Surface
-  program); `//! births` replaces effect births (emit mode 3).
+  program; `visual.scale`/`orientation` -> the vertex stages, at `TURN_AT`); `//! births`
+  replaces effect births (emit mode 3) over the seconds of the frame its clock emitted in
+  (`Emitter_Clock.program_until` -> `Gpu_Emitter.birth_limit`; none before it starts), and its
+  effect says `max_particles` (`particle_program_check` refuses it otherwise).
 - Each active program supplies emit, simulate, and stage pipelines (`_hw` when tracing); sprite and
   mesh vertex pipelines are shared. Editor [debugging](vfx-editor.md#debugging) reads
   `emitter_ranges`.
@@ -288,6 +292,12 @@ fade), and drops unrequested effects.
 | `Simulate` (frame) | `surface` / `stage` clear / `volume light` / `finish` | Build new surface CDFs; clear entered grid cells; light volumes (`_hw`); indirect draws & tiled sort (ribbons, mesh runs) |
 | `Blend` (view) | `volumes` / `sprites` | Raymarch volumes; draw sorted sprites (`Billboard`/`Velocity`/`Horizontal`/`Beam`/`Ribbon`) & blended `Mesh` (`particle_mesh_blend.vert`, mesh normal), Surface program or flipbook/disc, `soft`, `Additive`/`Alpha`/`Multiply` (unlit, `FLAG_MULTIPLY`), `.Glass_Depth` split |
 | `Effect` / `Gbuffer` | `effects` / `meshes` | UI effect views; opaque/masked `Mesh` particles |
+
+A Surface program on a sprite or a blended mesh has the last word on its color: it reads
+`ctx.particle_color` and `ctx.particle_life` (the share of its life lived) with the `render` data,
+and the color of the vertices of a mesh apart, in `ctx.vertex_color` (white on quads, ribbons and
+beams). A G-buffer mesh gets none of them: the color of its particle tints what its program
+returns.
 
 An unlit sprite or blended mesh shows its color and the emission of its material or Surface
 program in the units of its emitter (`Particle_Info.emission_mode`, `PARTICLE_FLAG_RELATIVE`;
@@ -309,9 +319,10 @@ the pose's +Y across the path, else toward the camera. Rate/distance births join
 
 Drawn in `Gbuffer` via `particle_mesh.vert` + engine/Surface fragment (1 draw/mesh/program via
 `pass_mesh_programs`, `frame_gbuffer_mesh`, `MESH_DRAWS_AT`). `frame_mesh_whole` keeps all level-0
-pages resident (read through `geometry.slang`); motion vectors use velocity. Program `render` data
-does not reach G-buffer meshes. Local-space meshes take motion vectors from the emitter's
-`previous` rows (`particle_mesh_vector_by`).
+pages resident (read through `geometry.slang`); motion vectors use velocity. Of program `render`,
+the look (color, size, `scale`, `orientation`) reaches G-buffer meshes; `visual.data` does not.
+Local-space meshes take motion vectors from the emitter's `previous` rows
+(`particle_mesh_vector_by`).
 
 ## Verification
 
@@ -321,12 +332,15 @@ does not reach G-buffer meshes. Local-space meshes take motion vectors from the 
   propagation over a device-less catalog, analytical bounds, culling) and GPU (`gpu_test.odin`,
   shaders in `.mirai/test-shaders/vfx`): births/steps/pause/events/pools/capacity, ribbons
   (`two_ribbons.slang`), `Surface` on a posed skin (`testdata/stick.slang`), `World`
-  hits/friction, sprite Surface programs (`hand_over.slang`, `particle_data.slang`), grid
+  hits/friction, sprite Surface programs (`hand_over.slang`, `particle_data.slang`,
+  `particle_seen.slang`: life, color, mesh vertex color, view direction), grid
   stages/splats (`tally.slang`, `spread.slang`), weighted velocity-facing meshes, stage rays
-  (`probe.slang`), volumes (`puff.slang`), world textures (`count_ground.slang`), channel rollback
-  (`testdata/gather.slang`), fog/glass sorting, zero-alloc frames, debugger (`glitch.slang`),
+  (`probe.slang`), program births (`sprinkle.slang`), volumes (`puff.slang`), world textures
+  (`count_ground.slang`), channel rollback (`testdata/gather.slang`), fog/glass sorting,
+  zero-alloc frames, debugger (`glitch.slang`),
   additive meshes, `Multiply`, ribbon segments, `Emitter_Up` and tiles (`trail_stripes.slang`),
-  `Emitter` facing with `scale`, local-space motion vectors and inheritance.
+  `Emitter` facing with `scale`, program turn and scale of meshes (`lay_across.slang`),
+  local-space motion vectors and inheritance.
 - `mirai test plugins/vfx/editor -collection:plugins=<root>/plugins`: `document_test.odin`.
 - `mirai test plugins/vfx_animation/runtime --no-gpu`: `span_test.odin` (duration spans, paired
   markers, action filtering, interruption, source destruction, zero-alloc steady ticks).

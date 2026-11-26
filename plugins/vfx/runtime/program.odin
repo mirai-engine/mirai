@@ -45,6 +45,10 @@ particle_program_check :: proc(a:^host.Assets,info:^effect.Particle_Info,stored:
     }
     if a==nil || a.renderer==nil {return ""}
     if found==nil {return fmt.tprintf("The shaders have no Vfx program %q: add a source with `//! mirai vfx %s` to the shaders of the project",name,name)}
+    // Its births are counted on the GPU: nothing of the effect says how many live at once.
+    if found.births && info.max_particles==0 {
+        return fmt.tprintf("Vfx program %s gives the births of its emitter: say in max_particles of the effect how many particles live at once",name)
+    }
     program.id=found.id
     program.attributes,program.moves,program.births,program.prepare=u32(found.attributes),found.moves,found.births,found.prepare
     if needs!=nil {

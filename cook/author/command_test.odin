@@ -2,6 +2,7 @@ package author
 
 import "core:fmt"
 import "core:log"
+import "core:math/linalg"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -316,6 +317,57 @@ writing_a_widget_follows_its_parameters_in_the_files_that_use_it :: proc(t:^test
     serial.writer_init(&out,0,context.temp_allocator)
     testing.expect_value(t,ui_read(&p,"kit/screen.ui",&out),"")
     testing.expect(t,strings.contains(string(serial.writer_bytes(&out)),`"label":"Hits"`),string(serial.writer_bytes(&out)))
+}
+
+// A rotation a document gives whole (rotation, the quaternion) is kept to
+// the last bit, where its angles in degrees round it; one that is no
+// rotation is brought to one, and a document that gives both ways, or a
+// quaternion of zero, is refused.
+@(test)
+a_scene_document_keeps_a_rotation_given_whole :: proc(t:^testing.T) {
+    root,engine,copied:=template_copy(t,"scene")
+    if !copied {return}
+    info,described:=test_info(t,Game_World)
+    if !described {return}
+    defer test_info_destroy(&info)
+    p:Project
+    if problem:=project_open(&p,root,engine,false);!testing.expect(t,problem=="",problem) {return}
+    defer project_close(&p)
+    p.info=&info
+    q:=linalg.normalize([4]f32{0.123456789,-0.567891234,0.345678912,0.741852963})
+    list :: proc(values:[]f32) -> string {
+        out:serial.Writer
+        serial.writer_init(&out,0,context.temp_allocator)
+        serial.json_list(&out,values)
+        return string(serial.writer_bytes(&out))
+    }
+    twice:=q*2
+    document:=fmt.tprintf(`{{"entities":[{{"id":"0x0000000000000051","name":"Turned","rotation":%s}},{{"id":"0x0000000000000052","name":"Long","rotation":%s}}]}}`,list(q[:]),list(twice[:]))
+    made,problem:=scene_write(&p,"arena/turned.scene",document)
+    if !testing.expect(t,problem=="" && made.made==2,problem) {return}
+    turned:asset.Scene
+    file:=project.path(p.assets_root,"arena/turned.scene",allocator=context.temp_allocator)
+    if !testing.expect_value(t,asset.scene_load(&turned,&p.types,file,context.temp_allocator),asset.Error.None) {return}
+    place,_:=asset.scene_get(&turned,0x51,"Transform",core.Transform)
+    testing.expect_value(t,[4]f32{place.rotation.x,place.rotation.y,place.rotation.z,place.rotation.w},q)
+    long,_:=asset.scene_get(&turned,0x52,"Transform",core.Transform)
+    testing.expect(t,abs(linalg.length([4]f32{long.rotation.x,long.rotation.y,long.rotation.z,long.rotation.w})-1)<1e-6 && abs(long.rotation.w-q[3])<1e-6,"a quaternion twice as long is the same rotation")
+    again,again_why:=scene_write(&p,"arena/turned.scene",document)
+    testing.expect(t,again_why=="" && again.same,again_why)
+    // Its angles in degrees say another quaternion: the document of the scene shows them, and writes nothing back.
+    out:serial.Writer
+    serial.writer_init(&out,0,context.temp_allocator)
+    testing.expect_value(t,scene_read(&p,"arena/turned.scene",&out),"")
+    shown,shown_why:=scene_write(&p,"arena/turned.scene",string(serial.writer_bytes(&out)))
+    testing.expect(t,shown_why=="" && shown.same && strings.contains(string(serial.writer_bytes(&out)),`"rotation_deg"`),shown_why)
+    for c in ([]struct{document,message:string}{
+        {`{"entities":[{"name":"x","rotation":[0,0,0,1],"rotation_deg":[0,90,0]}]}`,"rotation_deg and rotation both say how it is turned"},
+        {`{"entities":[{"name":"x","rotation":[0,0,0,0]}]}`,"entities[0].rotation must be a quaternion [x, y, z, w] that is not zero"},
+        {`{"entities":[{"name":"x","rotation":[0,90,0]}]}`,"entities[0].rotation must be an array of 4 numbers"},
+    }) {
+        _,refused:=scene_write(&p,"arena/turned.scene",c.document)
+        testing.expectf(t,strings.contains(refused,c.message),"%s gave '%s'",c.document,refused)
+    }
 }
 
 @(test)

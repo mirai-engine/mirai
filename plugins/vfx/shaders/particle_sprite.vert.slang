@@ -6,8 +6,9 @@
 // leaves each end along the mean of the directions to its neighbours, wide
 // across its path toward the camera or along the +Y its emitter had where each
 // particle was born, its texture along the metres from its head. The scale of
-// the effect stretches the x and y of a quad and the width of a ribbon or a
-// beam. The program of the emitter has the last word on what it shows.
+// the effect, by that the program of the emitter gives the particle, stretches
+// the x and y of a quad and the width of a ribbon or a beam. The program of
+// the emitter has the last word on what it shows.
 #define PARTICLE_STATES_READ
 #include "particle_programs.slang"
 
@@ -19,7 +20,7 @@ struct Stage_Output {
     [[vk::location(0)]] float4 out_color : TEXCOORD0;
     [[vk::location(1)]] float3 out_light : TEXCOORD1;
     [[vk::location(2)]] float4 out_uv : TEXCOORD2;   // two frames of the flipbook
-    [[vk::location(3)]] float2 out_blend_depth : TEXCOORD3; // between them, and the view depth
+    [[vk::location(3)]] float3 out_blend_depth_life : TEXCOORD3; // between them, the view depth, and the share of its life the particle lived
     [[vk::location(4)]] nointerpolation float out_seed : TEXCOORD4;
     [[vk::location(5)]] float3 out_world : TEXCOORD5;
     [[vk::location(6)]] nointerpolation float4 out_data0 : TEXCOORD6; // what the particle gives its material
@@ -30,6 +31,7 @@ struct Stage_Output {
     [[vk::location(12)]] nointerpolation uint material : TEXCOORD12;
     [[vk::location(11)]] nointerpolation float2 out_random_radius : TEXCOORD11;
     [[vk::location(13)]] float3 out_normal : TEXCOORD13; // of a mesh; 0: the quad faces the eye
+    [[vk::location(14)]] float4 out_vertex_color : TEXCOORD14; // of a mesh; white
 };
 
 float2 flipbook_uv(uint2 tiles, float2 corner, float frame_index) {
@@ -54,6 +56,7 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
     uint index;
     float half_size;
     float3 light;
+    float life;
     if (ribbon) {
         // The segment of the instance: the last whose quads start at or before it.
         uint alive = particle_states[params.emitter].alive;
@@ -103,7 +106,9 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         look = along_t < 0.5 ? la : lb;
         look.color = lerp(la.color, lb.color, along_t);
         look.size = lerp(la.size, lb.size, along_t);
-        half_size = look.size * 0.5 * particle_scale(params.emitter).x;
+        look.scale = lerp(la.scale, lb.scale, along_t);
+        life = lerp(particle_life(p), particle_life(q), along_t);
+        half_size = look.size * 0.5 * particle_look_scale(params.emitter, look).x;
         float3 side = cross(along, to_eye(center));
         if (particle_emitters[params.emitter].ribbon_axis == PARTICLE_RIBBON_AXIS_EMITTER_UP) {
             // The +Y of its emitter where each end was born, across the path.
@@ -131,6 +136,7 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         index = particle_drawn(slot, instance_id / BEAM_PIECES);
         p = particles[index];
         look = particle_draw_look(slot, index);
+        life = particle_life(p);
         float t = float(instance_id % BEAM_PIECES + (vertex_id >> 1u)) / float(BEAM_PIECES);
         float4 beam = particle_emitters[slot].beam;
         float3 end = transform_vector(particle_emitters[slot].world, beam.xyz);
@@ -138,7 +144,7 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         float3 center = particle_world(slot, p.position) + t * end + 4.0 * t * (1.0 - t) * arc;
         float3 side = cross(end + 4.0 * (1.0 - 2.0 * t) * arc, to_eye(center));
         side = dot(side, side) > 1e-12 ? normalize(side) : frame.view[0].xyz;
-        half_size = look.size * 0.5 * particle_scale(slot).x;
+        half_size = look.size * 0.5 * particle_look_scale(slot, look).x;
         world = center + side * c.x * half_size;
         uv = float2(corner.x, t);
         light = (particle_emitters[slot].range.w & PARTICLE_FLAG_LIT) != 0u ? particle_light(p) : emission_render_units(float3(1.0), (particle_emitters[slot].range.w & PARTICLE_FLAG_RELATIVE) != 0u);
@@ -146,13 +152,14 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         index = particle_drawn(params.emitter, instance_id);
         p = particles[index];
         look = particle_draw_look(params.emitter, index);
+        life = particle_life(p);
         float3 center = particle_world(params.emitter, p.position);
         float3 to_camera = to_eye(center);
         half_size = look.size * 0.5;
         float3 right = frame.view[0].xyz;
         float3 up = frame.view[1].xyz;
         float s = sin(p.rotation), co = cos(p.rotation);
-        float2 extent = half_size * particle_scale(params.emitter).xy;
+        float2 extent = half_size * particle_look_scale(params.emitter, look).xy;
         if (particle_emitters[params.emitter].kinds.y == PARTICLE_RENDER_VELOCITY) {
             float3 velocity = particle_world_vector(params.emitter, p.velocity);
             float3 axis = velocity - to_camera * dot(velocity, to_camera);
@@ -178,12 +185,13 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
     output.out_light = light;
     float frame_index = floor(look.frame);
     output.out_uv = float4(flipbook_uv(particle_emitters[params.emitter].flipbook.xy, uv, frame_index), flipbook_uv(particle_emitters[params.emitter].flipbook.xy, uv, frame_index + 1.0));
-    output.out_blend_depth = float2(look.frame - frame_index, dot(world - frame.camera_position.xyz, frame.camera_forward.xyz));
+    output.out_blend_depth_life = float3(look.frame - frame_index, dot(world - frame.camera_position.xyz, frame.camera_forward.xyz), life);
     output.out_seed = float(p.seed & 1023u) * 0.37;
     output.out_world = world;
     output.out_data0 = look.data[0]; output.out_data1 = look.data[1]; output.out_data2 = look.data[2]; output.out_data3 = look.data[3];
     output.out_given = look.given;
     output.out_random_radius = float2(look.random, half_size);
     output.out_normal = float3(0.0);
+    output.out_vertex_color = float4(1.0);
     return output;
 }

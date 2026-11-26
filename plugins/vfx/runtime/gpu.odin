@@ -26,8 +26,9 @@ STEP :: f32(1.0/30) // the longest step a simulation takes
 TRAILS_PER_SECOND :: 30 // Trail events of a particle in each second of its life
 BEAM_PIECES :: 16
 RIBBON_PIECES :: 8 // most pieces a ribbon cuts the curve between two of its particles into
-DRAW_LOOK_BYTES :: 112 // what a particle shows in the frame (particle_draw_look), then the pose it was born with and where it is along its ribbon
+DRAW_LOOK_BYTES :: 128 // what a particle shows in the frame (particle_draw_look): its look, the pose it was born with and where it is along its ribbon, then the turn and the scale its program gives it
 POSE_AT :: 96 // bytes of the look of a particle to its pose
+TURN_AT :: 112 // and to the turn and the scale of its program
 STEPS :: 8
 FRAME_MAX :: f32(0.25) // seconds a frame simulates at most
 
@@ -89,7 +90,7 @@ Emitter_Desc :: struct {
     resources:u32,           // first resource row + 1, or 0 without resources
     stages:u32,              // first stage row + 1, or 0 without stages
     births:[2]u32,                          // of its channel: the first among those of the frame, and how many
-    birth_limit:f32,                        // end of the active GPU birth interval, as age
+    birth_limit:f32,                        // seconds of its clock up to which its program gives births (Emitter_Clock.program_until); an effect of the UI gives them always
     age:f32,                                // seconds since it started, at the end of the frame
     born:u32,                               // particles it started before this frame
     owner:core.Entity,                      // its entity, whose reports and problems they are; NONE for an effect of the UI
@@ -338,7 +339,7 @@ Pool :: struct {
     origin:[3]f32,           // what the places its buffers keep are relative to: the origin of the renderer when they last moved
     left_out:core.Entity,    // the views draw none of its emitters: an audit counts the pixels they drew; NONE: none is left out
     gpu:[]Gpu_Emitter,       // the rows of the table of emitters, as the GPU has them once those of dirty are written
-    frame_bytes:[dynamic]u8, // header, bones, grids, volumes, resources, stages and channel births
+    frame_bytes:[dynamic]u8, // header, grids, volumes, resources, stages and channel births
     draws:[]Pool_Draw,
     pending:Slot_Bits,       // slots put since the last frame simulated: their births add up
     dirty:Slot_Bits,         // slots whose rows are built and written again

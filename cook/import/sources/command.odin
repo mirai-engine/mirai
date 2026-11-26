@@ -23,7 +23,11 @@ import "mirai:store"
 // OpenType), a manifest of prompts (<name>.prompts.json) or a source a plugin
 // of the project imports whole, from wherever it is, into the library of the
 // machine store (ingest), and adds it to a project (project_add): the one of
-// --project, else the one whose assets hold the file, else none. Its cache
+// --project, else the one whose assets hold the file, else none. Several
+// files are imported one after another in the one process, each with the
+// options given and its own report: what a process makes ready (the import
+// program, the plugins of the project, its peers) is made ready once. A file
+// that fails is said and the others go on; the exit code is the worst. Its cache
 // is listed under --folder of the project's assets (else the folder of the
 // file under them, else the top), and its documents and the prefab of a
 // model are written there.
@@ -61,13 +65,13 @@ import "mirai:store"
 // Exit codes: 0 done, 1 failed, 2 misuse.
 
 @(private="file")
-IMPORT_USAGE :: "Usage: mirai import <file> [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--sound smallest|lossless|file] [--project <root>] [--folder <folder>] [--rebuild] [--discard-changes] [--final] [--store <folder>] [--profile] [--release] | mirai import --refresh <root> [--refresh <root>...] [--final] [--store <folder>] [--from <folder>] [--release]"
+IMPORT_USAGE :: "Usage: mirai import <file> [<file>...] [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--sound smallest|lossless|file] [--project <root>] [--folder <folder>] [--rebuild] [--discard-changes] [--final] [--store <folder>] [--profile] [--release] | mirai import --refresh <root> [--refresh <root>...] [--final] [--store <folder>] [--from <folder>] [--release]"
 
 // library reads the formats and the importers of whole sources the plugins of
 // a project add and the types of its game (in the import program of the
 // engine, editor.import_library).
 command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil,peers:cache.Peers_Open=nil) -> int {
-    file:string
+    files:=make([dynamic]string,context.temp_allocator)
     options:=importer.Import_Options{fast_textures=true}
     roots:=make([dynamic]string,context.temp_allocator) // of --refresh
     root:string   // of --project
@@ -75,10 +79,8 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil,peers:
     profiled:bool
     store_root:string // of the store whose caches keep what imports build; "": that of the machine
     from_root:string  // of --from
-    // What the options change of the settings the source has.
-    Change :: enum {Textures,Rdo_Lambda,Image,Alpha_Coverage,Lods,Parts,Front,Rig,Rig_Crotch,Rig_Neck,Skeleton,Sound}
     given:importer.Import_Settings
-    changed:bit_set[Change]
+    changed:bit_set[Import_Change] // of the settings each source has
     at:=0
     value :: proc(args:[]string,at:^int) -> (string,bool) {
         at^+=1
@@ -188,13 +190,12 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil,peers:
             }
         case:
             if strings.has_prefix(args[at],"-") {fmt.wprintfln(errors,"mirai import: '%s' is not an option of import; a file that starts with '-' goes as ./%s\n%s",args[at],args[at],IMPORT_USAGE);return 2}
-            if file!="" {fmt.wprintln(errors,IMPORT_USAGE);return 2}
-            file=args[at]
+            append(&files,args[at])
         }
         if !ok {fmt.wprintln(errors,IMPORT_USAGE);return 2}
     }
     // Nothing to import is a misuse, whatever the store says.
-    if len(roots)==0 && file=="" {fmt.wprintln(errors,IMPORT_USAGE);return 2}
+    if len(roots)==0 && len(files)==0 {fmt.wprintln(errors,IMPORT_USAGE);return 2}
     js:jobs.Job_System
     if !jobs.system_init(&js,{threads=jobs.THREADS_AUTO,allocator=runtime.heap_allocator()}) {
         fmt.wprintln(errors,"mirai import: the threads to cook on could not be started")
@@ -217,7 +218,7 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil,peers:
     library_options:=Library_Options{gpu=&gpu,store=options.store,fast_textures=options.fast_textures,rebuild=options.rebuild,changed=options.changed,plugins=library,worker=options.worker}
     if options.store==nil {fmt.wprintln(errors,"mirai import: this machine has no folder of user data for its store: pass one with --store");return 1}
     if len(roots)>0 {
-        if file!="" || root!="" || folder!=nil || changed!={} || options.changed!=.Refuse {fmt.wprintln(errors,IMPORT_USAGE);return 2}
+        if len(files)>0 || root!="" || folder!=nil || changed!={} || options.changed!=.Refuse {fmt.wprintln(errors,IMPORT_USAGE);return 2}
         if from_root=="" {
             if engine:=project.engine_root_find("",context.temp_allocator);project.engine_installed(engine) {
                 if bundled:=project.path(engine,project.ENGINE_STORE,allocator=context.temp_allocator);os.is_dir(bundled) {from_root=bundled}
@@ -235,34 +236,100 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil,peers:
         return refresh_command(roots[:],library_options,peers,output,errors)
     }
     if from_root!="" {fmt.wprintln(errors,IMPORT_USAGE);return 2}
-    if file=="" {fmt.wprintln(errors,IMPORT_USAGE);return 2}
+    // Every file in turn in this one process, which made ready once what each
+    // needs: the threads, the store, the textures of the GPU and, of a
+    // project, its plugins and its peers. One that fails is said and the
+    // others go on.
+    run:=Import_Run{
+        options=options,library_options=library_options,root=root,folder=folder,given=given,changed=changed,profiled=profiled,
+        library=library,peers=peers,output=output,errors=errors,
+    }
+    defer import_project_end(&run)
+    code,done:=0,0
+    for file in files {
+        result:=import_file(&run,file)
+        code=max(code,result)
+        if result==0 {done+=1}
+    }
+    if len(files)>1 {fmt.wprintfln(output,"%d of %d files imported",done,len(files))}
+    return code
+}
+
+// What the options of a command change of the settings a source has.
+@(private="file")
+Import_Change :: enum {Textures,Rdo_Lambda,Image,Alpha_Coverage,Lods,Parts,Front,Rig,Rig_Crotch,Rig_Neck,Skeleton,Sound}
+
+// What the files of a command are imported with: its options, and of the
+// project of the last file its plugins and its peers, which the files of one
+// project share.
+@(private="file")
+Import_Run :: struct {
+    options:importer.Import_Options,
+    library_options:Library_Options,
+    root:string,          // of --project; "": that of each file
+    folder:Maybe(string), // of --folder
+    given:importer.Import_Settings,
+    changed:bit_set[Import_Change],
+    profiled:bool,
+    library:Library,
+    peers:cache.Peers_Open,
+    output,errors:io.Writer,
+    project:string,       // the root the plugins and the peers are of; "": none
+    loaded:bool,          // plugins holds those of project
+    plugins:Library_Imports,
+    formats:[]importer.Format, // those of the engine and of plugins
+    shared:cache.Source,
+    close:cache.Peers_Close,
+}
+
+// Ends what the run holds of a project: its plugins, and its peers, saying what went each way.
+@(private="file")
+import_project_end :: proc(run:^Import_Run) {
+    if run.plugins.release!=nil {run.plugins.release(run.plugins.state)}
+    peers_said(run.output,run.project,run.shared,run.close)
+    delete(run.project)
+    run.project,run.loaded,run.plugins,run.formats,run.shared,run.close="",false,{},nil,{},nil
+}
+
+// One file of a command, as its options say: 0 done, 1 failed, 2 misuse.
+@(private="file")
+import_file :: proc(run:^Import_Run,file:string) -> int {
+    output,errors,options,changed,given:=run.output,run.errors,run.options,run.changed,run.given
+    library_options:=run.library_options
     origin:=importer.path_key(file)
     // The project it is added to, and where under its assets.
+    root:=run.root
     if root=="" {root,_=importer.source_root(origin,context.temp_allocator)}
     if root!="" {
         root=project.path_absolute(root,context.temp_allocator)
         library_options.root=root
-    } else if folder!=nil {
+    } else if run.folder!=nil {
         fmt.wprintln(errors,"mirai import: --folder is a folder of the assets of a project: give it with --project")
         return 2
     }
+    if root!=run.project {
+        import_project_end(run)
+        run.project=strings.clone(root)
+        if root!="" {run.shared,run.close=peers_of(run.peers,options.store.root,root)}
+    }
     formats:=FORMATS[:]
     kind:=source_kind(origin)
-    plugins:Library_Imports
-    defer if plugins.release!=nil {plugins.release(plugins.state)}
-    if (kind==.None || kind==.Model) && library!=nil && root!="" {
-        plugins=library(root,options.store,context.temp_allocator)
-        library_options.imports=&plugins
-        all:=make([dynamic]importer.Format,0,len(FORMATS)+len(plugins.formats),context.temp_allocator)
-        append(&all,..FORMATS[:])
-        append(&all,..plugins.formats)
-        formats=all[:]
+    if (kind==.None || kind==.Model) && run.library!=nil && root!="" {
+        if !run.loaded {
+            run.plugins,run.loaded=run.library(root,options.store,context.temp_allocator),true
+            all:=make([dynamic]importer.Format,0,len(FORMATS)+len(run.plugins.formats),context.temp_allocator)
+            append(&all,..FORMATS[:])
+            append(&all,..run.plugins.formats)
+            run.formats=all[:]
+        }
+        library_options.imports=&run.plugins
+        formats=run.formats
         kind=source_kind(origin,formats)
-        if _,claimed:=whole_find(plugins.wholes,origin);claimed {kind=.None}
+        if _,claimed:=whole_find(run.plugins.wholes,origin);claimed {kind=.None}
     }
-    if changed&{.Image,.Alpha_Coverage}!={} && kind!=.Image {fmt.wprintln(errors,"mirai import: --srgb, --normal, --normal-green-down, --data and --alpha-coverage apply only to images");return 2}
-    if changed&{.Lods,.Parts,.Front,.Rig,.Rig_Crotch,.Rig_Neck,.Skeleton}!={} && kind!=.Model {fmt.wprintln(errors,"mirai import: --lods, --parts, --front, --skeleton and the --rig options apply only to models");return 2}
-    if .Sound in changed && kind!=.Sound {fmt.wprintln(errors,"mirai import: --sound applies only to sounds (WAV, Ogg Vorbis)");return 2}
+    if changed&{.Image,.Alpha_Coverage}!={} && kind!=.Image {fmt.wprintfln(errors,"mirai import: %s: --srgb, --normal, --normal-green-down, --data and --alpha-coverage apply only to images",file);return 2}
+    if changed&{.Lods,.Parts,.Front,.Rig,.Rig_Crotch,.Rig_Neck,.Skeleton}!={} && kind!=.Model {fmt.wprintfln(errors,"mirai import: %s: --lods, --parts, --front, --skeleton and the --rig options apply only to models",file);return 2}
+    if .Sound in changed && kind!=.Sound {fmt.wprintfln(errors,"mirai import: %s: --sound applies only to sounds (WAV, Ogg Vorbis)",file);return 2}
 
     // The settings the package keeps, changed by the options: given only when they change it.
     settings:^importer.Import_Settings
@@ -289,7 +356,7 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil,peers:
         if .Sound in changed {chosen.sound=given.sound}
         // The heights tell the fit of a person where the body is.
         if chosen.rig!=.Humanoid {
-            if changed&{.Rig_Crotch,.Rig_Neck}!={} {fmt.wprintln(errors,"mirai import: --rig-crotch and --rig-neck go with --rig humanoid");return 2}
+            if changed&{.Rig_Crotch,.Rig_Neck}!={} {fmt.wprintfln(errors,"mirai import: %s: --rig-crotch and --rig-neck go with --rig humanoid",file);return 2}
             chosen.rig_crotch,chosen.rig_neck=0,0
         }
         if chosen!=stored || !found {
@@ -299,8 +366,8 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil,peers:
     }
     profile:base.Profile
     started:=time.tick_now()
-    if profiled && !importer.profile_begin(&profile,&options) {fmt.wprintln(errors,"mirai import: no memory for --profile");return 1}
-    defer if profiled {profile_print(&profile,started,output);base.profile_destroy(&profile)}
+    if run.profiled && !importer.profile_begin(&profile,&options) {fmt.wprintln(errors,"mirai import: no memory for --profile");return 1}
+    defer if run.profiled {profile_print(&profile,started,output);base.profile_destroy(&profile)}
     library_options.worker=options.worker
     library_options.progress=errors
     if root=="" {
@@ -313,10 +380,8 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil,peers:
         ingest_print(&report,output)
         return 0
     }
-    shared,close:=peers_of(peers,options.store.root,root)
-    if close!=nil {library_options.source=shared}
-    defer peers_said(output,root,shared,close)
-    report,added,error:=project_ingest(root,origin,folder,library_options,settings)
+    if run.close!=nil {library_options.source=run.shared}
+    report,added,error:=project_ingest(root,origin,run.folder,library_options,settings)
     defer library_report_destroy(&added)
     if error.code!=.None {
         fmt.wprintfln(errors,"mirai import: %s: %s",file,error.message)

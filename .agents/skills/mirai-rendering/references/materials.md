@@ -48,7 +48,8 @@ erender.material_texture(&values, base.name_hash("maps.mask"), 0, mask_tex_id)
   position, UV0/UV1, time, and LOD.
 - **Vertex color:** Common PBR multiplies base color; programs read `ctx.vertex_color` (white if
   absent) and decide (`material_vertex_tint`). Instance tint multiplies both; `uniform_color`
-  skips only the vertex-color multiply.
+  skips only the vertex-color multiply. The color of a particle is `ctx.particle_color`, never
+  `vertex_color`.
 - **Object space:** `material_context_instance` supplies pivot, orthogonal scaled axes, and
   bounds (`mirai_object_point` divides by squared axis lengths); previews/extensions use world
   space. Vertex color and object match across G-buffer, translucents, overlays, coverage, and
