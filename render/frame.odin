@@ -1564,10 +1564,11 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	tiles := t.direct_tiles
 	tiles_across := [2]u32{groups(points.x, DIRECT_TILE), groups(points.y, DIRECT_TILE)}
 	if maps {
-		rhi.cmd_timestamp(cmd, "direct maps")
+		rhi.cmd_timestamp(cmd, "direct tiles")
 		header := [DIRECT_TILES_HEADER]u32{DIRECT_TILES_SAMPLES + 1 = 1, DIRECT_TILES_SAMPLES + 2 = 1, DIRECT_TILES_RAYS + 1 = 1, DIRECT_TILES_RAYS + 2 = 1, DIRECT_TILES_SPREAD + 1 = DIRECT_SPREAD_RUN, DIRECT_TILES_SPREAD + 2 = 1}
 		if !upload_transient(r, cmd, header[:], tiles) {return false}
 		rhi.cmd_fill_buffer(cmd, tiles, DIRECT_TILES_HEADER * size_of(u32), 2 * u64(tiles_across.x * tiles_across.y) * size_of(u32), 0)
+		rhi.cmd_timestamp(cmd, "direct maps")
 		rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Maps, unlayered, unlayered)^)
 		set_params(cmd, &params)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
