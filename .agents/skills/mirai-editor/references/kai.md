@@ -85,7 +85,7 @@ pulls what the shared bookmarks reach.
   the password goes straight to the agent and is zeroed.
 - A join and a web sign-in run on a thread of the agent (`kai_task_start`), so the frames go on:
   `kai.join` and `kai.web_login` start one and say its stage (none, waiting, done or failed, with
-  why); called with no params they say how the last went (wait with `_wait_until`).
+  why); called again with no params they say how the last went, as `kai.clone` does.
 - Publish to main (Changes) closes the working change whole and moves main for the org
   (`kai.publish`). A project in no org yet goes into one in the same call, Public or Org only, after
   whatever may refuse (the bookmark, the role, the snapshot), so a refused publish leaves the org as
