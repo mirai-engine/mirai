@@ -86,6 +86,8 @@ Projects :: struct {
     shown:bool,     // the screen covers the editor: always in a launcher
     launcher:bool,  // this editor only chooses a project
     show_all:bool,  // false: recent projects; true: all projects discovered on this machine
+    repositories:bool, // the Repositories of the orgs this machine serves, in place of the list (kai_launcher.odin)
+    team:bool,      // Repositories shows the team and pairing
     recent:project.Recent_Projects,
     rows:[PROJECTS_ALL_CAPACITY]Projects_Row, // shown list, read when the screen opens or switches view
     row_count:int,
@@ -135,6 +137,7 @@ projects_show :: proc(s:^Session) {
     p.shown,p.creating,p.scroll=true,false,0
     if error:=project.recent_read(s.engine_root,&p.recent);error.code!=.None {notify(s,settings_file_error_text(project.recent_file(s.engine_root,context.temp_allocator),error))}
     projects_rows_read(s)
+    if p.location_length==0 {projects_location_default(p)}
     _,p.engine_branch=projects_branch(s.engine_root)
     home,_:=os.user_home_dir(context.temp_allocator)
     base.text_set(p.home[:],home)
@@ -681,7 +684,13 @@ projects_new_start :: proc(s:^Session,template:int) {
     }
     if template>=0 && template<p.template_count {p.template=template}
     projects_new_template(s,p.template)
-    // Next to the last project, or in a folder Mirai of the home of the user.
+    projects_location_default(p)
+}
+
+// Where a new or pulled project goes: next to the last project, or in a folder Mirai of the
+// home of the user.
+@(private)
+projects_location_default :: proc(p:^Projects) {
     location:=""
     if project.recent_count(&p.recent)>0 {
         last:=base.text_get(p.recent.projects[0].path[:])
@@ -859,29 +868,35 @@ projects_content :: proc(s:^Session,popup:bool) {
     typing:=ctx.edit.id!=0
     open:=false
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(32),gap=8,align_y=.Center}) {
-        if ui.button(ctx,ui.id(ctx,"projects_tab_recent"),{label="Recent",variant="toggle",active=!p.show_all,height=30,disabled=busy}).clicked && p.show_all {
-            p.show_all=false
+        list:=!p.repositories
+        if ui.button(ctx,ui.id(ctx,"projects_tab_recent"),{label="Recent",variant="toggle",active=list && !p.show_all,height=30,disabled=busy}).clicked && (p.show_all || !list) {
+            p.show_all,p.repositories=false,false
             p.scroll=0
             projects_rows_read(s)
         }
-        if ui.button(ctx,ui.id(ctx,"projects_tab_all"),{label="All projects",variant="toggle",active=p.show_all,height=30,disabled=busy}).clicked && !p.show_all {
-            p.show_all=true
+        // A tab's count goes inside it, after its title.
+        if ui.button(ctx,ui.id(ctx,"projects_tab_all"),{label="All projects",detail=projects_count_text(p.all_count),variant="toggle",active=list && p.show_all,height=30,disabled=busy}).clicked && (!p.show_all || !list) {
+            p.show_all,p.repositories=true,false
             p.scroll=0
             projects_rows_read(s)
         }
-        if p.all_count>0 {
-            if ui.box(ctx,{width=ui.FIT,height=ui.fixed(20),padding={7,0,7,0},align_y=.Center,fill=ui.tone(ctx,"card"),radius=10}) {
-                ui.label(ctx,fmt.tprintf("%d",p.all_count),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
-            }
+        if ui.button(ctx,ui.id(ctx,"projects_tab_repositories"),{label="Repositories",detail=projects_count_text(projects_repositories_count(s)),variant="toggle",active=p.repositories,height=30,disabled=busy}).clicked && list {
+            p.repositories=true
+            p.scroll=0
         }
         ui.spacer(ctx)
         search:=ui.id(ctx,"projects_search")
         named_add(g,search)
-        if ui.box(ctx,{width=ui.fixed(200),height=ui.fixed(30)}) {
+        if ui.box(ctx,{width=ui.fixed(180),height=ui.fixed(30)}) {
             ui.text_field(ctx,search,p.search[:],&p.search_length,{placeholder="Search",icon=ui.icon_user(u8(User_Icon.Search)),live=true,height=30,size=ui.metric(ctx,"font")})
         }
-        if ui.button(ctx,ui.id(ctx,"projects_open"),{label="Open",variant="accent",width=72,height=30,center=true,disabled=busy || projects_chosen(p)<0}).clicked {open=true}
+        if list && ui.button(ctx,ui.id(ctx,"projects_open"),{label="Open",variant="accent",width=72,height=30,center=true,disabled=busy || projects_chosen(p)<0}).clicked {open=true}
         if popup && ui.icon_button(ctx,ui.id(ctx,"projects_close"),.Cross,28).clicked {projects_hide(s)}
+    }
+    if p.repositories {
+        projects_repositories_build(s,projects_content_width(s,popup))
+        if p.error_length>0 {ui.label(ctx,string(p.error[:p.error_length]),ui.metric(ctx,"font_small"),ui.tone(ctx,"danger_soft"),0,fade=true)}
+        return
     }
     if ui.scroll_area(ctx,ui.id(ctx,"projects_list"),&p.scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=2}) {
         needle:=strings.to_lower(strings.trim_space(string(p.search[:p.search_length])),context.temp_allocator)
@@ -924,6 +939,20 @@ projects_content :: proc(s:^Session,popup:bool) {
             }
         }
     }
+}
+
+// The count of a tab; none while it is 0.
+@(private)
+projects_count_text :: proc(count:int) -> string {
+    return count>0?fmt.tprintf("%d",count):""
+}
+
+// The width of the side of the list: the window's, or the dialog's over a project, past the
+// side of the mark and the padding.
+@(private)
+projects_content_width :: proc(s:^Session,popup:bool) -> f32 {
+    width:=popup?f32(PROJECTS_WINDOW.x):s.gui.ctx.size.x
+    return width-PROJECTS_SIDEBAR-1-40
 }
 
 // The row selected when its project can be opened; -1 for none.

@@ -13,7 +13,8 @@ import "mirai:ui"
 // Undo takes back the newest operation; a click on a change of the log
 // shows the files it changed, each of which opens what the change did to it
 // (kai_detail.odin), and its button, or a click on a shared bookmark, starts
-// a new change on it. Proposals and Team are the team's
+// a new change on it. Publish to main closes the working change and moves
+// the repository's main for its org (kai.publish). Team is the machine's
 // (kai_team_panel.odin). It draws what kai_read and kai_team_read left: a
 // frame reads nothing of the repository. A project with no workspace uses no
 // version control, and the tab offers Enable Kai (kai.init).
@@ -37,14 +38,14 @@ kai_panel_build :: proc(s:^Session,width,room:f32) {
     v:=&st.view
     st.width=width
     kai_tabs_build(s)
-    if st.detail.open && st.detail.tab==st.team.tab {
-        kai_detail_build(s)
+    t:=s.kai.team
+    if st.tab==.Team {
+        if t==nil {return}
+        if ui.scroll_area(ctx,ui.id(ctx,"kai_team_scroll"),&t.scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=4}) {kai_team_build(s)}
         return
     }
-    if st.team.tab!=.Changes {
-        if ui.scroll_area(ctx,ui.id(ctx,"kai_team_scroll"),&st.team.scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=4}) {
-            if st.team.tab==.Proposals {kai_proposals_build(s)} else {kai_team_build(s)}
-        }
+    if st.detail.open {
+        kai_detail_build(s)
         return
     }
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")),gap=6,align_y=.Center}) {
@@ -66,8 +67,8 @@ kai_panel_build :: proc(s:^Session,width,room:f32) {
             if message:=kai_new_checked(s,typed);message!="" {notify(s,message)} else {st.description_length=0}
         }
     }
+    kai_publish_build(s)
     if ui.scroll_area(ctx,ui.id(ctx,"kai_scroll"),&st.scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=2}) {
-        kai_refusal_build(s)
         // Checked while any file is: a click then unchecks them all, and with none checks them all.
         some:=false
         for f in v.files {
@@ -80,9 +81,9 @@ kai_panel_build :: proc(s:^Session,width,room:f32) {
             if file.mark=='C' && file.path==st.unfolded {kai_fields_build(s)}
             ui.id_pop(ctx)
         }
-        shared:=st.team.view.org>=0
+        shared:=t!=nil && t.view.org>=0
         if len(v.bookmarks)>0 || shared {
-            kai_head(ctx,"BOOKMARKS",len(v.bookmarks)+len(st.team.view.shared))
+            kai_head(ctx,"BOOKMARKS",len(v.bookmarks)+(shared?len(t.view.shared):0))
             for b in v.bookmarks {
                 if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=8,align_y=.Center,padding={KAI_ROW_PAD,0,KAI_ROW_PAD,0}}) {
                     ui.label(ctx,b,ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),0,fade=true)
@@ -221,7 +222,7 @@ kai_log_row :: proc(s:^Session,row:^Kai_Row) {
     for &file,k in st.view.picked {
         ui.id_push(ctx,ui.id(ctx,"file",k))
         if kai_file_open_row(ctx,&file) {
-            if message:=kai_detail_open(s,.Changes,row.revision,file.path);message!="" {notify(s,message)}
+            if message:=kai_detail_open(s,row.revision,file.path);message!="" {notify(s,message)}
         }
         ui.id_pop(ctx)
     }

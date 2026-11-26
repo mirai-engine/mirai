@@ -83,6 +83,7 @@ Agent :: struct {
     pulls:[dynamic]Pull,
     waits:[dynamic]^Ddc_Wait,
     changed:bool,
+    generation:u64, // one more each time what agent_peers, agent_pulls, agent_events or the heads give changes
     allocator:runtime.Allocator,
 }
 
@@ -230,6 +231,13 @@ agent_changed :: proc(a:^Agent) {
 // The port it listens at, 0 when none.
 agent_port :: proc(a:^Agent) -> int {return a.port}
 
+// What changes each time the peers, the pulls, the events or the heads this
+// machine holds change: a view reads the agent again only when it moved.
+agent_generation :: proc(a:^Agent) -> u64 {return sync.atomic_load(&a.generation)}
+
+@(private)
+agent_moved :: proc(a:^Agent) {sync.atomic_add(&a.generation,1)}
+
 // Where this machine listens on its LAN, host:port, in allocator: what an
 // invite carries. A machine outside the LAN reaches it only where its router
 // forwards the port.
@@ -306,6 +314,7 @@ agent_event :: proc(a:^Agent,format:string,args:..any) {
         ordered_remove(&a.events,0)
     }
     text_add(&a.events,fmt.tprintf(format,..args),a.allocator)
+    agent_moved(a)
 }
 
 // --- Connections ---
@@ -489,6 +498,7 @@ peer_read_run :: proc(p:^Peer) {
         sync.mutex_lock(&a.lock)
         sync.cond_broadcast(&a.wake)
         sync.mutex_unlock(&a.lock)
+        agent_moved(a)
     }
     if p.conn==nil {
         c,e:=conn_accept(p.socket,p.remote,a.team.identity)
@@ -510,6 +520,7 @@ peer_read_run :: proc(p:^Peer) {
     sync.mutex_lock(&p.lock)
     p.ready=true
     sync.mutex_unlock(&p.lock)
+    agent_moved(a)
     p.server=thread.create_and_start_with_poly_data(p,peer_serve_run,context)
     p.puller=thread.create_and_start_with_poly_data(p,peer_pull_run,context)
     buffer,be:=make([]u8,FRAME_MAX+NOISE_TAG)
@@ -885,6 +896,7 @@ agent_pull_get :: proc(a:^Agent,org:Org_Id,repo:Repo_Id) -> Pull {
 
 @(private)
 agent_pull_set :: proc(a:^Agent,pull:Pull) {
+    agent_moved(a)
     sync.mutex_lock(&a.lock)
     defer sync.mutex_unlock(&a.lock)
     for &x in a.pulls {
@@ -1248,6 +1260,7 @@ agent_tell_changes :: proc(a:^Agent) {
     }
     sync.mutex_unlock(&a.lock)
     if len(moved)==0 {return}
+    agent_moved(a)
     for p in peers {
         theirs:=make([dynamic]Tell_Entry,context.temp_allocator)
         for m in moved {
