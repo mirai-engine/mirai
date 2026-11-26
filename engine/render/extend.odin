@@ -514,6 +514,27 @@ batch_set :: proc(renderer:^Renderer,world:core.World_Id,handle:Batch_Handle,des
     return gpu.batch_set(renderer,handle,world_key(world),desc,instances,colors)
 }
 
+Ground_Chunk :: gpu.Ground_Chunk
+GROUND_CHUNKS_MAX :: gpu.GROUND_CHUNKS_MAX
+
+// Registers a chunk of the ground of the world shown, so that what stands on
+// it reads its color (mirai_ground_color of the material programs): the
+// instance that draws it (instance_of), the square of the world it covers,
+// GROUND_TEXELS samples a side, and a revision that changes when what it
+// shows does. The renderer bakes it, and again with another revision. The
+// chunks are those of one regular grid; every one is given again when the
+// indices of the instances change (instance_revision). False for a chunk off
+// that grid, with the error of the renderer, and for one past the chunks the
+// renderer keeps at once, which reads as ground without a color.
+ground_chunk_set :: proc(renderer:^Renderer,world:core.World_Id,chunk:Ground_Chunk) -> bool {
+    return renderer!=nil && gpu.ground_chunk_set(renderer,world_key(world),chunk)
+}
+
+// Lets go of the chunk that starts at low (x and z); false without one.
+ground_chunk_remove :: proc(renderer:^Renderer,world:core.World_Id,low:[2]f32) -> bool {
+    return renderer!=nil && gpu.ground_chunk_remove(renderer,world_key(world),low)
+}
+
 // False for a handle that names no batch.
 batch_remove :: proc(renderer:^Renderer,handle:Batch_Handle) -> bool {
     return renderer!=nil && gpu.batch_remove(renderer,handle)

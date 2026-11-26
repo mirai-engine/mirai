@@ -2641,3 +2641,133 @@ material_anisotropy_keeps_its_bent_reflection_with_the_probe_volume :: proc(t: ^
 	testing.expectf(t, abs(probed_along - sky_along) < sky_along * 0.35, "as bright: %v against %v", probed_along, sky_along)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
+
+// The yellow ground with red lines every metre that the chunks of the tests
+// show, by its program, over a blue row; and what stands on it, which glows
+// with the color of the ground under it, or blue where the ground keeps none.
+@(private = "file")
+ground_materials :: proc(t: ^testing.T, r: ^Renderer) -> bool {
+	grid, grounded := program_find(r, "Grid", .Surface), program_find(r, "Grounded", .Surface)
+	if !testing.expect(t, grid != nil && grounded != nil, "the tests have the Grid and Grounded programs") {return false}
+	soil, grass := DEFAULT_MATERIAL, DEFAULT_MATERIAL
+	soil.base_color = {0, 0, 1}
+	soil.program_id = grid.id
+	soil.custom_params = program_defaults(grid)
+	testing.expect(t, program_parameter_set(&soil.custom_params, program_parameter(grid, "color"), {0.9, 0.9, 0.05, 0}))
+	testing.expect(t, program_parameter_set(&soil.custom_params, program_parameter(grid, "line_color"), {0.9, 0.05, 0.05, 0}))
+	grass.program_id = grounded.id
+	grass.custom_params = program_defaults(grounded)
+	materials_set(r, {soil, grass})
+	return true
+}
+
+// A square of `size` metres on the ground whose lowest corner is at low.
+@(private = "file")
+ground_square :: proc(low: [2]f32, size, height: f32) -> Mat4 {
+	m := scale_matrix(size)
+	m[0, 3], m[1, 3], m[2, 3] = low.x + size / 2, height, low.y + size / 2
+	return m
+}
+
+@(private = "file")
+ground_texels :: proc(t: ^testing.T, f: ^Fixture, slot: int) -> [][4]u8 {
+	texels := make([][4]u8, GROUND_TEXELS * GROUND_TEXELS, context.temp_allocator)
+	rhi.device_wait_idle(f.device)
+	testing.expect(t, rhi.texture_read(f.device, f.renderer.ground.slots[slot].texture, ([^]u8)(raw_data(texels))[:len(texels) * 4]), rhi.device_error(f.device))
+	return texels
+}
+
+// The texel of a sample of a chunk holds the ground at that sample: a line of
+// the ground every ten samples falls on every tenth texel, and two chunks hold
+// the same along the edge they share. Where the instance of a chunk has no
+// ground the texels cover nothing. What reads the color takes the ground under
+// it over a chunk, across the edge of two, and its fallback over a hole of one
+// and where no chunk is. With the rays of either tracer.
+@(test)
+the_color_of_the_ground_is_baked_on_its_samples_and_read_with_a_fallback :: proc(t: ^testing.T) {
+	for mode in ([]Trace_Mode{.Auto, .Software}) {ground_baked_and_read(t, mode)}
+}
+
+@(private = "file")
+ground_baked_and_read :: proc(t: ^testing.T, mode: Trace_Mode) {
+	f: Fixture
+	settings := material_settings()
+	settings.trace_mode = mode
+	if !fixture_init(t, &f, 64, 64, settings, programs = true) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	if !ground_materials(t, r) {return}
+	quad := ground_quad(r)
+	SIZE :: f32(25.5) // a sample every 0.1 m
+	// Two chunks side by side along x, and a third behind the first whose mesh is a quarter of it.
+	chunks := [][2]f32{{0, 0}, {SIZE, 0}, {0, SIZE}}
+	Spot :: struct {at: [2]f32, ground: bool}
+	spots := []Spot{{{7.5, 7.5}, true}, {{SIZE + 7.5, 3.5}, true}, {{SIZE, 12.5}, true}, {{4.5, SIZE + 4.5}, true}, {{20.5, SIZE + 20.5}, false}, {{-9.5, -9.5}, false}}
+	instances := make([dynamic]Instance_Desc, context.temp_allocator)
+	for low, i in chunks {append(&instances, Instance_Desc{object_id = u64(i + 1), mesh = quad, transform = ground_square(low, SIZE / 2 if i == 2 else SIZE, 0), material = 1, tint = {1, 1, 1}})}
+	for spot, i in spots {append(&instances, Instance_Desc{object_id = u64(i + 10), mesh = quad, transform = ground_square(spot.at - 0.2, 0.4, 0.5), material = 2, tint = {1, 1, 1}})}
+	testing.expect(t, scene_given(r, instances[:], nil, {}, {}), r.error)
+	for low, i in chunks {testing.expect(t, ground_chunk_set(r, 0, {instance = u32(i), low = low, size = SIZE, revision = 1}), r.error)}
+	frames(t, &f, OVERHEAD, 6)
+	g := &r.ground
+	for slot, i in g.slots[:len(chunks)] {testing.expectf(t, slot.baked && !slot.stale, "chunk %d is baked: %v", i, slot)}
+	first, beside, quarter := ground_texels(t, &f, 0), ground_texels(t, &f, 1), ground_texels(t, &f, 2)
+	row := 5 * GROUND_TEXELS
+	for k in 1 ..< 25 {
+		on, off := first[row + 10 * k], first[row + 10 * k + 5]
+		testing.expectf(t, int(on.g) + 20 < int(off.g) && on.a == 255 && off.a == 255, "sample %d is on a line and sample %d is not: %v, %v", 10 * k, 10 * k + 5, on, off)
+	}
+	for j in 0 ..< GROUND_TEXELS {
+		a, b := first[j * GROUND_TEXELS + GROUND_TEXELS - 1], beside[j * GROUND_TEXELS]
+		same := a.a == 255 && b.a == 255
+		for channel in 0 ..< 3 {same &&= abs(int(a[channel]) - int(b[channel])) <= 2}
+		if !testing.expectf(t, same, "row %d: the edge two chunks share holds %v in one and %v in the other", j, a, b) {break}
+	}
+	testing.expect_value(t, quarter[50 * GROUND_TEXELS + 50].a, 255)
+	testing.expect_value(t, quarter[200 * GROUND_TEXELS + 200], [4]u8{})
+	for spot in spots {
+		camera := OVERHEAD
+		camera.position = {spot.at.x, 2.5, spot.at.y}
+		seen := screen_color(t, &f, camera, {spot.at.x, 0.5, spot.at.y})
+		if spot.ground {
+			testing.expectf(t, seen.g > 100 && seen.r > 100 && seen.b < 60, "over %v it shows the ground: %v", spot.at, seen)
+		} else {
+			testing.expectf(t, seen.b > 100 && seen.g < 40, "over %v it shows its fallback: %v", spot.at, seen)
+		}
+	}
+	// A chunk let go reads as no ground from the next frame.
+	testing.expect(t, ground_chunk_remove(r, 0, chunks[0]))
+	camera := OVERHEAD
+	camera.position = {7.5, 2.5, 7.5}
+	seen := screen_color(t, &f, camera, {7.5, 0.5, 7.5})
+	testing.expectf(t, seen.b > 100 && seen.g < 40, "over a chunk let go it shows its fallback: %v", seen)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
+// While the pipeline of the points of a program is made, its points read as
+// the rows of their materials: a chunk is not baked from them. It waits, and
+// holds what its program gives once the pipeline is there.
+@(test)
+the_color_of_the_ground_waits_for_the_pipelines_of_its_programs :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, material_settings(), desc = {pipeline_thread = true}, programs = true) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	program_graphics_destroy(r)
+	points_pipelines_destroy(r)
+	if !ground_materials(t, r) {return}
+	testing.expect(t, scene_given(r, {{object_id = 1, mesh = ground_quad(r), transform = ground_square({0, 0}, 25.5, 0), material = 1, tint = {1, 1, 1}}}, nil, {}, {}), r.error)
+	testing.expect(t, ground_chunk_set(r, 0, {instance = 0, low = {0, 0}, size = 25.5, revision = 1}), r.error)
+	testing.expect(t, fixture_frame(&f, {camera = OVERHEAD}), r.error)
+	slot := &r.ground.slots[0]
+	testing.expectf(t, renderer_pipelines_pending(r) >= 1 && slot.stale && !slot.baked, "the chunk waits while %d pipelines are made: %v", renderer_pipelines_pending(r), slot^)
+	for _ in 0 ..< 8 {
+		if slot.baked {break}
+		renderer_pipelines_wait(r)
+		frames(t, &f, OVERHEAD, 2)
+	}
+	testing.expect(t, slot.baked && !slot.stale)
+	texel := ground_texels(t, &f, 0)[125 * GROUND_TEXELS + 125]
+	testing.expectf(t, texel.g > 150 && texel.b < 80 && texel.a == 255, "the chunk holds what its program gives, not its blue row: %v", texel)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}

@@ -69,7 +69,9 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   points, `points.odin`, `program_stages.odin`, deferred glass filters, pipelines on the renderer
   thread) → [programs](references/materials.md#surface-programs-in-rays-and-raster); programs that
   move vertices (`//! vertex`, `displace.odin`) →
-  [vertex functions](references/materials.md#vertex-functions); texture levels
+  [vertex functions](references/materials.md#vertex-functions); the color of the ground under
+  what stands on a terrain (`mirai_ground_color`, `ground.odin`) →
+  [ground color](references/materials.md#ground-color); texture levels
   by what the GPU samples, `textures_pending` →
   [residency](references/materials.md#residency-by-sampling)
 - Decals (`Alpha_Mode.Decal`, what they write, their order, decal targets, the `Decal` stage) →

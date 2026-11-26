@@ -775,6 +775,24 @@ float2 mirai_texture_size(uint index) {
     texture_feedback(index, -FLT_MAX);
     return float2(texture_size(material_textures[mirai_nonuniform(index)], 0));
 }
+// The table of the chunks (render/ground.odin) names the texture of the chunk
+// of the place: its samples are the centers of its texels, so the read stays
+// in the chunk and meets its neighbor's at the edge they share. The texels
+// hold their color times what they cover.
+float4 mirai_ground_color(Mirai_Surface_Context ctx, float3 world_position, float4 fallback) {
+    if (frame.ground_table == 0u) return fallback;
+    float2 at = (world_position.xz - frame.ground.xy) * frame.ground.z;
+    int2 chunk = int2(floor(at));
+    if (any(chunk < 0) || any(chunk >= int(GROUND_TABLE))) return fallback;
+    float4 entry = material_textures[mirai_nonuniform(frame.ground_table)].Load(int3(chunk, 0));
+    uint index = uint(round(entry.r * 255.0)) | (uint(round(entry.g * 255.0)) << 8u);
+    if (index == 0u) return fallback;
+    float span = float(GROUND_TEXELS - 1u) / float(GROUND_TEXELS);
+    float2 uv = (at - float2(chunk)) * span + 0.5 / float(GROUND_TEXELS);
+    float widen = frame.ground.z * span;
+    float4 color = material_textures[mirai_nonuniform(index)].SampleGrad(linear_sampler, uv, ctx.position_dx.xz * widen, ctx.position_dy.xz * widen);
+    return float4(fallback.rgb * (1.0 - color.a) + color.rgb, color.a + fallback.a * (1.0 - color.a));
+}
 float4 mirai_sample_texture_projected(Mirai_Surface_Context ctx, uint index, float3 u, float3 v, float metres) {
     float scale = 1.0 / max(metres, 1e-6);
     // On the grid of the world: what the origin adds to the turns of the texture.

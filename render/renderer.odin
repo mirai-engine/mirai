@@ -66,6 +66,7 @@ Settings :: struct {
 	sun_shadows:           bool, // rays go to the sun; off, it lights everything it faces
 	glass_layers:          u32,  // nearest blended surfaces of a pixel lit once per pixel with refraction (1 to GLASS_LAYERS_MAX); the ones behind are drawn forward
 	sun_radius:           f32, // angular radius of the sun, radians
+	ground_chunks:        u32, // chunks of terrain that keep the color of their ground at once (ground.odin), up to GROUND_CHUNKS_MAX: GROUND_CHUNK_BYTES each
 }
 
 // Outlines drawn after tonemapping around instances with an outline level:
@@ -97,6 +98,7 @@ DEFAULT_SETTINGS :: Settings{
 	texture_pool_megabytes = 1024, page_pool_bytes = 256 << 20,
 	glass_layers = 1,
 	sun_radius = SUN_RADIUS,
+	ground_chunks = 16,
 }
 
 // The sun as seen from the Earth: 0.27 degrees.
@@ -113,6 +115,7 @@ CPU_DEVICE_SETTINGS :: Settings{
 	texture_pool_megabytes = 256, page_pool_bytes = 128 << 20,
 	glass_layers = 1,
 	sun_radius = SUN_RADIUS,
+	ground_chunks = 4,
 }
 
 // How a camera turns what is in front of it into an image.
@@ -307,6 +310,7 @@ Pipeline_Id :: enum {
 	Light_Lists, // the lists of the lights without shadows of the tiles of a view (light_lists.comp)
 	Direct_Maps, Direct_Rays, Direct_Samples, Direct_Points, Direct_Spread, Direct_Filter,
 	Ddgi_Trace, Ddgi_Irradiance, Ddgi_Distance, Ddgi_Keep,
+	Ground_Bake, // the color of the ground of a chunk (ground.odin)
 	Ddgi_Relocate, Ddgi_Select, Ddgi_Touch, Ddgi_Mark, Contact, Contact_Light, Contact_Pixels, Composite, Subsurface, Taa, Hiz,
 	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values,
 	Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter,
@@ -669,6 +673,7 @@ Renderer :: struct {
 	world_switched:       bool, // the next frame follows another world: it keeps the delta time of the one before
 	kept:                 [WORLDS_MAX - 1]World_Light, // the light of the worlds not shown
 	kept_count:           int,
+	ground:               Ground, // the color of the ground under what reads it (ground.odin)
 	points:               Material_Points, // where the passes of a frame need a material program evaluated (points.odin)
 	vertex_stages:        Program_Computes, // of surface_vertices__<program>.comp, which move the vertices of instances (displace.odin)
 	program_graphics:     [PROGRAM_GRAPHICS_CAPACITY]Program_Graphics, // the raster stages of Surface programs (program_stages.odin)
@@ -840,6 +845,7 @@ renderer_destroy :: proc(r: ^Renderer) {
 	extension_counters_destroy(r)
 	extension_readbacks_destroy(r)
 	points_destroy(r)
+	ground_destroy(r)
 	ui_offscreen_destroy(r)
 	impostor_gpu_destroy(d, &r.impostor)
 	textures_clear(r)
@@ -999,6 +1005,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Direct_Spread, .Direct_Spread_Comp)
 	traced(list, r, .Direct_Filter, .Direct_Filter_Comp, .Direct_Filter_Hw_Comp)
 	traced(list, r, .Ddgi_Trace, .Ddgi_Trace_Comp, .Ddgi_Trace_Hw_Comp)
+	traced(list, r, .Ground_Bake, .Ground_Bake_Comp, .Ground_Bake_Hw_Comp)
 	compute(list, r, .Ddgi_Irradiance, .Ddgi_Irradiance_Comp)
 	compute(list, r, .Ddgi_Keep, .Ddgi_Keep_Comp)
 	compute(list, r, .Ddgi_Distance, .Ddgi_Distance_Comp)

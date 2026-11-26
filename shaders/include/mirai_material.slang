@@ -218,6 +218,7 @@ float4 mirai_sample_texture_grad(uint index, float2 uv, float2 dx, float2 dy) {r
 float4 mirai_sample_texture_projected(Mirai_Surface_Context ctx, uint index, float3 u, float3 v, float metres) {return float4(1);}
 float2 mirai_texture_size(uint index) {return float2(1);}
 float4 mirai_load_texture(uint index, int2 texel) {return float4(1);}
+float4 mirai_ground_color(Mirai_Surface_Context ctx, float3 world_position, float4 fallback) {return fallback;}
 float4 mirai_scene_color(Mirai_PostProcess_Context ctx, float2 uv) {return ctx.color;}
 float mirai_scene_depth(Mirai_PostProcess_Context ctx, float2 uv) {return ctx.depth;}
 float3 mirai_scene_normal(Mirai_PostProcess_Context ctx, float2 uv) {return ctx.normal;}
@@ -253,6 +254,14 @@ float2 mirai_texture_size(uint index);
 // A texel of the level 0 of a texture that does not stream, as a plugin writes
 // its data (a map of weights, a table), unfiltered: no residency follows it.
 float4 mirai_load_texture(uint index, int2 texel);
+// The base color of the ground under a place (relative to the origin, as
+// ctx.world_position), as the terrain there shows it, from above: rgb, and in
+// a what of the place it covers. What stands on the ground takes its color
+// from it with one sample (grass that matches the soil it grows on) instead
+// of the material of the terrain. Where no terrain keeps the color of its
+// ground (none there, a hole of it, one not baked yet) it gives fallback, and
+// at the edge of a hole a blend of both.
+float4 mirai_ground_color(Mirai_Surface_Context ctx, float3 world_position, float4 fallback);
 // What an effect reads at any uv of the image, 0 to 1 from the top left
 // corner, as ctx holds it for its own pixel.
 float4 mirai_scene_color(Mirai_PostProcess_Context ctx, float2 uv);
