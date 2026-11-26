@@ -45,3 +45,14 @@ bash it is `mirai`; from PowerShell `mirai.cmd`; from Python `subprocess` the ab
   `mirai check game` and `mirai test game` take a package relative to the folder you are in.
 - `mirai build game .` builds the game fast; add `--release` for the build you ship.
 - `mirai build editor .` builds the library of the editor.
+
+## Project notes
+
+Keep this section updated after meaningful work so future agents do not repeat investigations or
+regressions. Record:
+- **Current state:** working features, recent engine/plugin pins, and verified scenarios/tests.
+- **Source quirks (do not "fix"):** verified quirks of the source game/engine or reference captures
+  (e.g., an authentic asset scale, clip motion, or source-engine rendering bug that Mirai should
+  not imitate).
+- **Pitfalls & workflows:** re-import steps, companion tool repos/branches, and deliberate design
+  decisions.

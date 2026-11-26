@@ -74,6 +74,9 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
   `Medium` when visual, or `playtester` / `play.explore`).
 - **Separate engine refactors from game ports.** Keep large engine/DoD refactors in dedicated
   threads/branches instead of mixing them into a game-port thread.
+- **Project `AGENTS.md`.** Every game project keeps an `AGENTS.md` at its root with current state,
+  verified source-game/engine quirks (so agents do not chase phantom differences), and pitfalls.
+  Read it before changing a project and update it when you finish meaningful work there.
 - **Done & scope.** Every requested point implemented and verified per
   [Verification](#verification); list anything unverified or approximate. Stop and ask if a missing
   piece is structural. Never write new pending-items files (`PLAN_*.md` is active work only).
