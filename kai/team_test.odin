@@ -861,3 +861,65 @@ revoked_invites_admit_nobody :: proc(t:^testing.T) {
     joined,ke:=agent_join(&pc.agent,kept)
     testing.expectf(t,ke==.None && joined==other,"the other org's invite still joins: %v %s",ke,pc.agent.team.why)
 }
+
+// A router on loopback that grants PCP 0.3 s after the first request: the
+// agent says it is connecting, an invite's wait takes the router's address
+// once it answers, and the views hear that it moved.
+@(test)
+an_agent_reaches_online_when_the_router_maps_its_port :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-reach")
+    if folder=="" {return}
+    Router :: struct {socket:net.UDP_Socket,stop:bool}
+    r:=new(Router);defer free(r)
+    socket,se:=net.make_bound_udp_socket(net.IP4_Loopback,0)
+    if !testing.expect(t,se==nil) {return}
+    r.socket=socket
+    defer net.close(socket)
+    net.set_option(socket,.Receive_Timeout,10*time.Millisecond)
+    bound,_:=net.bound_endpoint(socket)
+    router:=thread.create_and_start_with_poly_data(r,proc(r:^Router) {
+        packet:[1200]u8
+        first:time.Tick
+        for !sync.atomic_load(&r.stop) {
+            size,from,e:=net.recv_udp(r.socket,packet[:])
+            if e!=nil || size!=60 || packet[0]!=2 || packet[1]!=1 || packet[4]|packet[5]|packet[6]|packet[7]==0 {continue}
+            if first=={} {first=time.tick_now()}
+            if time.tick_since(first)<300*time.Millisecond {continue}
+            packet[1]=0x81
+            packet[4],packet[5],packet[6],packet[7]=0,0,0x0e,0x10
+            packet[42],packet[43]=0x43,0xe6
+            for &b in packet[44:60] {b=0}
+            packet[54],packet[55]=255,255
+            packet[56],packet[57],packet[58],packet[59]=8,8,8,8
+            net.send_udp(r.socket,packet[:60],from)
+        }
+    })
+    defer {sync.atomic_store(&r.stop,true);thread.join(router);thread.destroy(router)}
+    m:Machine
+    if !machine_open(t,&m,folder,"Ana") {return}
+    defer machine_close(&m)
+    gateway:=fmt.tprintf("127.0.0.1:%d",bound.port)
+    m.running=testing.expect_value(t,agent_start(&m.agent,&m.team,{port=0,host="127.0.0.1",portmap=true,gateway=gateway}),Error.None)
+    if !m.running {return}
+    reach,_:=agent_reach(&m.agent,context.temp_allocator)
+    testing.expect_value(t,reach,Reach.Connecting)
+    generation:=agent_generation(&m.agent)
+    started:=time.tick_now()
+    testing.expect_value(t,agent_reach_wait(&m.agent,1500*time.Millisecond),Reach.Online)
+    testing.expectf(t,time.tick_since(started)<1500*time.Millisecond,"the wait ends when the router answers: %v",time.tick_since(started))
+    at:string
+    reach,at=agent_reach(&m.agent,context.temp_allocator)
+    testing.expect(t,reach==.Online && at=="8.8.8.8:17382",at)
+    addresses:=agent_addresses(&m.agent,context.temp_allocator)
+    testing.expect(t,len(addresses)>=2 && addresses[0]=="8.8.8.8:17382","an invite carries the router's address first")
+    Moved :: struct {a:^Agent,from:u64}
+    moved:=Moved{&m.agent,generation}
+    testing.expect(t,until(3,&moved,proc(data:rawptr) -> bool {
+        x:=(^Moved)(data)
+        return agent_generation(x.a)!=x.from
+    }),"the views hear that the router mapped the port")
+    // A router address that is no host:port is refused.
+    bad:=Agent_Options{port=0,host="127.0.0.1",portmap=true,gateway="no router"}
+    other:Agent
+    testing.expect_value(t,agent_start(&other,&m.team,bad),Error.Invalid_Argument)
+}
