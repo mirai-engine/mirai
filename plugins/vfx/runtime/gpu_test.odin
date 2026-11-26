@@ -785,6 +785,70 @@ mesh_particles_of_a_blending_material_cover_by_their_alpha :: proc(t: ^testing.T
 	expect_clean(t, f.device)
 }
 
+// Two faces 1 across that meet in a ridge toward +z, one turned to -x and one
+// to +x, and nothing behind them.
+@(private = "file")
+ridge_mesh :: proc(r: ^gpu.Renderer) -> (gpu.Mesh_Handle, bool) {
+	s := f32(math.SQRT_TWO) * 0.5
+	vertices := [8]gpu.Mesh_Vertex{
+		{position = {-0.5, -0.5, 0}, normal = {-s, 0, s}, color = {1, 1, 1}, tangent = {s, 0, s, 1}},
+		{position = {0, -0.5, 0.5}, normal = {-s, 0, s}, color = {1, 1, 1}, tangent = {s, 0, s, 1}},
+		{position = {0, 0.5, 0.5}, normal = {-s, 0, s}, color = {1, 1, 1}, tangent = {s, 0, s, 1}},
+		{position = {-0.5, 0.5, 0}, normal = {-s, 0, s}, color = {1, 1, 1}, tangent = {s, 0, s, 1}},
+		{position = {0, -0.5, 0.5}, normal = {s, 0, s}, color = {1, 1, 1}, tangent = {s, 0, -s, 1}},
+		{position = {0.5, -0.5, 0}, normal = {s, 0, s}, color = {1, 1, 1}, tangent = {s, 0, -s, 1}},
+		{position = {0.5, 0.5, 0}, normal = {s, 0, s}, color = {1, 1, 1}, tangent = {s, 0, -s, 1}},
+		{position = {0, 0.5, 0.5}, normal = {s, 0, s}, color = {1, 1, 1}, tangent = {s, 0, -s, 1}},
+	}
+	indices := [12]u32{0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7}
+	return gpu.mesh_add(r, vertices[:], indices[:])
+}
+
+// A lit Mesh particle of a blending material shades the sun by its normal, as
+// the scene shades a surface: its face toward the sun is the brighter, and the
+// other face when the sun goes round.
+@(test)
+lit_mesh_particles_of_a_blending_material_shade_the_sun_by_their_normal :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 128, 128, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	shard := gpu.DEFAULT_MATERIAL
+	shard.base_color, shard.alpha_mode, shard.opacity, shard.roughness = {0.2, 0.15, 0.6}, .Blend, 0.9, 0.6
+	gpu.materials_set(r, {shard})
+	ridge, added := ridge_mesh(r)
+	if !testing.expect(t, added) {return}
+	camera := gpu.Camera{position = {0, 0, 4}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 50, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	shown := test_emitter(1, {0, 0, 0})
+	shown.info.render, shown.material, shown.blended, shown.info.blend, shown.info.lit = .Mesh, 1, true, .Alpha, true
+	if !testing.expect(t, mesh_choices(&shown, f.app.renderer, {ridge}, {1})) {return}
+	shown.info.lifetime, shown.info.size, shown.info.soft, shown.info.facing = {30, 30}, {1.6, 1.6}, 0, .Emitter
+	DT :: f32(1.0 / 60)
+	faces :: proc(t: ^testing.T, f: ^Gpu_Fixture, shown: ^Emitter_Desc, camera: gpu.Camera, sun: [3]f32, first: bool) -> (left, right: f32) {
+		r := &f.renderer
+		gpu.scene_set_environment(r, {direction = sun, color = {1, 0.9, 0.7}, illuminance = 6 * math.PI, enabled = true, indirect = 1, scattering = 1}, {sky = {0.01, 0.01, 0.01}})
+		for i in 0 ..< 8 {
+			shown.spawns = test_burst(1) if first && i == 0 else {}
+			testing.expect(t, frame_emitters(f, &f.sync, {shown^}, DT))
+			testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = f32(i) * DT}), r.error)
+		}
+		rhi.device_wait_idle(f.device)
+		pixels, w, _, ok := gpu.renderer_capture(r)
+		if !testing.expect(t, ok, r.error) {return}
+		defer delete(pixels)
+		a, b := pixel(pixels, w, project(r, camera, {-0.4, 0, 0.4})), pixel(pixels, w, project(r, camera, {0.4, 0, 0.4}))
+		return a[0] + a[1] + a[2], b[0] + b[1] + b[2]
+	}
+	left, right := faces(t, f, &shown, camera, linalg.normalize([3]f32{1, 0.3, 0.6}), true)
+	testing.expectf(t, right > left + 60, "the sun on the right lights the right face %v over the left %v", right, left)
+	left, right = faces(t, f, &shown, camera, linalg.normalize([3]f32{-1, 0.3, 0.6}), false)
+	testing.expectf(t, left > right + 60, "the sun on the left lights the left face %v over the right %v", left, right)
+	expect_clean(t, f.device)
+}
+
 @(test)
 particle_lists_given_between_frames_add_up :: proc(t: ^testing.T) {
 	f := new(Gpu_Fixture)

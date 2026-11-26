@@ -13,6 +13,7 @@
 //! mirai constant RIBBON_PIECES uint ../runtime/gpu.odin
 //! mirai constant TRAILS_PER_SECOND uint ../runtime/gpu.odin
 //! mirai constant MESH_CHOICE_SHIFT uint ../runtime/gpu.odin
+//! mirai constant SUN_SHIFT uint ../runtime/gpu.odin
 //! mirai constant PARTICLE_MESHES uint ../runtime/effect/effect.odin
 // Particles: the pool, the emitters and what the passes share. Layouts are
 // those of gpu.odin of the vfx plugin (sizes asserted there).
@@ -29,7 +30,7 @@ struct Particle {
     uint color;                     // rgba8 of the square root of the linear color
     uint light;                     // rgb with a shared exponent: the light it receives
     uint emitter;                   // slot
-    uint flags;                     // 1: light holds a value; from MESH_CHOICE_SHIFT, the mesh of a Mesh particle; from RIBBON_PIECES_SHIFT, the pieces of the segment it starts; above RIBBON_SHIFT, the ribbon it joins
+    uint flags;                     // 1: light holds a value; from MESH_CHOICE_SHIFT, the mesh of a Mesh particle; from RIBBON_PIECES_SHIFT, the pieces of the segment it starts; at SUN_SHIFT, the sun reaches a lit Mesh particle; above RIBBON_SHIFT, the ribbon it joins
 };
 
 #define PARTICLE_SPAWNS 8u

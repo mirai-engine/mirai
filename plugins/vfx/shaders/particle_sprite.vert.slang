@@ -18,7 +18,7 @@ struct Params_Block { uint emitter; uint pass; uint pad0; uint pad1; };
 struct Stage_Output {
     float4 position : SV_Position;
     [[vk::location(0)]] float4 out_color : TEXCOORD0;
-    [[vk::location(1)]] float3 out_light : TEXCOORD1;
+    [[vk::location(1)]] float4 out_light : TEXCOORD1; // w: the share of the sun the fragment shades by its normal
     [[vk::location(2)]] float4 out_uv : TEXCOORD2;   // two frames of the flipbook
     [[vk::location(3)]] float3 out_blend_depth_life : TEXCOORD3; // between them, the view depth, and the share of its life the particle lived
     [[vk::location(4)]] nointerpolation float out_seed : TEXCOORD4;
@@ -182,7 +182,7 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
     output.position = view_clip(world);
     output.material = particle_emitters[params.emitter].mesh.w;
     output.out_color = look.color;
-    output.out_light = light;
+    output.out_light = float4(light, 0.0);
     float frame_index = floor(look.frame);
     output.out_uv = float4(flipbook_uv(particle_emitters[params.emitter].flipbook.xy, uv, frame_index), flipbook_uv(particle_emitters[params.emitter].flipbook.xy, uv, frame_index + 1.0));
     output.out_blend_depth_life = float3(look.frame - frame_index, dot(world - frame.camera_position.xyz, frame.camera_forward.xyz), life);

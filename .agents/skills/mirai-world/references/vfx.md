@@ -305,6 +305,14 @@ program in the units of its emitter (`Particle_Info.emission_mode`, `PARTICLE_FL
 Relative by default, so it shows by day and by night); a lit one takes the emission mode of its
 material.
 
+A lit (`Particle_Info.lit`) particle is lit by what the simulate pass gathers at its center every
+other frame (local lights, probes) into its RGBE `light`. A sprite, ribbon or beam takes the sun
+there too, as a puff with no surface. A blended `Mesh` takes the sun where it is drawn instead:
+the traced sun visibility is the `SUN_SHIFT` bit of its flags, and `particle_sprite.frag` shades it
+with the fragment normal (or that of its Surface program), base color, roughness and metallic by
+`sun_radiance`, the term of the sun `direct_lighting` uses for the scene. Opaque mesh particles are
+lit in the G-buffer like any surface; translucent scene meshes by `translucent.frag`.
+
 ## Ribbons
 
 Particles join ribbons via `flags >> RIBBON_SHIFT` (`particle_own_ribbon` from event seed or

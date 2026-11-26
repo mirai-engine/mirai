@@ -180,6 +180,15 @@ float3 sun_light(float3 position) {
     return frame.sun_color.rgb * air_sun(frame.air, r, frame.sun_direction.y);
 }
 
+// What the sun sends from a surface towards its eye with nothing in its way, share of
+// it (the light a pass takes of the sun); a surface without a normal takes it whole.
+float3 sun_radiance(Shading s, float share = 1.0) {
+    if (frame.sun_direction.w < 0.5 || !(share > 0.0)) return float3(0.0);
+    float cosine = dot(s.normal, s.normal) > 0.5 ? dot(s.normal, frame.sun_direction.xyz) : 1.0;
+    if (cosine <= 0.0) return float3(0.0);
+    return sun_light(s.position) * (cosine * share) * shading_response(s, frame.sun_direction.xyz);
+}
+
 // The illuminance of the sun above the air, render units: sun_color is the
 // light that reaches the ground with the sun overhead unless the sky on is
 // the atmosphere (a change from one).
