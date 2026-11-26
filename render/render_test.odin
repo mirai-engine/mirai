@@ -3936,6 +3936,121 @@ render_many_overlapping_instances_stay_valid :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// The depth pyramid keeps, in each texel, the farthest depth of the pixels it
+// covers as the depth target holds it (the least reverse Z, 0 where nothing
+// is), at sizes whose last texels cover part of their share: what lies past
+// the view never takes the place of a pixel in it.
+@(test)
+render_the_depth_pyramid_keeps_the_farthest_depth_of_its_pixels :: proc(t: ^testing.T) {
+	for size in ([3][2]u32{{250, 180}, {77, 45}, {64, 48}}) {
+		f: Cube_Fixture
+		settings := test_settings()
+		settings.gi_enabled = false
+		settings.taa = false
+		if !cube_fixture_init(t, &f, size.x, size.y, settings) {return}
+		defer fixture_destroy(&f)
+		r := f.renderer
+		instances := []Instance_Desc{
+			{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 8}), tint = {0.5, 0.5, 0.5}},
+			{object_id = 2, mesh = f.cube, transform = trs({1, 0.6, 0}, {0.8, 1.2, 0.8}), tint = {1, 1, 1}},
+			{object_id = 3, mesh = f.cube, transform = trs({-3, 6, -30}, {0.3, 0.3, 0.3}), tint = {1, 1, 1}},
+		}
+		scene_given(r, instances, nil, {}, {})
+		camera := Camera{position = {0, 3, 9}, forward = {0, -0.25, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+		for _ in 0 ..< 3 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+		rhi.device_wait_idle(f.device)
+		v := &r.main.targets
+		width, height := int(v.width), int(v.height)
+		depth := make([]f32, width * height, context.temp_allocator)
+		if !testing.expect(t, rhi.texture_read(f.device, v.depth, slice.to_bytes(depth)), rhi.device_error(f.device)) {return}
+		pyramid := v.hiz[(r.main.frames - 1) % 2]
+		desc := rhi.texture_desc(f.device, pyramid)
+		below, below_size := depth, [2]int{width, height}
+		empty := 0
+		for value in depth {empty += int(value == 0)}
+		testing.expectf(t, empty > 0 && empty < len(depth), "%v: the view shows the sky and surfaces: %d of %d pixels empty", size, empty, len(depth))
+		for level in 0 ..< int(v.hiz_levels) {
+			side := [2]int{int(max(desc.width >> u32(level), 1)), int(max(desc.height >> u32(level), 1))}
+			copy := rhi.texture_create(f.device, {width = u32(side.x), height = u32(side.y), format = .R32_Float, usage = {.Sampled}, name = "pyramid level"})
+			defer rhi.texture_destroy(f.device, copy)
+			cmd := rhi.immediate_begin(f.device)
+			rhi.cmd_copy_texture(cmd, pyramid, copy, u32(level), 0)
+			if !testing.expect(t, rhi.immediate_end(f.device, cmd), rhi.device_error(f.device)) {return}
+			texels := make([]f32, side.x * side.y, context.temp_allocator)
+			if !testing.expect(t, rhi.texture_read(f.device, copy, slice.to_bytes(texels)), rhi.device_error(f.device)) {return}
+			level_size := [2]int{(below_size.x + 1) / 2, (below_size.y + 1) / 2}
+			wanted := make([]f32, level_size.x * level_size.y, context.temp_allocator)
+			wrong := 0
+			for y in 0 ..< level_size.y {
+				for x in 0 ..< level_size.x {
+					farthest := f32(1)
+					for k in 0 ..< 4 {
+						at := [2]int{2 * x + k % 2, 2 * y + k / 2}
+						if at.x < below_size.x && at.y < below_size.y {farthest = min(farthest, below[at.y * below_size.x + at.x])}
+					}
+					wanted[y * level_size.x + x] = farthest
+					wrong += int(texels[y * side.x + x] != farthest)
+				}
+			}
+			testing.expectf(t, wrong == 0, "%v: %d texels of level %d of %v are not the farthest depth of their pixels", size, wrong, level, level_size)
+			below, below_size = wanted, level_size
+		}
+		testing.expectf(t, below_size == {1, 1} && below[0] == 0, "%v: the last level is one texel, of the sky: %v %v", size, below_size, below[0])
+		expect_clean(t, f.device)
+	}
+}
+
+// What shows is never taken as hidden by the depth pyramid, not even by
+// itself: a wall that fills the view head on, whose near face lies on its own
+// box, near and a step before the far plane; cubes from a step past the near
+// plane to the far one in front of such a wall, through a perspective and an
+// orthographic camera; and a cube that crosses the near plane. Phase 0 tests
+// against the pyramid of the frame before: in a still view it draws them all.
+@(test)
+render_occlusion_never_hides_what_shows :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 250, 180, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	Case :: enum {Wall_Near, Wall_Far, Perspective, Orthographic, Near_Plane}
+	for c in Case {
+		instances := make([dynamic]Instance_Desc, context.temp_allocator)
+		camera := Camera{position = {0, 0, 0}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+		switch c {
+		case .Wall_Near, .Wall_Far:
+			append(&instances, Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0.3, -0.2, -3.1 if c == .Wall_Near else -99.98}, {300, 300, 0.02}), tint = {0.5, 0.5, 0.5}})
+		case .Perspective:
+			// Each a twentieth of the height of the view, side by side across it.
+			for i in 0 ..< 10 {
+				distance := 0.3 + 10.9 * f32(i) if i < 9 else 99.2
+				append(&instances, Instance_Desc{object_id = u64(i + 1), mesh = f.cube, transform = trs({(f32(i) - 4.5) * 0.09 * distance, 0, -distance}, 0.05 * distance), tint = {1, 1, 1}})
+			}
+			append(&instances, Instance_Desc{object_id = 11, mesh = f.cube, transform = trs({0, 0, -99.7}, {200, 200, 0.2}), tint = {0.5, 0.5, 0.5}})
+		case .Orthographic:
+			camera.projection, camera.height = .Orthographic, 12
+			for i in 0 ..< 10 {
+				append(&instances, Instance_Desc{object_id = u64(i + 1), mesh = f.cube, transform = trs({(f32(i) - 4.5) * 1.5, 0, -1 - 10.8 * f32(i)}, {1, 1, 1}), tint = {1, 1, 1}})
+			}
+			append(&instances, Instance_Desc{object_id = 11, mesh = f.cube, transform = trs({0, 0, -99.7}, {200, 200, 0.2}), tint = {0.5, 0.5, 0.5}})
+		case .Near_Plane:
+			append(&instances, Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0.4, 0, -0.2}, {0.6, 0.6, 0.6}), tint = {1, 1, 1}})
+			append(&instances, Instance_Desc{object_id = 2, mesh = f.cube, transform = trs({0, 0, -6}, {12, 12, 0.2}), tint = {0.5, 0.5, 0.5}})
+		}
+		scene_given(r, instances[:], nil, {}, {sky = {0.2, 0.2, 0.2}})
+		renderer_camera_cut(r)
+		for _ in 0 ..< 6 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+		rhi.device_wait_idle(f.device)
+		stats := renderer_stats_of_last_frame(r)
+		// What the pyramid of the frame before took as hidden phase 1 draws late.
+		testing.expectf(t, stats.occluded_instances == 0 && stats.visible_instances == u32(len(instances)) && stats.visible_late == {}, "%v: every instance shows and on time: %d visible, %d occluded of %d, late %v", c, stats.visible_instances, stats.occluded_instances, len(instances), stats.visible_late)
+		free_all(context.temp_allocator)
+	}
+	expect_clean(t, f.device)
+}
+
 @(test)
 render_occlusion_is_conservative_at_odd_resolutions :: proc(t: ^testing.T) {
 	f: Cube_Fixture

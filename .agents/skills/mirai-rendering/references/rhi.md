@@ -111,9 +111,13 @@ stats := rhi.present_stats(dev)
 
 - Automatic hazard tracking per resource (per-mip for textures, coalescing runs). Vulkan buffers
   render passes and emits barriers before start; targets are 1 mip/layer (sampling same mip or 2
-  mips of target errors). Use `cmd_barrier_*` for host read, texture table or shared textures;
-  Metal self-tracks. Clip space is Y-up, depth `[0, 1]` (reversed Z in `render`). `cmd_fill_buffer`
-  repeats one byte (copy `dispatch_start` for structured words).
+  mips of target errors). Use `cmd_barrier_*` for host read, texture table or shared textures.
+  Vulkan derives every barrier from the bindings of a dispatch or of a pass's draws, and a shader
+  access waits only in the stages of its kind (compute, or vertex and fragment; ray queries of
+  draws in fragment). Metal self-tracks with one serial compute encoder at a time: `render` and
+  plugins record no compute-to-compute barriers, so a concurrent encoder would need that same
+  tracker in the Metal backend. Clip space is Y-up, depth `[0, 1]` (reversed Z in `render`).
+  `cmd_fill_buffer` repeats one byte (copy `dispatch_start` for structured words).
 
 ## Textures shared between processes
 

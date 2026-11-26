@@ -538,7 +538,8 @@ pass_rest_write :: proc(s: ^Stage_Pass, slot: u32) {
 
 // In the Gbuffer stage, binds at SLOT_PASS0 + slot, to read with all its
 // levels, a depth pyramid of the view (include/pyramid.slang tests a box
-// against it): of each texel, the farthest linear depth drawn over it. That of
+// against it): of each texel, the farthest depth drawn over it, as the depth
+// target holds it (the least reverse Z, 0 where nothing is). That of
 // this frame holds what the scene drew and what pass_depth_pyramid_build took
 // since; previous, that of the frame before, what the view drew then. levels:
 // of the pyramid. False, with an empty texture bound there, in another stage

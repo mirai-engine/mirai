@@ -68,7 +68,7 @@ void box_before(Instance inst, float3 low, float3 high, out float3 before_low, o
 
 // True when the box is entirely behind the farthest depth the pyramid of the
 // pass holds over its footprint (pyramid.slang).
-bool occluded(float3 bmin, float3 bmax, float4x4 view_proj, float3 eye, float4 depth_plane) {
-    return pyramid_hides(hiz, params.hiz_levels, bmin, bmax, view_proj, eye, depth_plane);
+bool occluded(float3 bmin, float3 bmax, float4x4 view_proj, float3 eye) {
+    return pyramid_hides(hiz, params.hiz_levels, bmin, bmax, view_proj, eye);
 }
 #endif

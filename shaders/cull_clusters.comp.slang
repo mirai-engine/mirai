@@ -204,7 +204,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatc
         high += reach;
     }
     if (MIRAI_CULL_CANDIDATES) {
-        if (boxed && occluded(low, high, frame.view_proj_unjittered, frame.camera_position.xyz, frame.depth_plane)) return;
+        if (boxed && occluded(low, high, frame.view_proj_unjittered, frame.camera_position.xyz)) return;
     } else {
         float scale = instance_scale(inst);
         Cluster_Cut cut = cluster_cut(view_detail(), inst, scale, mesh, c, frame.cut.x);
@@ -220,7 +220,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatc
                 if (params.phase == 0u) {
                     float3 before_low, before_high;
                     box_before(inst, low, high, before_low, before_high);
-                    if (occluded(before_low, before_high, frame.prev_view_proj, frame.prev_eye.xyz, frame.prev_depth_plane)) {
+                    if (occluded(before_low, before_high, frame.prev_view_proj, frame.prev_eye.xyz)) {
                         uint slot;
                         InterlockedAdd(cull_state[CULL_CANDIDATE_COUNT], 1u, slot);
                         if (slot < params.candidate_capacity) {
@@ -232,7 +232,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatc
                         }
                         return;
                     }
-                } else if (occluded(low, high, frame.view_proj_unjittered, frame.camera_position.xyz, frame.depth_plane)) {
+                } else if (occluded(low, high, frame.view_proj_unjittered, frame.camera_position.xyz)) {
                     return;
                 }
             }
