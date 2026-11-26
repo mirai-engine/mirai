@@ -208,6 +208,8 @@ Entity selectors and transactions: [api.md](api.md#method-conventions).
   - Supports `preset` (recipe name; enabling a `Sun` disables the previous one), `prefab` (linked
     instance), and `copy` (deep clone with new ids). Prefab non-root members cannot reparent out of
     their instance. Returns `created: [{id, name}]`.
+  - A rotation is `rotation_deg` (what the document of a scene shows) or `rotation`, the
+    quaternion `[x, y, z, w]` kept to the last bit (`content.transform` writes it); never both.
 
 ```json
 {"root": "Arena", "entities": [

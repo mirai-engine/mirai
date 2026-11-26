@@ -57,12 +57,13 @@ added when missing) hold those rows of the record type, in that order, and no ot
 
 `content.scene_write(&w,path,document)` makes the scene or prefab at `path` say what the document
 declares: the document of `mirai scene` and `scene.write` ([text-sources](text-sources.md#a-scene)),
-validated by the same code. `content.component(&w,value)` writes a component of the game as that
-document takes it:
+validated by the same code. `content.component(&w,value)` writes a component as that document
+takes it, and `content.transform(value)` a `core.Transform` as entity keys, its rotation whole:
 
 ```odin
 crate:=content.component(&w,game.Crate{weight=3})
-content.scene_write(&w,"arena/crates.scene",fmt.tprintf(`{{"entities":[{{"name":"Crate","components":{{"Crate":%s}}}}]}}`,crate))
+place:=content.transform({position={2,0,4},rotation=tilt,scale={1,1,1}})
+content.scene_write(&w,"arena/crates.scene",fmt.tprintf(`{{"entities":[{{"name":"Crate",%s,"components":{{"Crate":%s}}}}]}}`,place,crate))
 ```
 
 ## Texture

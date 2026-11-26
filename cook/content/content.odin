@@ -269,6 +269,21 @@ component :: proc(w:^Writer,value:$T) -> string {
     return text
 }
 
+// The transform of an entity as the document of a scene takes it, the keys
+// of its entity: its position, its rotation whole (the quaternion, which the
+// scene keeps to the last bit, where rotation_deg would round it) and its
+// scale.
+transform :: proc(value:core.Transform) -> string {
+    value:=value
+    out:serial.Writer
+    serial.writer_init(&out,192,context.temp_allocator)
+    rotation:=[4]f32{value.rotation.x,value.rotation.y,value.rotation.z,value.rotation.w}
+    serial.text_write_raw(&out,`"position":`);serial.json_list(&out,value.position[:])
+    serial.text_write_raw(&out,`,"rotation":`);serial.json_list(&out,rotation[:])
+    serial.text_write_raw(&out,`,"scale":`);serial.json_list(&out,value.scale[:])
+    return string(serial.writer_bytes(&out))
+}
+
 // ---------------------------------------------------------------- meshes
 
 // Writes a mesh made from code (geom.*_build, one Mesh_Buffer per asset) to

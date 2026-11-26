@@ -2,6 +2,7 @@ package author
 
 import "base:runtime"
 import "core:fmt"
+import "core:math/linalg"
 import "core:mem"
 import "core:slice"
 import "core:strings"
@@ -20,7 +21,10 @@ import "mirai:std/serial"
 //   {"root": "Yard/Lamp", "replace": true, "kind": "Prefab", "entities": [...]}
 //
 // Entities nest by children and give what differs from a new entity: their
-// transform local to the parent, being hidden or off, and by name the
+// transform local to the parent (its rotation as rotation_deg, the angles in
+// degrees a person writes and the document of a scene shows, or as rotation,
+// the quaternion [x, y, z, w] itself, which code that has one gives to keep
+// it to the last bit), being hidden or off, and by name the
 // components they have with the fields that differ from the value a
 // component starts with. A preset names a recipe and stands for the
 // components it gives; a new entity with prefab is a linked instance
@@ -183,7 +187,9 @@ Scene_Entity :: struct {
     id:base.Entity_Id, // 0: none given
     name:string,       // "": none given
     position,rotation_deg,scale:[3]f32,
+    rotation:mm.Quat,  // of "rotation": the rotation itself, where rotation_deg says its angles
     has_position,has_rotation,has_scale:bool,
+    has_quaternion:bool,
     hidden,disabled:bool,
     has_visible,has_enabled:bool,
     delete:bool,
@@ -195,7 +201,7 @@ Scene_Entity :: struct {
     keeps:bool,        // what it leaves out stays
 }
 
-@(private="file") SCENE_ENTITY_KEYS :: "id, name, preset, prefab, copy, group, delete, position, rotation_deg, scale, visible, enabled, components, off and children"
+@(private="file") SCENE_ENTITY_KEYS :: "id, name, preset, prefab, copy, group, delete, position, rotation_deg, rotation, scale, visible, enabled, components, off and children"
 
 @(private="file")
 scene_entities_read :: proc(reading:^Reading,text:string,parent:int,path:string,out:^[dynamic]Scene_Entity) -> bool {
@@ -205,12 +211,12 @@ scene_entities_read :: proc(reading:^Reading,text:string,parent:int,path:string,
         index:=len(out)
         append(out,Scene_Entity{path=fmt.aprintf("%s[%d]",path,at,allocator=reading.allocator),parent=parent,recipe={local=core.TRANSFORM_IDENTITY}})
         keys,values:=tree_object(reading,item,out[index].path) or_return
-        vector :: proc(reading:^Reading,text,what:string,value:^[3]f32) -> bool {
-            items:=doc_items(reading,text,what,"3 numbers") or_return
-            if len(items)!=3 {reading_failf(reading,"%s must be an array of 3 numbers",what);return false}
+        vector :: proc(reading:^Reading,text,what:string,value:[]f32) -> bool {
+            items:=doc_items(reading,text,what,fmt.tprintf("%d numbers",len(value))) or_return
+            if len(items)!=len(value) {reading_failf(reading,"%s must be an array of %d numbers",what,len(value));return false}
             for item,i in items {
                 number,ok:=doc_number(item)
-                if !ok || number-number!=0 {reading_failf(reading,"%s must be an array of 3 finite numbers",what);return false}
+                if !ok || number-number!=0 {reading_failf(reading,"%s must be an array of %d finite numbers",what,len(value));return false}
                 value[i]=number
             }
             return true
@@ -241,9 +247,17 @@ scene_entities_read :: proc(reading:^Reading,text:string,parent:int,path:string,
                     return false
                 }
                 if key=="preset" {d.preset=word} else {d.copy=word}
-            case "position":     vector(reading,value,what,&d.position) or_return;d.has_position=true
-            case "rotation_deg": vector(reading,value,what,&d.rotation_deg) or_return;d.has_rotation=true
-            case "scale":        vector(reading,value,what,&d.scale) or_return;d.has_scale=true
+            case "position":     vector(reading,value,what,d.position[:]) or_return;d.has_position=true
+            case "rotation_deg": vector(reading,value,what,d.rotation_deg[:]) or_return;d.has_rotation=true
+            case "rotation":
+                q:[4]f32
+                vector(reading,value,what,q[:]) or_return
+                length:=linalg.length(q)
+                if !(length>1e-6) {reading_failf(reading,"%s must be a quaternion [x, y, z, w] that is not zero",what);return false}
+                // One that is a rotation already stays as given, to its last bit.
+                if abs(length-1)>1e-6 {q/=length}
+                d.rotation,d.has_quaternion=quaternion(w=q[3],x=q[0],y=q[1],z=q[2]),true
+            case "scale":        vector(reading,value,what,d.scale[:]) or_return;d.has_scale=true
             case "visible","enabled","delete":
                 flag,ok:=doc_bool(value)
                 if !ok {reading_failf(reading,"%s must be true or false",what);return false}
@@ -264,6 +278,7 @@ scene_entities_read :: proc(reading:^Reading,text:string,parent:int,path:string,
             }
         }
         d:=&out[index]
+        if d.has_rotation && d.has_quaternion {reading_failf(reading,"%s: rotation_deg and rotation both say how it is turned; leave one out",d.path);return false}
         if d.delete && said>0 {reading_failf(reading,"%s: an entity that goes declares nothing else; leave its id or its name beside delete",d.path);return false}
         if d.copy!="" && (d.id!=0 || d.preset!="" || d.prefab!="") {reading_failf(reading,"%s.copy: a copy is a new entity made from another; leave id, preset and prefab out",d.path);return false}
         if d.group!="" && (d.id!=0 || d.copy!="" || d.prefab!="" || parent>=0 || len(out)>index+1) {reading_failf(reading,"%s.group: a group is a new entity at the top of the document, made where the entities it names hang from, with them as its children; leave id, copy, prefab and children out",d.path);return false}
@@ -653,12 +668,17 @@ scene_values_apply :: proc(a:^Scene_Apply,d:^Scene_Entity) -> bool {
     rotation:=mm.quat_from_euler(d.rotation_deg*mm.RAD_PER_DEG) if d.has_rotation else d.recipe.local.rotation
     target:=local
     target.position,target.scale=d.position,d.scale if d.has_scale else d.recipe.local.scale
-    // The rotation the document of the scene gave keeps its quaternion: degrees do not say it to the last bit.
-    angles:=d.rotation_deg if d.has_rotation else mm.quat_to_euler(rotation)*mm.DEG_PER_RAD
-    if mm.quat_to_euler(local.rotation)*mm.DEG_PER_RAD!=angles {target.rotation=rotation}
+    if d.has_quaternion {
+        // A rotation given whole is kept as given.
+        target.rotation=d.rotation
+    } else {
+        // The rotation the document of the scene gave keeps its quaternion: degrees do not say it to the last bit.
+        angles:=d.rotation_deg if d.has_rotation else mm.quat_to_euler(rotation)*mm.DEG_PER_RAD
+        if mm.quat_to_euler(local.rotation)*mm.DEG_PER_RAD!=angles {target.rotation=rotation}
+    }
     if keeps {
         if !d.has_position {target.position=local.position}
-        if !d.has_rotation {target.rotation=local.rotation}
+        if !d.has_rotation && !d.has_quaternion {target.rotation=local.rotation}
         if !d.has_scale {target.scale=local.scale}
     }
     if target!=local {
