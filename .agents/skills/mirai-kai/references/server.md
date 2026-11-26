@@ -43,6 +43,9 @@ deployed. Its options are `hub.SERVE_USAGE`.
 
 - A member sets its sign-in from its device: `mirai kai web-login <server host:port> <name>`
   (`kai.web_login` in the editor, `agent_web_login`), over the agent's authenticated connection.
+  The dial expects the key of the org's server (the `Node` whose address is that, else the one
+  server its orgs list), so the password reaches no other machine, and gives up after
+  `WEB_LOGIN_SECONDS`.
   The server keeps the name, the Argon2id of the password (OWASP parameters) and that device's key
   under `kai-web` refs of its own store; a name belongs to the device that set it first, and
   setting it again from that device changes the password.

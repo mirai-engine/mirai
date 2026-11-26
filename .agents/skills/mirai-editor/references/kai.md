@@ -71,19 +71,26 @@ pulls what the shared bookmarks reach.
   editor's own store once the machine is in an org or joins one, asking the router to forward its
   port. A launcher with no project opens it too. A store
   whose Kai state does not open leaves Team saying why; the other views work.
-- What the views show is read into the team's arena only when `vcs.agent_generation` moved or
-  this editor wrote (`kai_team_wrote`): a frame that changes nothing reads and allocates nothing.
-- THIS MACHINE names the person and the device (`kai.profile`), offered from `USER` and the host
-  name. JOIN AN ORG takes an invite (`kai.join`). Each org lists its members with role and device
-  and its repositories with main and whether all of it is here; an admin sets a role or removes a
-  member (`kai.org`) and makes an invite for a role, for another machine of the same person, and
-  at a host:port when the other machine is on another network (`kai.invite`), to copy. NEW ORG
-  makes one with this machine its admin. A server's web sign-in is set from here
-  (`kai.web_login`).
+- What the views show is read into the team's arena only when `vcs.agent_generation` moved, at
+  most every `KAI_READ_EVERY` (a pull moves it at every batch), or this editor wrote
+  (`kai_team_wrote`): a frame that changes nothing reads and allocates nothing. A pull writes its
+  files once the agent says its repository came whole.
+- THIS MACHINE names the person and the device (`kai.profile`), offered from `USER` (`USERNAME` on
+  Windows) and the host name. JOIN AN ORG takes an invite (`kai.join`). Each org lists its members
+  with role and device and its repositories with main and whether all of it is here; an admin sets a
+  role or removes a member (`kai.org`) and makes an invite for a role, for another machine of the
+  same person, and at a host:port when the other machine is on another network (`kai.invite`), to
+  copy, shown under its own org, or revokes the open ones (`kai.invite` with `revoke`). NEW ORG
+  makes one with this machine its admin. A server's web sign-in is set from here (`kai.web_login`);
+  the password goes straight to the agent and is zeroed.
+- A join and a web sign-in run on a thread of the agent (`kai_task_start`), so the frames go on:
+  `kai.join` and `kai.web_login` start one and say its stage (none, waiting, done or failed, with
+  why); called with no params they say how the last went (wait with `_wait_until`).
 - Publish to main (Changes) closes the working change whole and moves main for the org
-  (`kai.publish`). A project in no org yet goes into one in the same call, Public or Org only, so
-  it is never in an org without having been published; a public repository lists the files named
-  like secrets it now shows. A publish that fails keeps the typed description.
+  (`kai.publish`). A project in no org yet goes into one in the same call, Public or Org only, after
+  whatever may refuse (the bookmark, the role, the snapshot), so a refused publish leaves the org as
+  it was; with more than one org, the first publish picks which; a public repository lists the files
+  named like secrets it now shows. A publish that fails keeps the typed description.
 - BOOKMARKS lists the workspace's bookmarks, then the repository's shared ones; a click starts a
   change on one and its arrow moves it to the working copy's parent for the whole org
   (`kai.bookmarks` with `move`).

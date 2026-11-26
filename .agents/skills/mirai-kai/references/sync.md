@@ -26,7 +26,11 @@ a sync; `mirai:net` gives only the
 
 - One TCP stream per pair of machines, the same on a LAN and to a server, on `KAI_PORT` (7350;
   any free port when it is taken), so the kernel's congestion control runs at the link's speed.
-  `socket_tune` sets no delay and large buffers.
+  `socket_tune` sets no delay, large buffers and `SEND_SECONDS`: a peer that takes nothing for
+  that long ends its connection. A dial gives up after `DIAL_SECONDS` or when the agent stops; the
+  handshake, after `HANDSHAKE_SECONDS`. Its keys live on the stack of `conn_dial` and
+  `conn_accept` and are zeroed before they return; a connection keeps only its session ciphers
+  and the invite proof. A failed handshake leaves the accepted socket to its caller.
 - The three handshake messages have fixed sizes, so neither end reads a length it did not
   authenticate. Every frame after them is a u32 little-endian length and one ChaChaPoly-sealed
   message of at most `FRAME_MAX`, its `Msg` kind first. A length past its bound, a frame that does
@@ -35,7 +39,9 @@ a sync; `mirai:net` gives only the
   moved: an org record, a repository's `Repo_Refs` or a derived data set), `Want` (up to
   `WANT_MAX` chunk addresses of an org), `Chunks` (the chunks asked, in order, as the store keeps
   them, up to `FRAME_FILL`), `Lack`, `Ddc_Ask`, `Join` and `Welcome` ([invites](org.md#invites)),
-  `Web_Login` ([accounts](server.md#web-accounts)) and `Bye` with why.
+  `Web_Login` (a connection's first and only message, [accounts](server.md#web-accounts)) and
+  `Bye` with why. A peer that keeps more than `REQUESTS_BYTES_MAX` of wants and asks waiting, or
+  tells of more than `TOLD_MAX` heads, ends its connection.
 - Of two connections between the same keys, both ends keep the one whose dialing end has the
   lower key (`peer_unique`).
 
@@ -46,7 +52,10 @@ a sync; `mirai:net` gives only the
   one for their run that listens nowhere. The editor reads its peers, pulls and events under its
   lock, never over a socket, and reads them again only when `agent_generation` moved.
 - It listens on TCP, says on the LAN where (`agent_beacon_run`), and dials every member of its
-  orgs it knows an address of (`agent_dial_members`, every `DIAL_SECONDS` for one not connected).
+  orgs it knows an address of (`agent_dial_members`): one thread per member tries its addresses
+  in turn, at most every `REDIAL_SECONDS`; a peer of the options goes by its address.
+  `agent_stop` waits for every dial, and a caller that holds a peer (a join, an ask) holds it
+  against the reaper (`peer_pin`).
 - Each connection has three threads: the reader takes every message and stores the chunks a fetch
   asked, checked against their address before the store keeps them; the server answers `Want`s;
   the puller fetches what the other end told it holds.

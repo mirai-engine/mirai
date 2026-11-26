@@ -91,7 +91,8 @@ read a server's repositories, from a browser.
 2. `mirai kai invite <org> [--role reader|writer|admin|node] [--mine] [--at host:port]` prints one
    `kai2...` text; `--mine` makes it a second machine of the same person, `--at` names the
    host:port a router forwards when the other machine is on another network (the editor and
-   `mirai kai agent` ask the router themselves).
+   `mirai kai agent` ask the router themselves). `mirai kai invite <org> --revoke` makes every
+   open invite of the org admit nobody.
 3. The other machine runs `mirai kai join <invite>` (the editor: Team, Join), then `mirai kai pull
    <org> <repository> <folder>` (the launcher's All projects: Pull) to get main's files.
 
