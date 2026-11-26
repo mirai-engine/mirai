@@ -41,7 +41,7 @@ derived data cache that use it decide what a ref means and what is live.
   [verification](references/exchange.md#verification).
 - Sharing a whole project over the exchange (`mirai share`, `mirai join`):
   [sharing](../mirai-projects/references/projects.md#sharing-a-project).
-- The records, logs and derived data of Kai (version control and the mesh of an org), which keep
+- The records and derived data of Kai (version control and the sync of an org), which keep
   their state as objects and refs of this store in namespaces of their own:
   [Kai](../mirai-kai/SKILL.md).
 

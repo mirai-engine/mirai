@@ -43,13 +43,11 @@ neither the data world nor physics. A replicated object is an opaque game id plu
   [known limits](references/networking.md#known-limits)
 - Blobs and refs of the store between peers on a host's connections →
   [exchange](../mirai-store/references/exchange.md#what-the-owner-calls)
-- What Kai's mesh builds on identity connections (the sync agent, LAN beacon, hole punching, relay
-  over UDP and over TCP, nodes) →
-  [the mesh](../mirai-kai/references/mesh.md#the-connection-ladder); the TLS 1.3 and ACME of the
-  node's web view (`net/tls`, which is not the Noise transport of `net`) →
-  [TLS](../mirai-kai/references/tls.md#tls-13)
-- Opening a host's UDP port (`mapping_start`, `mapping_poll`, `mapping_stop`, `mapping_close`;
-  PCP, NAT-PMP, UPnP) → [API and lifecycle](references/port-mapping.md#api-and-lifecycle),
+- Kai's sync, which is its own TCP transport with a post-quantum Noise handshake and uses only
+  the port mapping of `net` → [Kai sync](../mirai-kai/references/sync.md#the-wire)
+- Opening a host's UDP or TCP port (`mapping_start` with a `Port_Protocol`, `mapping_poll`,
+  `mapping_stop`, `mapping_close`; PCP, NAT-PMP, UPnP) →
+  [API and lifecycle](references/port-mapping.md#api-and-lifecycle),
   [protocols](references/port-mapping.md#protocols) and
   [scope and limits](references/port-mapping.md#scope-and-limits)
 - Replicated entities, game messages and collections, session, tick, prediction and correction,
@@ -100,9 +98,7 @@ neither the data world nor physics. A replicated object is an opaque game id plu
   `net/event.odin`: events and authority messages.
 - `net/clock.odin`: client clock, time section and inputs. `net/interpolation.odin`:
   `Smoothing`, `Interpolation`.
-- `net/portmap*.odin`: port opening.
-- `net/tls/`: TLS 1.3 and ACME for browsers, a package of its own without I/O, documented with
-  [Kai](../mirai-kai/references/tls.md#tls-13), its user.
+- `net/portmap*.odin`: port opening, of UDP (a game's, a session's) or TCP (Kai's agent).
 
 In `plugins/multiplayer/runtime`:
 

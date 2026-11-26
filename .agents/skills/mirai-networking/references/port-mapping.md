@@ -1,7 +1,8 @@
-# Automatic UDP port opening
+# Automatic port opening
 
-`net/portmap*.odin` obtains a candidate external endpoint for a port the application already has
-open. Order: PCP, NAT-PMP and UPnP IGD; a public local IPv4 address is returned as `Direct`. There
+`net/portmap*.odin` obtains a candidate external endpoint for a UDP or TCP port the application
+already has open (`Port_Protocol`: a game's or a session's UDP port, the TCP port of Kai's agent).
+Order: PCP, NAT-PMP and UPnP IGD; a public local IPv4 address is returned as `Direct`. There
 is no external service, relay or document transport in this package.
 
 ## API and lifecycle
@@ -29,12 +30,13 @@ renewing, it shows up in the next read.
 
 ## Protocols
 
-- **PCP**: MAP UDP v2 with a system nonce and IPv4 addresses mapped to IPv6. Only gateway responses
-  that match version, opcode, nonce, protocol and internal port are accepted, with a positive
-  lifetime and a non-null external port.
-- **NAT-PMP**: public address and UDP mapping; both responses must come from the gateway and
-  declare success, and the external port may differ from the requested one. If the mapping arrives
-  but the address is lost, it is released before trying UPnP.
+- **PCP**: MAP v2 of UDP (protocol 17) or TCP (6) with a system nonce and IPv4 addresses mapped
+  to IPv6. Only gateway responses that match version, opcode, nonce, protocol and internal port
+  are accepted, with a positive lifetime and a non-null external port.
+- **NAT-PMP**: public address and a UDP (opcode 1) or TCP (opcode 2) mapping; both responses
+  must come from the gateway and declare success, and the external port may differ from the
+  requested one. If the mapping arrives but the address is lost, it is released before trying
+  UPnP.
 - **UPnP IGD**: SSDP multicast, HTTP descriptor and WANIPConnection v1/v2 or WANPPPConnection v1
   service.
   - `GetSpecificPortMappingEntry` checks that the port is free before `AddPortMapping`; if it is
@@ -65,15 +67,15 @@ non-blocking with a deadline per request, and no XML parser with external entiti
 - It does not traverse a second NAT or a CGNAT without router support, does not change the local
   firewall and neither identifies nor authenticates users: that belongs to the application and to
   `net.Host`.
-- Loss of the UDP release is covered by retries and by lease expiry; immediate removal is not
-  guaranteed. A permanent UPnP mapping whose router does not respond to the close may remain until
-  the router removes it.
+- Loss of the datagram that releases a PCP or NAT-PMP mapping is covered by retries and by lease
+  expiry; immediate removal is not guaranteed. A permanent UPnP mapping whose router does not
+  respond to the close may remain until the router removes it.
 
 ## Verification
 
 - `mirai test net <test...>` with the `port_mapping_*` tests of `net/portmap_test.odin`: PCP and
-  NAT-PMP codecs, UPnP parsers, bounded HTTP and the worker (renewal, release and the PCP →
-  NAT-PMP → UPnP fallback), with a local UDP gateway and local SSDP/HTTP/SOAP servers over real
-  sockets.
+  NAT-PMP codecs of UDP and TCP mappings, UPnP parsers, bounded HTTP and the worker (renewal,
+  release and the PCP → NAT-PMP → UPnP fallback), with a local UDP gateway and local
+  SSDP/HTTP/SOAP servers over real sockets.
 - They do not prove that a specific home router, firewall or connection between networks allows
   entry: that needs a handshake between those networks.

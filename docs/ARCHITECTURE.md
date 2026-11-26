@@ -333,9 +333,6 @@ Numbered layers; a package only imports lower layers.
   and keeps in `store` the records of imports (package and build manifests, `packages.mirai`).
   `rhi/shared_device` is the device the GPU tests share; only tests import it, also the GPU tests of
   `rhi`, in `rhi/tests`.
-- **2** `net/tls`: TLS 1.3 server and client as a state machine without I/O, and an ACME client
-  that proves names by TLS-ALPN-01 over a byte stream its caller supplies; on `core:` and `std`
-  alone, with no C library. `kai/hub` puts the HTTPS of `mirai kai serve` under it.
 - **3** `exchange`: objects and refs of `store` between peers over the connections of `net` hosts;
   a headless peer and the editor link it.
 - **3** `render`, `platform`: hybrid renderer and SDL3. `render/abi` declares the constants the
@@ -346,21 +343,18 @@ Numbered layers; a package only imports lower layers.
   and pose that another owner requests (`Motion`, `Pose_Target`), the requested places (`Places`,
   `place`, the only way to teleport) and world queries (`World_Queries`).
 - **4** `kai`: [Kai](../.agents/skills/mirai-kai/SKILL.md), the version control of a project and
-  the mesh of the machines of an org: changes, trees, conflicts as values, the operation log,
-  workspaces, the signed logs of users, orgs, projects and proposals, pairing, the sync agent with
-  its relay and beacon, encrypted overlays and derived data. It imports `std/*`, `store`,
-  `exchange`, `net` and `core:` alone, never `core`, `asset`, `project`, `host`, `engine/*`,
-  `cook/*` or `editor`: what is Mirai's enters as a driver and a filter from `cook/kai`
+  how the machines of an org sync it: changes, trees, conflicts as values, the operation log,
+  workspaces, the org as one signed record, shared bookmarks, invites, the sync agent over TCP with
+  its post-quantum Noise handshake and LAN beacon, and derived data. It imports `std/*`, `store`,
+  `net` (its port mapping alone) and `core:` alone, never `core`, `asset`, `project`, `host`,
+  `engine/*`, `cook/*` or `editor`: what is Mirai's enters as a driver and a filter from `cook/kai`
   (`kai_imports_stay_engine_agnostic` enforces it). No runtime layer imports it: only `cook/*`,
   `editor` and the tools do, so a game's code never reaches it.
-- **5** `kai/hub`: KaiHub, the web view of a Kai node: a bounded HTTP/1.1 server whose parser
-  has no I/O, over `net/tls` with ACME certificates (plain HTTP on loopback only), the JSON API
-  that describes itself at `GET /api`, sessions and passkey or device-signed writes the server
-  only verifies, the Linux sandbox, and the commands a node runs (`serve`, `pair join`,
-  `web approve`). It imports `kai`, `net`, `net/tls`, `store` and `std/*`, nothing of the engine
-  and nothing of the editor or `cook/*`. Its frontend, `kai/hub/web`, is embedded as it is: ES
-  modules with no framework or third-party code and no build step, so building needs no Node; the
-  page parses and checks every draft against what the user asked and signs its BLAKE3 itself.
+- **5** `kai/hub`: KaiHub, the Kai server `mirai kai serve`: an always-on agent that is a node of
+  each org it joins, each org in a store of its own, and a web view of plain HTTP on loopback
+  behind a TLS reverse proxy, server-rendered with no script, whose bounded HTTP/1.1 parser has no
+  I/O, with web accounts a member sets from its device. It imports `kai`, `store`, `std/*` and
+  `core:`, nothing of the engine and nothing of the editor or `cook/*`.
 - **5** `host`: the application (window, device, renderer, mixer, assets, content, shaders), the
   game and editor loops and the player, which does not know the network: it leaves the arguments
   it does not read to the libraries (`Launch`).
@@ -406,9 +400,10 @@ Numbered layers; a package only imports lower layers.
   [first-party plugins](../.agents/skills/mirai-plugins/references/plugins.md#first-party-plugins)
   says what each one does.
 - **no layer** `tools/mirai`: the `mirai` CLI; `mirai --help` lists its commands.
-- **no layer** `tools/kai`: `mirai-kai`, the headless Kai node, which imports `kai/hub` alone so
+- **no layer** `tools/kai`: `mirai-kai`, the headless Kai server, which imports `kai/hub` alone so
   that it links statically for Linux (`mirai build kai --target linux_arm64`, with musl); it is
-  how a node is deployed ([node](../.agents/skills/mirai-kai/references/node.md#deployment)).
+  how a server is deployed
+  ([deployment](../.agents/skills/mirai-kai/references/server.md#deployment)).
 - **no layer** `demo`, `templates`: the demo project, whose `tools/content` generates its assets,
   and the `mirai new` templates.
 - **no layer** `shaders/`: the single Slang source.

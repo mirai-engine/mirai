@@ -23,7 +23,6 @@ a test is never weakened or deleted to leave this list.
 | Package | Test | Depends on |
 | --- | --- | --- |
 | `editor` | `editor_panels_bound_scratch_for_a_large_scene_and_library` | machine load |
-| `kai/hub` | `hub_hosts_the_orgs_its_users_make` | machine load |
 | `render` | `render_a_swaying_forest_composes_again_only_what_is_near` | GPU time |
 | `render` | `render_a_turning_sun_gives_what_whole_maps_give` | GPU time |
 | `render` | `render_moved_cascades_give_what_whole_ones_give` | GPU time |
