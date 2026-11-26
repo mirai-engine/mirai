@@ -542,7 +542,6 @@ vk_shader_module :: proc(d: ^Device, code: ^Shader_Code) -> vk.ShaderModule {
 
 @(private)
 vk_merge_bindings :: proc(d: ^Device, p: ^Vk_Pipeline, stages: Shader_Stages, codes: ..^Shader_Code) -> bool {
-	stage_mask: [MAX_BINDING_SLOTS]Shader_Stages
 	for code in codes {
 		if code == nil {continue}
 		for b in code.bindings {
@@ -552,14 +551,14 @@ vk_merge_bindings :: proc(d: ^Device, p: ^Vk_Pipeline, stages: Shader_Stages, co
 			if slot.used && slot.kind != b.kind {set_error(d, "shader %s redeclares slot %d with another kind", code.name, b.slot); return false}
 			slot.used = true
 			slot.kind = b.kind
-			stage_mask[b.slot] += {code.stage}
+			slot.stages += {code.stage}
 		}
 	}
 	entries: [MAX_BINDING_SLOTS]vk.DescriptorSetLayoutBinding
 	count: u32
 	for slot, i in p.slots {
 		if !slot.used {continue}
-		entries[count] = {binding = u32(i), descriptorType = vk_descriptor_type(slot.kind), descriptorCount = 1, stageFlags = vk_stage_flags(stage_mask[i])}
+		entries[count] = {binding = u32(i), descriptorType = vk_descriptor_type(slot.kind), descriptorCount = 1, stageFlags = vk_stage_flags(slot.stages)}
 		count += 1
 	}
 	set_info := vk.DescriptorSetLayoutCreateInfo{sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO, flags = {.PUSH_DESCRIPTOR_KHR}, bindingCount = count, pBindings = &entries[0]}

@@ -58,8 +58,9 @@ Vk_Texture :: struct {
 }
 
 Slot_Info :: struct {
-	used: bool,
-	kind: Binding_Kind,
+	used:   bool,
+	kind:   Binding_Kind,
+	stages: Shader_Stages, // of the shaders that bind it
 }
 
 Vk_Pipeline :: struct {
