@@ -13,6 +13,7 @@ import "mirai:render/abi"
 // Where in a frame an extension records passes of its own.
 Frame_Stage :: enum u8 {
 	Geometry, // once a frame, before its views: the vertices an extension deforms
+	Instances, // each view, before its cull: the instances it draws of the batches the GPU fills (batch_reserve), which an extension writes (pass_batch_target)
 	Simulate, // once a frame, with the first view of the window after its G-buffer: what moves on the GPU against the depth of that view, the traced scene, its lights and probes
 	Gbuffer,  // each view, after Simulate: surfaces an extension draws into the G-buffer, lit like the scene (pass_gbuffer_begin)
 	Decal,    // each view, after its depth pyramid and the decals of the scene, before its resolve: what an extension changes of its surfaces before they are lit, into its decal targets (pass_decal_begin)
@@ -109,8 +110,8 @@ Nested_View :: struct {
 	opening:    Vec4,   // the plane its mask is on, in the world of the view: what is drawn over the view (lines, panels) is in front of its pixels only in front of this. Zero: not known
 }
 
-// Asks the next frame to call `record` at a stage: every view for Gbuffer,
-// Decal, Mask, Lit, Blend and Post, every effect view for Effect, once for
+// Asks the next frame to call `record` at a stage: every view for Instances,
+// Gbuffer, Decal, Mask, Lit, Blend and Post, every effect view for Effect, once for
 // Geometry and Simulate. Passes run in
 // the order they were asked for; asking again for one the frame has is
 // asking once. False without room for another one. A Custom pass goes in a
@@ -273,7 +274,7 @@ pass_image_write :: proc(s: ^Stage_Pass, read, write: u32) -> bool {
 
 // A pipeline of an extension for the passes of a stage, from the stages
 // <shader>.vert and <shader>.frag of the shaders in use, or <shader>.comp for
-// Geometry, Simulate, Lit, Post, Custom and Inspect. Without a <shader>.vert
+// Geometry, Instances, Simulate, Lit, Post, Custom and Inspect. Without a <shader>.vert
 // its vertices are those of one triangle over the view, drawn with three
 // vertices. One of Mask draws in pass_mask_begin; one of Decal blends into the
 // decal targets it names (pass_decal_targets), in their order, in

@@ -108,6 +108,71 @@ a_batch_keeps_its_handle_and_reuses_its_words_and_a_wrong_one_changes_nothing ::
 	testing.expect(t, !record.colored && r.scene.batch.rows[0].world_inv[2].x == 0, "set again without them, it has none")
 }
 
+// A batch the GPU fills holds its room and its count in the pool, which the
+// row of its table names and each view zeroes; its room changes only when
+// asked for another, it takes no flag of rays, and neither rays nor the
+// picker meet it.
+@(test)
+a_batch_the_gpu_fills_holds_its_room_and_its_count :: proc(t: ^testing.T) {
+	r:=new(Renderer);defer free(r)
+	r.allocator = context.allocator
+	scene_init(r)
+	defer scene_destroy(r)
+	mesh := batch_box(r)
+	pool := len(r.scene.indices)
+	Refused :: struct {desc: Batch_Desc, capacity: u32, low, high: Vec3}
+	nan := math.nan_f32()
+	refused := [?]Refused{
+		{{mesh = mesh, flags = {.Ray_Visible}}, 8, 0, 1},
+		{{mesh = mesh, flags = {.Casts_Shadow}}, 8, 0, 1},
+		{{mesh = mesh}, 0, 0, 1},
+		{{mesh = mesh}, BATCH_INDICES_MAX + 1, 0, 1},
+		{{mesh = mesh}, 8, {nan, 0, 0}, 1},
+		{{mesh = mesh}, 8, 1, 0},
+		{{mesh = Mesh_Handle(99)}, 8, 0, 1},
+	}
+	for c in refused {
+		handle, problem := batch_reserve(r, 0, 7, c.desc, c.capacity, c.low, c.high)
+		testing.expectf(t, handle == 0 && problem != "", "%v is refused", c)
+	}
+	testing.expect_value(t, len(r.scene.indices), pool)
+	handle, problem := batch_reserve(r, 0, 7, {mesh = mesh}, 100, {-10, 0, -10}, {10, 2, 10})
+	if !testing.expect_value(t, problem, "") {return}
+	testing.expect_value(t, len(r.scene.indices), pool + 100 * BATCH_WORDS + 1)
+	index, _ := batch_index(&r.scene, handle)
+	record := &r.scene.batch.records[index]
+	testing.expect(t, record.filled && record.count == 100 && record.words == u32(pool) + 1)
+	// The same room keeps its words; a box elsewhere moves its anchor alone.
+	same, kept := batch_reserve(r, handle, 7, {mesh = mesh, tint = 1}, 100, {990, 0, -10}, {1010, 2, 10})
+	testing.expect(t, kept == "" && same == handle && len(r.scene.indices) == pool + 100 * BATCH_WORDS + 1 && record.words == u32(pool) + 1)
+	testing.expect(t, record.anchor.x > 900 && record.bounds_max.x - record.bounds_min.x == 20)
+	r.world_key = 7
+	batches_build(r)
+	b := &r.scene.batch
+	testing.expect(t, len(b.drawn) == 1 && b.slots == 2 * BATCH_GROUP && b.groups.count == 2, "its room in groups of slots")
+	testing.expect_value(t, batch_row_word(b.rows[0], 1), 100)
+	testing.expect_value(t, transmute(u32)b.rows[0].world_inv[2].z, record.words)
+	testing.expect(t, len(b.counts) == 1 && b.counts[0] == record.words - 1, "each view zeroes its count")
+	testing.expect(t, len(b.traced) == 0 && len(b.hw) == 0 && batch_row_word(b.rows[0], 11) == 0, "no ray meets it")
+	_, met := batch_ray(r, 7, {1000, 10, 0}, {0, -1, 0}, 100)
+	testing.expect(t, !met, "the picker does not know its instances")
+	// Other room takes other words and gives the old back; a CPU batch in its place has no count.
+	old := record.words
+	_, grown := batch_reserve(r, handle, 7, {mesh = mesh}, 200, 0, 1)
+	testing.expect(t, grown == "" && record.count == 200 && record.words != old)
+	freed := false
+	for range in r.scene.pool_free[.Index] {freed ||= range.first == old - 1 && range.count >= 100 * BATCH_WORDS + 1}
+	testing.expect(t, freed, "the old room is free")
+	instances := [1]Batch_Instance{batch_instance({0, 0, 0}, 1, {1, 1, 1})}
+	_, set := batch_set(r, handle, 7, {mesh = mesh}, instances[:])
+	testing.expect(t, set == "" && !record.filled)
+	batches_build(r)
+	testing.expect(t, len(b.counts) == 0 && b.rows[0].world_inv[2].z == 0)
+	testing.expect(t, batch_remove(r, handle))
+	batches_build(r)
+	testing.expect_value(t, len(r.scene.indices), pool)
+}
+
 @(test)
 the_tables_of_the_batches_drawn_follow_the_world_shown_and_the_instances :: proc(t: ^testing.T) {
 	r:=new(Renderer);defer free(r)

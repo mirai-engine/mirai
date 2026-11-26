@@ -306,7 +306,13 @@ bool instance_batched(uint index) { return index >= frame.instance_count; }
 uint batch_of(uint index) { return indices[frame.batches.y + (index - frame.instance_count) / BATCH_GROUP]; }
 Instance batch_row(uint batch) { return instances[frame.instance_count + batch]; }
 uint batch_records(Instance row) { return asuint(row.world[0].x); }  // the first word of its instances in the pool
-uint batch_count(Instance row) { return asuint(row.world[0].y); }
+// Its instances: of one the GPU fills (render.batch_reserve), those its
+// Instances stage wrote in the view, whose count is the word before them, up
+// to its room.
+uint batch_count(Instance row) {
+    uint filled = asuint(row.world_inv[2].z);
+    return filled != 0u ? min(indices[filled - 1u], asuint(row.world[0].y)) : asuint(row.world[0].y);
+}
 uint batch_first(Instance row) { return asuint(row.world[0].z); }    // the slot of its first instance
 uint batch_tree(Instance row) { return asuint(row.world[0].w); }     // the root of the tree of its instances in the BLAS nodes
 uint batch_order(Instance row) { return asuint(row.world[1].x); }    // the instances of the leaves of that tree, in the pool
@@ -322,6 +328,7 @@ float3 batch_anchor(Instance row) { return row.world_inv[1].xyz; }   // what its
 float batch_reach(Instance row) { return row.world_inv[1].w; }       // metres the vertex hook moves a point of its instances at most
 uint batch_colors(Instance row) { return asuint(row.world_inv[2].x); } // 1 + the word of the color of its first instance in the pool; 0: none
 float batch_swayed(Instance row) { return row.world_inv[2].y; }      // metres of the world its largest instance sways as its wind blows now (render.batch_swayed)
+// Its world_inv[2].z: of one the GPU fills, the first word of its instances, past its count; 0 otherwise.
 // Its prev_world: the basis its instances take (batch_basis_placement), zero without one.
 
 // The transform of the instance of a batch whose words start at `words`,

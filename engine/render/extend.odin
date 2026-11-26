@@ -208,6 +208,8 @@ pass_draw :: gpu.pass_draw
 pass_dispatch :: gpu.pass_dispatch
 pass_timestamp :: gpu.pass_timestamp
 pass_buffer :: gpu.pass_buffer
+Batch_Target :: gpu.Batch_Target
+pass_batch_target :: gpu.pass_batch_target
 Table_Texture_Desc :: gpu.Table_Texture_Desc
 EXTENSION_TABLE_TEXTURE_CAPACITY :: gpu.EXTENSION_TABLE_TEXTURE_CAPACITY
 pass_table_texture_copy :: gpu.pass_table_texture_copy
@@ -512,6 +514,18 @@ world_key :: proc "contextless" (id:core.World_Id) -> u64 {return u64(id.generat
 batch_set :: proc(renderer:^Renderer,world:core.World_Id,handle:Batch_Handle,desc:Batch_Desc,instances:[]Batch_Instance,colors:[]u32=nil) -> (Batch_Handle,string) {
     if renderer==nil {return handle,"batch_set: there is no renderer"}
     return gpu.batch_set(renderer,handle,world_key(world),desc,instances,colors)
+}
+
+// Gives a batch of the world `world` whose instances the GPU writes in each
+// view (the Instances stage, pass_batch_target) its mesh, materials, how it is
+// drawn (no Batch_Flags: no ray nor shadow map meets it), room for capacity
+// instances and the box of the world they stay in, as drawn: a new one for
+// handle 0, or the one handle names, which keeps it. A load transaction when
+// its room changes; one of the same room takes no memory. The error says what
+// is wrong and how to fix it, and changes nothing.
+batch_reserve :: proc(renderer:^Renderer,world:core.World_Id,handle:Batch_Handle,desc:Batch_Desc,capacity:u32,low,high:[3]f32) -> (Batch_Handle,string) {
+    if renderer==nil {return handle,"batch_reserve: there is no renderer"}
+    return gpu.batch_reserve(renderer,handle,world_key(world),desc,capacity,low,high)
 }
 
 Ground_Chunk :: gpu.Ground_Chunk

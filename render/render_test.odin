@@ -5024,7 +5024,7 @@ render_stages_run_once_a_frame_and_for_its_view :: proc(t: ^testing.T) {
 			last, _ := pass_texture(s, 2, chain, mip = 3)
 			beyond, _ := pass_texture(s, 3, chain, mip = 4)
 			seen.mips = last && !beyond
-		case .Custom:
+		case .Instances, .Custom:
 		case .Inspect:
 			seen.width, seen.height = s.width, s.height
 			seen.image = pass_image_bind(s, 0)
@@ -5045,7 +5045,7 @@ render_stages_run_once_a_frame_and_for_its_view :: proc(t: ^testing.T) {
 		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 	}
 	rhi.device_wait_idle(f.device)
-	testing.expect_value(t, seen.runs, [Frame_Stage]int{.Geometry = 1, .Simulate = 2, .Gbuffer = 1, .Decal = 1, .Mask = 1, .Lit = 3, .Blend = 1, .Post = 1, .Effect = 1, .Custom = 0, .Inspect = 0})
+	testing.expect_value(t, seen.runs, [Frame_Stage]int{.Geometry = 1, .Instances = 0, .Simulate = 2, .Gbuffer = 1, .Decal = 1, .Mask = 1, .Lit = 3, .Blend = 1, .Post = 1, .Effect = 1, .Custom = 0, .Inspect = 0})
 	testing.expect(t, seen.post && seen.mips)
 	testing.expect_value(t, seen.decal_targets, Decal_Targets{.Color, .Normal, .Surface})
 	testing.expect_value(t, seen.post_size, [2]u32{r.main.targets.output_width, r.main.targets.output_height})
