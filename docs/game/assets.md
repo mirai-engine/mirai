@@ -73,6 +73,8 @@ mirai import assets/player/step.wav assets/player/land.wav   # .sound each; many
 - `mirai asset ls <folder>`, `info`, `verify <file>...`, `deps <file> --users`, `dump`, `get <file>
   <path>`, `set <file> <path>=<value>`; rows are added by `unpack`, editing `asset.json`, `pack`; a
   scene or a `.ui`, by the document `dump` prints ([text](assets/text-sources.md)).
+- `ls` of a folder inside `assets` lists its files with paths from `assets` and finds their
+  dependencies in all of `assets`: only one that is nowhere there is missing.
 
 ## Pitfalls that fail silently
 - A hard-coded id of an imported asset matches nothing in another checkout: ids are random.

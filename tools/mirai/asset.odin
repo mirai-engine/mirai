@@ -229,31 +229,37 @@ asset_ls :: proc(_:string,args:[]string) -> int {
         }
     }
     if folder=="" {return misuse("ls")}
-    packages:=packages_beside(folder,store_root)
+    // A folder inside the assets of a project lists its files against all of them: a
+    // dependency elsewhere in the project is there.
+    root,under:=assets_root_of(folder)
+    packages:=packages_beside(root,store_root)
     r:asset.Registry
-    asset.registry_init(&r,folder,cache,listed=packages.listed)
+    asset.registry_init(&r,root,cache,listed=packages.listed)
     if error:=asset.registry_scan(&r);error!=.None {return failed("ls",folder,asset.error_text(error))}
     w:serial.Writer;serial.writer_init(&w)
     problems:=len(packages.problems)
     for problem in packages.problems {serial.text_write_raw(&w,fmt.tprintf("! package %s\n",problem))}
     for &file in r.files {
-        if file.state!=.Asset {continue}
+        if file.state!=.Asset || !path_under(file.path,under) {continue}
         write_id(&w,file.id);serial.write_u8(&w,' ');write_kind(&w,file.kind)
         serial.text_write_raw(&w,fmt.tprintf(" %d %d %s\n",file.size,file.dependency_count,file.path))
     }
     for file in r.files {
-        if file.state!=.Broken {continue}
+        if file.state!=.Broken || !path_under(file.path,under) {continue}
         problems+=1
         serial.text_write_raw(&w,fmt.tprintf("! broken %s\n",file.path))
     }
     for duplicate in r.duplicates {
+        first,second:=r.files[duplicate.first].path,r.files[duplicate.second].path
+        if !path_under(first,under) && !path_under(second,under) {continue}
         problems+=1
         serial.text_write_raw(&w,"! duplicate ");write_id(&w,duplicate.id)
-        serial.text_write_raw(&w,fmt.tprintf(" %s %s\n",r.files[duplicate.first].path,r.files[duplicate.second].path))
+        serial.text_write_raw(&w,fmt.tprintf(" %s %s\n",first,second))
     }
     missing:[dynamic]asset.Registry_Missing
     asset.registry_missing(&r,&missing)
     for entry in missing {
+        if !path_under(r.files[entry.file].path,under) {continue}
         problems+=1
         serial.text_write_raw(&w,"! missing ");write_id(&w,entry.id)
         serial.text_write_raw(&w,fmt.tprintf(" %s\n",r.files[entry.file].path))
@@ -600,6 +606,25 @@ asset_pack :: proc(_:string,args:[]string) -> int {
 // list, from the store at store_root ("": the machine's); nothing for any other
 // folder. In the temp allocator.
 @(private="file")
+// The assets folder of a project that folder is in, or folder itself outside one, and the
+// path of folder under it with '/' ("" for the whole root).
+assets_root_of :: proc(folder:string) -> (root,under:string) {
+    absolute:=project.path_absolute(folder,context.temp_allocator)
+    names:=project.FOLDER_NAMES
+    for at:=absolute;;at=os.dir(at) {
+        if os.base(at)==names[.Assets] {
+            rest,_:=strings.replace_all(strings.trim_left(absolute[len(at):],"/\\"),"\\","/",context.temp_allocator)
+            return at,rest
+        }
+        if os.dir(at)==at || os.dir(at)=="" {return folder,""}
+    }
+}
+
+// Whether a path of a registry is under the folder under ("" is the whole root).
+path_under :: proc(path,under:string) -> bool {
+    return under=="" || path==under || strings.has_prefix(path,under) && len(path)>len(under) && path[len(under)]=='/'
+}
+
 packages_beside :: proc(folder,store_root:string) -> asset.Root_Packages {
     absolute:=project.path_absolute(folder,context.temp_allocator)
     names:=project.FOLDER_NAMES
