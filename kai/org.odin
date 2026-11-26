@@ -197,10 +197,16 @@ org_signs :: proc(held,next:^Org) -> bool {
     role,ok:=org_role(held,next.signer)
     if !ok || role<.Writer {return false}
     if role==.Admin {return true}
-    if len(next.members)!=len(held.members) {return false}
+    // A writer adds repositories, and changes nothing else: not the members,
+    // not the org's name, not a repository held (its name, or whether it is public).
+    if next.name!=held.name || len(next.members)!=len(held.members) {return false}
     for m,i in next.members {
         h:=held.members[i]
         if m.key!=h.key || m.role!=h.role || m.name!=h.name || m.device!=h.device || m.address!=h.address {return false}
+    }
+    for h in held.repos {
+        i:=org_repo(next,h.id)
+        if i<0 || next.repos[i].name!=h.name || next.repos[i].public!=h.public {return false}
     }
     return true
 }
@@ -258,8 +264,12 @@ org_write :: proc(s:^store.Store,o:^Org,identity:^Identity,time:i64) -> (address
 // Takes the record a peer named at address, already in the store with the
 // versions before it back to one held: every one of them must follow the one
 // before, and the newest must win over the head held. Missing, with the
-// address to fetch in need, while a version on the way is not in the store.
-// changed is false when the head held stays.
+// address to fetch in need, while a version on the way is not whole in the
+// store. changed is false when the head held stays. Once an org is held, a
+// chain that reaches back to no version held (another first record under the
+// same id) is refused, and so is a branch from an older version held whose
+// signers the head held no longer lets sign: a member removed since cannot
+// write the org again by branching from before its removal.
 org_accept :: proc(s:^store.Store,id:Org_Id,address:store.Hash) -> (changed:bool,need:store.Hash,error:Error) {
     held,held_address,he:=org_head(s,id,context.temp_allocator)
     if he!=.None && he!=.Missing {return false,{},he}
@@ -274,14 +284,16 @@ org_accept :: proc(s:^store.Store,id:Org_Id,address:store.Hash) -> (changed:bool
     }
     chain:=make([dynamic]Org,context.temp_allocator)
     base:Maybe(Org)
+    base_address:store.Hash
+    scratch:=scratch_make()
     a:=address
     for {
         if _,known:=ours[a];known {
             o,_:=org_get(s,a,context.temp_allocator)
-            base=o
+            base,base_address=o,a
             break
         }
-        if !object_present(s,a) {return false,a,.Missing}
+        if !object_whole(s,a,scratch) {return false,a,.Missing}
         o:=org_get(s,a,context.temp_allocator) or_return
         if o.id!=id || len(chain)>=ORG_CHAIN_MAX {return false,{},.Corrupt}
         append(&chain,o)
@@ -289,6 +301,16 @@ org_accept :: proc(s:^store.Store,id:Org_Id,address:store.Hash) -> (changed:bool
         a=o.prev
     }
     if len(chain)==0 {return false,{},.None}
+    if he==.None {
+        if base==nil {return false,{},.Unauthorized}
+        // A branch from an older version: each of its signers must sign still.
+        if base_address!=held_address {
+            for &x in chain {
+                role,member:=org_role(&held,x.signer)
+                if !member || role<.Writer || (role==.Writer && !org_signs_as_writer(&held,&x)) {return false,{},.Unauthorized}
+            }
+        }
+    }
     last:=base
     for k:=len(chain)-1;k>=0;k-=1 {
         next:=&chain[k]
@@ -304,6 +326,15 @@ org_accept :: proc(s:^store.Store,id:Org_Id,address:store.Hash) -> (changed:bool
 }
 
 ORG_CHAIN_MAX :: 1<<16 // versions a peer's record may lie past the one held
+
+// Whether a writer of held may have signed next as a version of it: the
+// members and what held has of the org and its repositories stay.
+@(private)
+org_signs_as_writer :: proc(held,next:^Org) -> bool {
+    h:=held^
+    h.version=next.version-1
+    return org_signs(&h,next)
+}
 
 // --- Shared bookmarks ---
 

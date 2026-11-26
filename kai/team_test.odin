@@ -187,6 +187,28 @@ org_records_hold_only_when_signed_by_who_may :: proc(t:^testing.T) {
         {"a stranger adds a repository",&stranger,members,repos,false},
         {"an admin removes a member",&ben,fewer,repos,true},
     }
+    // A writer adds repositories and changes nothing held: not the org's name, nor a repository's name or visibility.
+    with_repo:=held
+    with_repo.repos=repos
+    flipped:=[]Org_Repo{{id={0=1},name="game",public=true}}
+    renamed_repo:=[]Org_Repo{{id={0=1},name="other"}}
+    two_repos:=[]Org_Repo{{id={0=1},name="game"},{id={0=2},name="tools"}}
+    Writer_Case :: struct {name:string,org_name:string,repos:[]Org_Repo,ok:bool}
+    writer_cases:=[]Writer_Case{
+        {"a writer adds a second repository","studio",two_repos,true},
+        {"a writer renames the org","renamed",repos,false},
+        {"a writer makes a repository public","studio",flipped,false},
+        {"a writer renames a repository","studio",renamed_repo,false},
+        {"a writer removes a repository","studio",nil,false},
+    }
+    for c in writer_cases {
+        next:=with_repo
+        next.version,next.prev,next.signer,next.name,next.repos=with_repo.version+1,first,cal.key,c.org_name,c.repos
+        bytes,ee:=org_encode(&next,&cal,context.temp_allocator)
+        testing.expect_value(t,ee,Error.None)
+        decoded,_:=org_decode(bytes,context.temp_allocator)
+        testing.expectf(t,org_signs(&with_repo,&decoded)==c.ok,"%s: %v",c.name,!c.ok)
+    }
     for c in cases {
         next:=held
         next.version,next.prev,next.signer,next.members,next.repos=held.version+1,first,c.by.key,c.members,c.repos
@@ -228,6 +250,41 @@ org_records_hold_only_when_signed_by_who_may :: proc(t:^testing.T) {
     testing.expect_value(t,fe,Error.Unauthorized)
     _,missing_need,mne:=org_accept(&peer,o.id,forged_address)
     testing.expect(t,mne==.Missing && missing_need==forged_address,"a version not here is asked for")
+    // Another first record under the same id, signed by a stranger and versions ahead, is refused.
+    hijack:=Org{id=o.id,version=1,name="mine",members={{stranger.key,.Admin,"Mallory","box",""}}}
+    hijack_bytes:=org_encode_signed(t,&hijack,&stranger)
+    hijack_first,_:=object_put(&s,.Org,hijack_bytes)
+    hijack_next:=hijack
+    for v in 2..=9 {
+        hijack_next.version,hijack_next.prev=u64(v),hijack_first
+        b:=org_encode_signed(t,&hijack_next,&stranger)
+        hijack_first,_=object_put(&s,.Org,b)
+    }
+    _,_,he2:=org_accept(&s,o.id,hijack_first)
+    testing.expect_value(t,he2,Error.Unauthorized)
+    _,still,_:=org_head(&s,o.id,context.temp_allocator)
+    testing.expect(t,still==lower,"the head held stays")
+    // An admin removed in a version cannot branch from before it and win by versions.
+    _,removed_head,_:=org_head(&s,o.id,context.temp_allocator)
+    current,_:=org_get(&s,removed_head,context.temp_allocator)
+    without_ben:=current
+    kept:=make([dynamic]Member,context.temp_allocator)
+    for m in current.members {if m.key!=ben.key {append(&kept,m)}}
+    without_ben.version,without_ben.prev,without_ben.members=current.version+1,removed_head,kept[:]
+    removal,re2:=org_write(&s,&without_ben,&ana,10)
+    testing.expect_value(t,re2,Error.None)
+    fork:=current
+    fork_prev:=removed_head
+    for k in 0..<3 {
+        fork.version,fork.prev,fork.name=current.version+1+u64(k),fork_prev,"ben's"
+        b:=org_encode_signed(t,&fork,&ben)
+        fork_prev,_=object_put(&s,.Org,b)
+    }
+    _,_,fe2:=org_accept(&s,o.id,fork_prev)
+    testing.expect_value(t,fe2,Error.Unauthorized)
+    _,after_fork,_:=org_head(&s,o.id,context.temp_allocator)
+    testing.expect(t,after_fork==removal,"the removal holds against a longer branch of the removed admin")
+
     // Shared bookmarks: a writer's next seq is taken, a reader's or an older one is not.
     _,head_now,_:=org_head(&s,o.id,context.temp_allocator)
     now,_:=org_get(&s,head_now,context.temp_allocator)
