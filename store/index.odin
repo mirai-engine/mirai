@@ -462,15 +462,23 @@ refresh_locked :: proc(s:^Store) -> Error {
     number:=state.generation.number
     if newest>number {
         g:=generation_load(s,newest) or_return
+        // Every pack is mapped before the generation is taken: a failure keeps
+        // the one read before whole.
+        for gp,i in g.packs {
+            index,error:=pack_add_locked(s,{writer=gp.writer,seq=gp.seq})
+            if error!=.None {
+                generation_close(s,&g)
+                return error
+            }
+            g.map_pack[i]=index
+        }
         generation_close(s,&state.generation)
         state.generation=g
         for &p in state.packs {p.indexed=false}
         for gp,i in g.packs {
-            index:=pack_add_locked(s,{writer=gp.writer,seq=gp.seq}) or_return
-            p:=&state.packs[index]
+            p:=&state.packs[g.map_pack[i]]
             p.indexed,p.sealed,p.size,p.created=true,true,i64(gp.size),gp.created
             p.gone=false
-            state.generation.map_pack[i]=index
         }
         state_rebuild_locked(s)
     }
@@ -591,7 +599,9 @@ trailer_load_locked :: proc(s:^Store,index:int,size:i64) -> bool {
     chunks:=int(footer.chunks)
     addresses:=([^]Hash)(raw_data(trailer_bytes))[:chunks]
     locations:=([^]Location)(raw_data(trailer_bytes[chunks*size_of(Hash):]))[:chunks]
-    fanout:=([^]u32)(raw_data(trailer_bytes[chunks*(size_of(Hash)+size_of(Location)):]))[:256]
+    // The fanout is at 2 mod 4 when chunks is odd: it is read through an aligned copy.
+    fanout:[256]u32
+    copy(mem.slice_to_bytes(fanout[:]),trailer_bytes[chunks*(size_of(Hash)+size_of(Location)):][:size_of(fanout)])
     extras:=([^]Extra)(raw_data(trailer_bytes[chunks*(size_of(Hash)+size_of(Location))+256*4:]))[:footer.extras]
     valid:=fanout[255]==footer.chunks
     for b in 1..<256 {valid&&=fanout[b]>=fanout[b-1]}

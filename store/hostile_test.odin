@@ -260,3 +260,38 @@ hostile_mutate :: proc(bytes:[]u8,damage:$D,h:^base.Hostile) -> []u8 {
     }
     return out
 }
+
+// Memory that runs out while a newer generation is read keeps the one read
+// before whole; the next read takes the newer one.
+@(test)
+a_refresh_out_of_memory_keeps_the_generation_before :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"store-refresh-oom");if folder=="" {return}
+    now:=time.now()
+    reader,ok:=test_store(t,folder);if !ok {return}
+    defer close(&reader)
+    before:=reader.state.generation.number
+    writer,_:=test_store(t,folder)
+    data:=test_bytes(400<<10,11)
+    address,put_error:=put(&writer,data,now)
+    testing.expect_value(t,put_error,Error.None)
+    testing.expect_value(t,ref_set(&writer,"keep","object",address,now),Error.None)
+    _,sweep_error:=sweep(&writer,nil,now)
+    testing.expect_value(t,sweep_error,Error.None)
+    close(&writer)
+
+    state:=reader.state
+    packs,index:=state.packs.allocator,state.pack_index.allocator
+    shrink(&state.packs)
+    state.packs.allocator,state.pack_index.allocator=failing_allocator(),failing_allocator()
+    refreshed:=refresh_locked(&reader)
+    state.packs.allocator,state.pack_index.allocator=packs,index
+    testing.expect_value(t,refreshed,Error.Out_Of_Memory)
+    testing.expect_value(t,state.generation.number,before)
+    for pack,i in state.generation.map_pack {
+        gp:=state.generation.packs[i]
+        testing.expect(t,pack<len(state.packs) && state.packs[pack].id==Pack_Id{writer=gp.writer,seq=gp.seq})
+    }
+    testing.expect_value(t,refresh_locked(&reader),Error.None)
+    testing.expect(t,state.generation.number>before,"the next read takes the newer generation")
+    test_object_bytes(t,&reader,address,data)
+}

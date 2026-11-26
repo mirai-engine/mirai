@@ -96,7 +96,9 @@ leases_collect :: proc(s:^Store,live:^Live_Set) -> Error {
 // whose lock is free is removed. A file that is not a lease adds nothing.
 @(private)
 lease_collect :: proc(s:^Store,live:^Live_Set,path:string) -> Error {
-    file,open_error:=io_open(s,path)
+    // Opened to write: an exclusive lock on a handle only read can be denied
+    // on Windows.
+    file,open_error:=io_open(s,path,{.Read,.Write})
     if open_error==.Missing {return .None}
     open_error or_return
     defer os.close(file)

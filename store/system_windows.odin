@@ -26,6 +26,18 @@ import "core:time"
 @(private="file")
 Wide_Path :: [PATH_BYTES+9]u16
 
+// FILE_RENAME_INFO with the name inline; the name length is in bytes, without
+// the terminator.
+@(private="file")
+File_Rename_Info :: struct {
+    flags:u32,
+    root:windows.HANDLE,
+    name_length:u32,
+    name:Wide_Path,
+}
+#assert(offset_of(File_Rename_Info,root)==8 && offset_of(File_Rename_Info,name)==20)
+#assert(align_of(File_Rename_Info)==8)
+
 // Runs attempt until it succeeds or fails with something other than a
 // sharing violation or a denied access, sleeping a little longer each time.
 @(private="file")
@@ -124,17 +136,16 @@ posix_replace :: proc(from,to:cstring16) -> bool {
         windows.FILE_FLAG_BACKUP_SEMANTICS,nil)
     if handle==windows.INVALID_HANDLE_VALUE {return false}
     defer windows.CloseHandle(handle)
-    // FILE_RENAME_INFO: Flags, RootDirectory, FileNameLength, FileName.
-    NAME_AT :: 20
     name:=([^]u16)(rawptr(to))
     length:=0
     for name[length]!=0 {length+=1}
-    info:[NAME_AT+size_of(Wide_Path)]u8
-    if NAME_AT+(length+1)*2>len(info) {return false}
-    (^u32)(&info[0])^=FILE_RENAME_FLAG_POSIX_SEMANTICS|FILE_RENAME_FLAG_REPLACE_IF_EXISTS
-    (^u32)(&info[16])^=u32(length*2)
-    copy(info[NAME_AT:][:(length+1)*2],([^]u8)(rawptr(to))[:(length+1)*2])
-    return bool(windows.SetFileInformationByHandle(handle,FILE_RENAME_INFO_EX,&info[0],u32(NAME_AT+(length+1)*2)))
+    info:File_Rename_Info
+    if length+1>len(info.name) {return false}
+    info.flags=FILE_RENAME_FLAG_POSIX_SEMANTICS|FILE_RENAME_FLAG_REPLACE_IF_EXISTS
+    info.name_length=u32(length*2)
+    copy(info.name[:length+1],name[:length+1])
+    size:=int(offset_of(File_Rename_Info,name))+(length+1)*2
+    return bool(windows.SetFileInformationByHandle(handle,FILE_RENAME_INFO_EX,&info,u32(size)))
 }
 
 // Renames from to to, replacing to; a reader of the old to keeps it.

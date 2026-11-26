@@ -745,7 +745,8 @@ trailer_build :: proc(frames:[]Own_Frame,frames_end:i64,last:i64) -> (bytes:[]u8
     if e!=nil {return nil,.Out_Of_Memory}
     addresses:=([^]Hash)(raw_data(bytes))[:chunks]
     locations:=([^]Location)(raw_data(bytes[chunks*size_of(Hash):]))[:chunks]
-    fanout:=([^]u32)(raw_data(bytes[chunks*(size_of(Hash)+size_of(Location)):]))[:256]
+    // The fanout is at 2 mod 4 when chunks is odd: it is built aligned and copied.
+    fanout:[256]u32
     extra_at:=chunks*(size_of(Hash)+size_of(Location))+256*4
     extra_list:=([^]Extra)(raw_data(bytes[extra_at:]))[:extras]
     for i,k in order[:chunks] {
@@ -756,6 +757,7 @@ trailer_build :: proc(frames:[]Own_Frame,frames_end:i64,last:i64) -> (bytes:[]u8
         fanout[frames[i].address[0]]+=1
     }
     for b in 1..<256 {fanout[b]+=fanout[b-1]}
+    copy(bytes[chunks*(size_of(Hash)+size_of(Location)):],mem.slice_to_bytes(fanout[:]))
     k:=0
     for f in frames {
         if f.kind==.Chunk {continue}

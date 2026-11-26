@@ -95,8 +95,10 @@ sweep :: proc(s:^Store,live:[]Hash,now:Maybe(time.Time)=nil,reclaim:=false) -> (
     defer sync.mutex_unlock(&state.gate)
     sync.mutex_lock(&state.lock)
     defer sync.mutex_unlock(&state.lock)
+    // Another thread of this value is between batch_enter and batch_leave: its
+    // batch is not this caller's to commit.
+    if state.entered>0 || state.writer.inflight>0 {return {busy=true},.None}
     commit_locked(s,at._nsec) or_return
-    // Another thread of this value is between batch_enter and batch_leave.
     if state.shared {return {busy=true},.None}
     locked:=file_lock(state.root_lock,.Exclusive,false) or_return
     if !locked {return {busy=true},.None}
@@ -161,7 +163,9 @@ dead_writers_find :: proc(w:^Sweep) -> Error {
         if p.indexed || p.sealed || p.own || p.gone || p.damaged {continue}
         buffer:[PATH_BYTES]u8
         path:=pack_file_path(s,p,&buffer) or_return
-        probe,error:=io_open(s,path)
+        // Opened to write: an exclusive lock on a handle only read can be
+        // denied on Windows.
+        probe,error:=io_open(s,path,{.Read,.Write})
         if error==.Missing {
             p.gone=true
             continue

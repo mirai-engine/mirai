@@ -43,7 +43,10 @@ a_sweep_refuses_while_a_batch_is_open_and_loses_no_commit :: proc(t:^testing.T) 
             again,error:=put(&writer,data,now)
             testing.expect(t,error==.None && again==address && len(writer.state.writer.deduped)>0)
         case .Operation_Of_This_Value:
+            // The operation has written and not committed: the sweep must not commit for it.
             testing.expect_value(t,batch_enter(&sweeper),Error.None)
+            _,error:=put(&sweeper,test_bytes(1<<10,u64(hold)+99),now)
+            testing.expect(t,error==.None && sweeper.state.writer.frames>0)
         case .Another_Sweep:
             other,_=file_open(join_test(root,"lock",0)[:len(root)+5])
             locked,_:=file_lock(other,.Exclusive,false)
@@ -51,6 +54,9 @@ a_sweep_refuses_while_a_batch_is_open_and_loses_no_commit :: proc(t:^testing.T) 
         }
         busy,error:=sweep(&sweeper,nil,now)
         testing.expectf(t,error==.None && busy.busy && busy.packs==0 && chunk_has(&sweeper,address),"%v: the sweep refuses",hold)
+        if hold==.Operation_Of_This_Value {
+            testing.expect(t,sweeper.state.writer.frames>0,"the sweep leaves the open batch of an operation uncommitted")
+        }
         switch hold {
         case .Batch_Of_Another_Value: testing.expect_value(t,ref_set(&writer,"keep","object",address,now),Error.None)
         case .Operation_Of_This_Value: batch_leave(&sweeper)
