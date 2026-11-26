@@ -249,9 +249,10 @@ mesh_kept :: proc(user:rawptr,namespace,name:string,object:store.Hash,from:[]str
     if _,e:=vcs.machine_publish_ddc(c.machine,c.org,ddc_key(namespace,name),objects[:],tainted[:]);e==.None {c.published+=1}
 }
 
-// Publishes a result found here when the org's records name none of its key:
-// one kept before this machine shared the project's cache. A key with a
-// record is left as it is, so nothing is signed or sealed twice.
+// Publishes a result found here unless a record of its key names an output
+// this store holds whole, which it then serves: one kept before this machine
+// shared the project's cache, or whose only records are of peers that built
+// another output. Nothing is signed or sealed twice.
 @(private)
 mesh_here :: proc(user:rawptr,namespace,name:string,object:store.Hash,from:[]string) {
     c:=(^Mesh_Cache)(user)
@@ -261,7 +262,12 @@ mesh_here :: proc(user:rawptr,namespace,name:string,object:store.Hash,from:[]str
         defer sync.mutex_unlock(&c.lock)
         s:=store.read_index(&c.machine.store)
         records:=make([dynamic]vcs.DDC_Record,context.temp_allocator)
-        if vcs.ddc_lookup(&s,c.org,ddc_key(namespace,name),&records)==.None && len(records)>0 {return}
+        vcs.ddc_lookup(&s,c.org,ddc_key(namespace,name),&records)
+        lacking:=make([dynamic]store.Hash,context.temp_allocator)
+        for d in records {
+            clear(&lacking)
+            if _,e:=vcs.ddc_output_lacking(&s,d.output_root,&lacking);e==.None && len(lacking)==0 {return}
+        }
     }
     mesh_kept(user,namespace,name,object,from)
 }
