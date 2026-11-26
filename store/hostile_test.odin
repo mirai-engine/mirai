@@ -18,7 +18,7 @@ failing_allocator :: proc() -> runtime.Allocator {
     }}
 }
 
-@(private="file")
+@(private)
 path_in :: proc(folder:string,parts:..string) -> string {
     all:=make([dynamic]string,context.temp_allocator)
     append(&all,folder)
@@ -70,26 +70,36 @@ hostile_inputs_return_errors :: proc(t:^testing.T) {
     }
     testing.expect_value(t,ref_set(&s,"ns","n",hash),Error.None)
 
+    // Leases of any content: one held that is not a lease keeps nothing, and
+    // one whose holder ended goes.
     now:=time.now()
     unleased,_:=test_put(&s,data[:31],time.time_add(now,-2*GRACE))
-    truncated:=path_in(folder,"leases","truncated")
-    testing.expect_value(t,lease_write(&s,truncated,holder_self(),0,{unleased,hash},now),Error.None)
-    valid,valid_error:=os.read_entire_file(truncated,context.temp_allocator)
+    lease,lease_error:=lease_open(&s,{unleased,hash})
+    if !testing.expect_value(t,lease_error,Error.None) {return}
+    lease_buffer:[PATH_BYTES]u8
+    lease_file,_:=lease_path(&lease,&lease_buffer)
+    valid,valid_error:=os.read_entire_file(lease_file,context.temp_allocator)
+    testing.expect_value(t,lease_release(&lease),Error.None)
     if !testing.expect(t,valid_error==nil && len(valid)>size_of(Hash)) {return}
-    testing.expect(t,os.write_entire_file(truncated,valid[:len(valid)-size_of(Hash)])==nil)
-    random_lease:=path_in(folder,"leases","random")
-    testing.expect(t,os.write_entire_file(random_lease,test_bytes(len(valid),42))==nil)
-    oversized:=path_in(folder,"leases","oversized")
-    lease_bytes:=make([]u8,LEASE_HEADER+(LEASE_MAX_HASHES+1)*size_of(Hash),
-        context.temp_allocator)
-    copy(lease_bytes,valid)
-    testing.expect(t,os.write_entire_file(oversized,lease_bytes)==nil)
-    for file in ([3]string{truncated,random_lease,oversized}) {test_set_time(t,file,now)}
-    collected,make_error:=make(Live_Set,1,s.allocator)
-    if !testing.expect(t,make_error==nil) {return}
-    testing.expect_value(t,leases_collect(&s,&collected,now),Error.None)
-    testing.expect(t,!(unleased in collected) && !(hash in collected),"invalid leases do not keep addresses")
-    delete(collected)
+    oversized:=make([]u8,len(LEASE_MAGIC)+(LEASE_MAX_HASHES+1)*size_of(Hash),context.temp_allocator)
+    copy(oversized,valid)
+    Hostile_Lease :: struct {name:string,bytes:[]u8}
+    for c in ([]Hostile_Lease{{"truncated",valid[:len(valid)-1]},{"random",test_bytes(len(valid),42)},{"oversized",oversized},{"empty",nil}}) {
+        path:=path_in(folder,"leases",c.name)
+        testing.expect(t,os.write_entire_file(path,c.bytes)==nil)
+        holder,open_error:=file_open(path,{.Read,.Write})
+        if !testing.expect(t,open_error==nil) {continue}
+        locked,_:=file_lock(holder,.Exclusive,false)
+        testing.expect(t,locked)
+        collected,make_error:=make(Live_Set,1,s.allocator)
+        if !testing.expect(t,make_error==nil) {return}
+        testing.expect_value(t,leases_collect(&s,&collected),Error.None)
+        testing.expectf(t,!(unleased in collected) && !(hash in collected) && os.exists(path),"%s: a held file that is not a lease keeps nothing",c.name)
+        os.close(holder)
+        testing.expect_value(t,leases_collect(&s,&collected),Error.None)
+        testing.expectf(t,!os.exists(path),"%s: it goes once its holder ends",c.name)
+        delete(collected)
+    }
     _,hostile_sweep_error:=sweep(&s,nil,now)
     testing.expect_value(t,hostile_sweep_error,Error.None)
 
@@ -216,7 +226,7 @@ file_name :: proc(path:string) -> string {
 
 @(private="file")
 copy_root :: proc(from,to:string) {
-    for folder in ([]string{"","/packs","/index","/leases","/retired","/tmp"}) {os.make_directory(strings.concatenate({to,folder},context.temp_allocator))}
+    for folder in ([]string{"","/packs","/index","/leases","/tmp"}) {os.make_directory(strings.concatenate({to,folder},context.temp_allocator))}
     for folder in ([]string{"/packs","/index"}) {
         entries,_:=os.read_all_directory_by_path(strings.concatenate({from,folder},context.temp_allocator),context.temp_allocator)
         for e in entries {

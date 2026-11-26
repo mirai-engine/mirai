@@ -13,7 +13,8 @@ import "mirai:std/base"
 
 // A pack is packs/<writer>-<seq>.pack: a Pack_Head, then frames, each a
 // Frame_Head and its data at an offset aligned to 1<<align, appended only by
-// the writer whose lease is w-<writer>. A Commit frame closes a batch: readers
+// the writer that made it, which holds a lock on the file until it seals it,
+// so a sweep knows a pack whose writer ended. A Commit frame closes a batch: readers
 // take frames only up to the last commit whose count and sum of heads match
 // what precedes it, so a torn tail is never read and a pack is never reopened
 // to write. A sealed pack ends in a trailer of its chunks sorted by address and
@@ -115,11 +116,10 @@ Pack :: struct {
     size:i64,      // sealed: of the file; otherwise the end of its last commit read
     created:i64,
     last:i64,      // time of its last commit known
-    retired:u64,   // the generation that dropped it into retired/; 0: in packs/
+    used:u64,      // the state's clock when its file was last used
     sealed,indexed,own,gone,damaged:bool,
-    dead:bool,     // still being written by a writer whose lease is gone: a sweep folds what it committed
-    lent:bool,     // its file or mapping went to a caller, who may still hold slices of it: kept open
-    pruned:bool,   // deleted from retired/ and closed: nothing reads it
+    dead:bool,     // still being written by a writer that ended: a sweep folds what it committed
+    lent:bool,     // its mapping went to a caller, who may still hold slices of it: kept mapped
 }
 
 @(private)
@@ -135,14 +135,10 @@ Writer :: struct {
     frames:u32,
     heads:u64,
     pending:i64,
-    generation:u64,    // of the state the batch's lookups saw
     deduped:[dynamic]Deduped,
     named:[dynamic]Hash,
     own:[dynamic]Own_Frame, // of the open pack, for its trailer
     broken:Error,
-    holder:Holder,
-    lease_generation:u64,
-    leased:bool,
 }
 
 // A chunk a batch found already stored instead of writing it.
@@ -322,16 +318,6 @@ stage_write :: proc(s:^Store,st:^Stage,now:i64) -> Error {
     return error
 }
 
-// stage_write with the lock already held.
-@(private)
-stage_write_locked :: proc(s:^Store,st:^Stage,now:i64) -> Error {
-    if len(st.frames)==0 {return .None}
-    base,file:=reserve_locked(s,st) or_return
-    sum:=stage_sum(st,base)
-    written:=io_write_at(s,file,st.bytes[:],base)
-    return land_locked(s,st,base,sum,written,now)
-}
-
 @(private)
 stage_sum :: proc(st:^Stage,base:i64) -> (sum:u64) {
     for f in st.frames {
@@ -411,28 +397,13 @@ land_locked :: proc(s:^Store,st:^Stage,base:i64,sum:u64,written:Error,now:i64) -
     return .None
 }
 
-// Makes the writer's pack the first time it is needed, with the lease that
-// says its writer runs.
+// Makes the writer's pack the first time it is needed.
 @(private)
 writer_ready_locked :: proc(s:^Store) -> Error {
     w:=&s.state.writer
     if w.broken!=.None {return w.broken}
     if w.open {return .None}
-    if w.id==({}) {
-        crypto.rand_bytes(w.id[:])
-        // Lookups of the batch made against an older generation wait on it.
-        seen:=s.state.generation.number
-        if len(w.deduped)>0 {seen=min(seen,w.generation)}
-        w.holder=holder_self()
-        w.lease_generation=seen
-        lease_buffer:[PATH_BYTES]u8
-        path:=writer_lease_path(s,&lease_buffer) or_return
-        if error:=lease_write(s,path,w.holder,seen,nil,time.now());error!=.None {
-            w.id={}
-            return error
-        }
-        w.leased=true
-    }
+    if w.id==({}) {crypto.rand_bytes(w.id[:])}
     return writer_pack_open_locked(s)
 }
 
@@ -446,15 +417,6 @@ writer_text :: proc(id:[16]u8,buffer:^[64]u8) -> string {
 }
 
 @(private)
-writer_lease_path :: proc(s:^Store,buffer:^[PATH_BYTES]u8) -> (string,Error) {
-    name:[2+32]u8
-    text:[64]u8
-    copy(name[:],"w-")
-    copy(name[2:],writer_text(s.state.writer.id,&text))
-    return join(buffer,s.root,"leases",string(name[:]))
-}
-
-@(private)
 writer_pack_open_locked :: proc(s:^Store) -> Error {
     state:=s.state
     w:=&state.writer
@@ -465,17 +427,18 @@ writer_pack_open_locked :: proc(s:^Store) -> Error {
     now:=time.now()._nsec
     head:=Pack_Head{writer=w.id,created=now}
     copy(head.magic[:],PACK_MAGIC)
-    if e:=io_write_at(s,file,mem.ptr_to_bytes(&head),0);e!=.None {
-        os.close(file)
-        file_remove(path)
-        return e
-    }
-    index,error:=pack_add_locked(s,id)
+    // A new file: nothing else holds its lock.
+    _,error:=file_lock(file,.Exclusive,false)
+    if error==.None {error=io_write_at(s,file,mem.ptr_to_bytes(&head),0)}
+    index:int
+    if error==.None {index,error=pack_add_locked(s,id)}
     if error!=.None {
         os.close(file)
         file_remove(path)
         return error
     }
+    files_make_room_locked(s)
+    state.files+=1
     p:=&state.packs[index]
     p.file,p.own,p.created,p.size=file,true,now,size_of(Pack_Head)
     w.open,w.pack,w.file=true,index,file
@@ -489,12 +452,7 @@ writer_pack_open_locked :: proc(s:^Store) -> Error {
 // that makes them visible to every reader reach the disk with one flush of its
 // own pack before it returns; an open pack of another writer whose chunks or
 // objects the batch names is flushed first, so nothing it names can be lost to
-// a crash that keeps it. When a sweep published a generation since the batch's lookups,
-// before or after its commit frame, what the batch named without writing is
-// looked up again and what the sweep dropped is copied back from the retired
-// pack that still holds it; what is gone everywhere fails the commit
-// (Missing). A writer whose lease is gone (a sweep judged it ended) writes its
-// batch again in a new pack under a new lease.
+// a crash that keeps it. The batch lets the root's lock go.
 commit :: proc(s:^Store,now:Maybe(time.Time)=nil) -> Error {
     if s==nil || s.state==nil {return .Invalid_Argument}
     sync.mutex_lock(&s.state.lock)
@@ -502,59 +460,83 @@ commit :: proc(s:^Store,now:Maybe(time.Time)=nil) -> Error {
     return commit_locked(s,(now.? or_else time.now())._nsec)
 }
 
-@(private) COMMIT_ROUNDS :: 4
-
 @(private)
 commit_locked :: proc(s:^Store,now:i64) -> Error {
     state:=s.state
     w:=&state.writer
     for w.inflight>0 {sync.cond_wait(&state.written,&state.lock)}
+    defer batch_release_locked(s)
     if w.broken!=.None {
         e:=w.broken
         batch_drop_locked(s)
         return e
     }
-    if !w.open || w.frames==0 {
-        batch_reset(w)
-        writer_ack_locked(s)
-        return .None
-    }
-    for _ in 0..<COMMIT_ROUNDS {
-        from:=w.committed
+    if w.open && w.frames>0 {
         if e:=commit_frame_locked(s,now);e!=.None {
             batch_drop_locked(s)
             return e
         }
-        if !writer_alive_locked(s,now) {
-            if e:=writer_redo_locked(s,from,now);e!=.None {
-                batch_drop_locked(s)
-                return e
-            }
-            continue
-        }
-        copied,settled:=batch_settle_locked(s,now)
-        if settled!=.None {
-            batch_reset(w)
-            return settled
-        }
-        if !copied {break}
     }
     batch_reset(w)
-    writer_ack_locked(s)
     return .None
 }
 
-// Flushes what the batch names in other open packs, looks the batch up
-// against the newest generation, writes the commit frame and flushes its own
-// pack once.
+// Takes the root's lock shared before an operation that looks up, writes or
+// leases: a sweep, which holds it exclusive, waits for every batch to commit
+// and every such operation to end, and they wait for it. batch_leave ends the
+// operation; the lock goes once no operation runs and the batch is committed.
+// Taken outside lock, so the readers of this value never wait on a sweep of
+// another process.
+@(private)
+batch_enter :: proc(s:^Store) -> Error {
+    state:=s.state
+    sync.mutex_lock(&state.lock)
+    if state.shared {
+        state.entered+=1
+        sync.mutex_unlock(&state.lock)
+        return .None
+    }
+    sync.mutex_unlock(&state.lock)
+    sync.mutex_lock(&state.gate)
+    defer sync.mutex_unlock(&state.gate)
+    sync.mutex_lock(&state.lock)
+    defer sync.mutex_unlock(&state.lock)
+    if !state.shared {
+        // Nothing lets go a lock this value does not yet say it holds.
+        sync.mutex_unlock(&state.lock)
+        _,error:=file_lock(state.root_lock,.Shared,true)
+        sync.mutex_lock(&state.lock)
+        if error!=.None {return error}
+        state.shared=true
+    }
+    state.entered+=1
+    return .None
+}
+
+@(private)
+batch_leave :: proc(s:^Store) {
+    sync.mutex_lock(&s.state.lock)
+    defer sync.mutex_unlock(&s.state.lock)
+    s.state.entered-=1
+    batch_release_locked(s)
+}
+
+// Lets the root's lock go when no operation runs and nothing waits on a commit.
+@(private)
+batch_release_locked :: proc(s:^Store) {
+    state:=s.state
+    w:=&state.writer
+    if !state.shared || state.entered>0 || w.inflight>0 || w.frames>0 || len(w.deduped)>0 {return}
+    file_unlock(state.root_lock)
+    state.shared=false
+}
+
 @(private)
 commit_frame_locked :: proc(s:^Store,now:i64) -> Error {
     state:=s.state
     w:=&state.writer
     if w.frames==0 {return .None}
     foreign_flush_locked(s) or_return
-    batch_verify_locked(s,now) or_return
-    sweep_step(s,.Verified)
     payload:=Commit_Payload{frames=w.frames,heads=w.heads,time=now}
     head:=Frame_Head{kind=.Commit,align=ALIGN_FRAME,stored=size_of(Commit_Payload),raw=size_of(Commit_Payload)}
     head_seal(&head)
@@ -569,7 +551,6 @@ commit_frame_locked :: proc(s:^Store,now:i64) -> Error {
     w.frames,w.heads,w.pending=0,0,0
     p:=&state.packs[w.pack]
     p.size,p.last=w.committed,now
-    sweep_step(s,.Committed)
     return .None
 }
 
@@ -601,61 +582,6 @@ batch_drop_locked :: proc(s:^Store) {
     state_rebuild_locked(s)
 }
 
-// Looks up again, against a generation a sweep published since the batch
-// began, what the batch named without writing, and stages what the sweep
-// retired back into this pack.
-@(private)
-batch_verify_locked :: proc(s:^Store,now:i64) -> Error {
-    state:=s.state
-    w:=&state.writer
-    newest:=generation_newest(s) or_return
-    if newest<=w.generation {return .None}
-    refresh_locked(s) or_return
-    w.generation=state.generation.number
-    _,missing:=batch_restore_locked(s,now) or_return
-    if missing>0 {return .Missing}
-    return .None
-}
-
-// After the commit frame: when a sweep published a generation since the
-// batch was looked up, what it dropped is copied back, to commit again.
-@(private)
-batch_settle_locked :: proc(s:^Store,now:i64) -> (copied:bool,error:Error) {
-    state:=s.state
-    w:=&state.writer
-    newest:=generation_newest(s) or_return
-    if newest<=w.generation {return false,.None}
-    refresh_locked(s) or_return
-    w.generation=state.generation.number
-    missing:int
-    copied,missing=batch_restore_locked(s,now) or_return
-    clear(&w.deduped)
-    clear(&w.named)
-    if missing>0 {return copied,.Missing}
-    return copied,.None
-}
-
-// Stages back from retired packs what the batch found stored, and what its
-// refs reach, that the current generation no longer holds.
-@(private)
-batch_restore_locked :: proc(s:^Store,now:i64) -> (copied:bool,missing:int,error:Error) {
-    w:=&s.state.writer
-    st:^Stage
-    defer if st!=nil {stage_free(s,st)}
-    visited:=make(map[Hash]struct{},16,context.temp_allocator)
-    defer delete(visited)
-    for d in w.deduped {missing+=restore_locked(s,&st,d.address,DATA,0,&visited) or_return}
-    for target in w.named {
-        if target=={} {continue}
-        missing+=restore_locked(s,&st,target,-1,0,&visited) or_return
-    }
-    if st!=nil && len(st.frames)>0 {
-        stage_write_locked(s,st,now) or_return
-        copied=true
-    }
-    return
-}
-
 // Flushes the open packs of other writers that hold what the batch names.
 @(private)
 foreign_flush_locked :: proc(s:^Store) -> Error {
@@ -675,7 +601,7 @@ foreign_flush_locked :: proc(s:^Store) -> Error {
     }
     for i in packs {
         p:=&state.packs[i]
-        if p.sealed || p.indexed || p.gone || p.retired>0 || (w.open && i==w.pack) {continue}
+        if p.sealed || p.indexed || p.gone || (w.open && i==w.pack) {continue}
         buffer:[PATH_BYTES]u8
         file,error:=io_open(s,pack_file_path(s,p,&buffer) or_return,{.Read,.Write})
         if error==.Missing {continue}
@@ -687,77 +613,34 @@ foreign_flush_locked :: proc(s:^Store) -> Error {
     return .None
 }
 
-// Whether the root still sees this writer: its lease is there, refreshed
-// when older than a quarter of LEASE_MAX_AGE for other machines' sweeps.
+// Adds the packs that hold a ref's target and everything under it.
 @(private)
-writer_alive_locked :: proc(s:^Store,now:i64) -> bool {
-    w:=&s.state.writer
-    if !w.leased {return true}
-    buffer:[PATH_BYTES]u8
-    path,error:=writer_lease_path(s,&buffer)
-    if error!=.None {return true}
-    info,stat_error:=os.stat(path,context.temp_allocator)
-    if stat_error!=nil {return false}
-    at:=time.Time{_nsec=now}
-    if older_than(info.modification_time,at,LEASE_MAX_AGE/4) {
-        if os.change_times(path,at,at)!=nil {return false}
-    }
-    return true
+root_packs_locked :: proc(s:^Store,target:Hash,packs:^map[int]struct{},visited:^map[Hash]struct{}) {
+    text:[64]u8
+    if v,found:=ref_resolve_locked(s,"",hex(target,&text));found {tree_packs_locked(s,v.address,-1,0,packs,visited)}
+    tree_packs_locked(s,target,-1,0,packs,visited)
 }
 
-// A writer a sweep judged ended writes the frames of its batch again, from
-// from, in a new pack under a new lease; the old pack is the sweep's.
 @(private)
-writer_redo_locked :: proc(s:^Store,from:i64,now:i64) -> Error {
-    state:=s.state
-    w:=&state.writer
-    frames:=make([dynamic]Own_Frame,0,len(w.own),context.temp_allocator)
-    defer delete(frames)
-    for f in w.own {
-        if i64(f.location.offset)>=from {append(&frames,f)}
-    }
-    old:=w.file
-    st:=stage_new(s) or_return
-    defer stage_free(s,st)
-    stage_reset(st)
-    buffer,e:=make([]u8,CHUNK_MAX+REF_FIXED+2*NAME_MAX,context.temp_allocator)
-    if e!=nil {return .Out_Of_Memory}
+tree_packs_locked :: proc(s:^Store,address:Hash,level,depth:int,packs:^map[int]struct{},visited:^map[Hash]struct{}) {
+    if depth>NODE_LEVEL_MAX+1 || address in visited^ {return}
+    map_insert(visited,address,struct{}{})
+    pack,location,found:=find_locked(s,address)
+    if !found {return}
+    map_insert(packs,pack,struct{}{})
+    if level==DATA {return}
+    buffer,e:=make([]u8,CHUNK_MAX,context.temp_allocator)
+    if e!=nil {return}
     defer delete(buffer,context.temp_allocator)
-    for f in frames {
-        if f.kind==.Chunk {
-            data:=buffer[:f.location.stored]
-            read_exact(old,data,i64(f.location.offset)) or_return
-            stage_frame(st,.Chunk,f.address,data,f.location.time,f.location.codec,int(f.location.raw)) or_return
-            continue
-        }
-        head:Frame_Head
-        read_exact(old,mem.ptr_to_bytes(&head),i64(f.location.offset)) or_return
-        if !head_valid(&head) {return .Corrupt}
-        payload:=buffer[:head.stored]
-        read_exact(old,payload,i64(f.location.offset)+size_of(Frame_Head)) or_return
-        stage_frame(st,head.kind,head.address,payload) or_return
-    }
-    p:=&state.packs[w.pack]
-    p.own=false
-    w.open,w.file,w.leased=false,nil,false
-    w.id,w.seq={},0
-    clear(&w.own)
-    return stage_write_locked(s,st,now)
-}
-
-// Says in the writer's lease that nothing it has named waits on a
-// generation older than the current one.
-@(private)
-writer_ack_locked :: proc(s:^Store) {
-    state:=s.state
-    w:=&state.writer
-    if !w.leased || w.frames>0 || w.inflight>0 || len(w.deduped)>0 || len(w.named)>0 {return}
-    generation:=state.generation.number
-    if generation<=w.lease_generation {return}
-    buffer:[PATH_BYTES]u8
-    path,error:=writer_lease_path(s,&buffer)
-    if error!=.None {return}
-    if lease_write(s,path,w.holder,generation,nil,time.now())==.None {w.lease_generation=generation}
+    bytes,read_error:=location_bytes_locked(s,pack,location,buffer)
+    if read_error!=.None {return}
+    n,parse_error:=node_parse(bytes)
+    if parse_error!=.None || (level>=0 && n.level!=level) {return}
+    children,f:=make([]Entry,len(n.entries),context.temp_allocator)
+    if f!=nil {return}
+    defer delete(children,context.temp_allocator)
+    copy(children,n.entries)
+    for c in children {tree_packs_locked(s,c.address,n.level-1 if n.level>0 else DATA,depth+1,packs,visited)}
 }
 
 // Commits, seals the pack and begins the next one.
@@ -778,27 +661,30 @@ writer_seal_locked :: proc(s:^Store) -> Error {
     p:=&state.packs[w.pack]
     if w.committed<=size_of(Pack_Head) {
         // A pack that took nothing is removed.
-        os.close(w.file)
+        pack_close_locked(s,p)
         buffer:[PATH_BYTES]u8
         if path,e:=pack_path(s,"packs",p.id,&buffer);e==.None {io_remove(s,path)}
-        p.file,p.gone=nil,true
+        p.gone=true
         w.open,w.file=false,nil
         clear(&w.own)
         return .None
     }
     size:=pack_seal(s,w.file,w.own[:],w.committed,p.last) or_return
     p.sealed,p.size,p.own=true,size,false
+    // The file stays open to read; a sweep may fold it now.
+    file_unlock(w.file)
     w.open,w.file=false,nil
     clear(&w.own)
-    // The file stays open to read.
     return .None
 }
 
-// A pack whose tail could not be cut is left for a sweep to seal at its last
-// commit; the writer goes on in a new one.
+// A pack whose tail could not be cut is left for a sweep to fold up to its
+// last commit; the writer goes on in a new one.
 @(private)
 writer_abandon_locked :: proc(s:^Store) {
     w:=&s.state.writer
+    file_unlock(w.file)
+    s.state.packs[w.pack].own=false
     w.open,w.file=false,nil
     w.broken=.None
     w.seq+=1
@@ -809,15 +695,8 @@ writer_abandon_locked :: proc(s:^Store) {
 writer_close_locked :: proc(s:^Store) {
     state:=s.state
     w:=&state.writer
-    if w.open {
-        commit_locked(s,time.now()._nsec)
-        writer_seal_locked(s)
-    }
-    if w.leased {
-        buffer:[PATH_BYTES]u8
-        if path,error:=writer_lease_path(s,&buffer);error==.None {file_remove(path)}
-        w.leased=false
-    }
+    commit_locked(s,time.now()._nsec)
+    if w.open {writer_seal_locked(s)}
 }
 
 // Writes the trailer of frames after frames_end and the footer, and syncs:

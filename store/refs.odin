@@ -71,6 +71,8 @@ ref_frames_commit :: proc(s:^Store,sets:[]Ref_Set,now:Maybe(time.Time)) -> Error
         if !name_valid(x.namespace) || !name_valid(x.name) {return .Invalid_Argument}
     }
     at:=(now.? or_else time.now())._nsec
+    batch_enter(s) or_return
+    defer batch_leave(s)
     st:=stage_take(s) or_return
     defer stage_give(s,st)
     for x in sets {ref_stage(st,x.namespace,x.name,x.hash,at) or_return}
@@ -155,7 +157,6 @@ ref_namespaces :: proc(s:^Store,allocator:=context.allocator) -> (namespaces:[]s
         if _,e:=append(&seen,key[:slash]);e!=nil {return nil,.Out_Of_Memory}
     }
     slice.sort(seen[:])
-    sweep_step(s,.Names)
     list,make_error:=make([]string,len(seen),allocator)
     if make_error!=nil {return nil,.Out_Of_Memory}
     n:=0

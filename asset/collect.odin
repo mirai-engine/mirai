@@ -5,8 +5,10 @@ import "mirai:store"
 
 // Sweeps the machine's store: the one procedure a long-running owner of it
 // (a share, an editor) calls now and then. What stays is what live names
-// (what the owner holds open), what every fresh lease names, every ref of
-// every namespace, and the output, thumbnail and program objects of their builds.
+// (what the owner holds open), what every lease of a running process names,
+// every ref of every namespace, and the output, thumbnail and program objects
+// of their builds. While another sweep runs or a batch is open the result is
+// busy and nothing is swept: the owner sweeps again later.
 // A project reaches its pins through these refs while it is refreshed
 // (REF_BUILDS, REF_PACKAGES), and its root carries the text of each manifest
 // it pins (PACKAGE_FILES), so a manifest swept is taken from there again.

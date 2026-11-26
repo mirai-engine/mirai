@@ -1,8 +1,25 @@
 #+build darwin, linux
 package store
 
+import "core:c"
 import "core:os"
 import "core:sys/posix"
+
+when ODIN_OS==.Darwin {
+    foreign import libc "system:System"
+} else {
+    foreign import libc "system:c"
+}
+
+@(private="file")
+foreign libc {
+    flock :: proc "c" (fd:c.int,operation:c.int) -> c.int ---
+}
+
+@(private="file") LOCK_SH :: 1
+@(private="file") LOCK_EX :: 2
+@(private="file") LOCK_NB :: 4
+@(private="file") LOCK_UN :: 8
 
 @(private)
 file_open :: proc(path:string,flags:=os.File_Flags{.Read}) -> (^os.File,os.Error) {
@@ -20,29 +37,35 @@ rename_replace :: proc(from,to:string) -> os.Error {
     return os.rename(from,to)
 }
 
-// Renames the folder from to to, which must not hold anything.
+// Locks file for this open file, apart from every other open file of it, also
+// of this process; the system lets it go when the process ends. With wait it
+// blocks until the lock is free, else locked is false while another holds it.
 @(private)
-rename_folder :: proc(from,to:string) -> os.Error {
-    return os.rename(from,to)
-}
-
-// Raises the limit of open files of the process to what the system allows: a
-// value holds a descriptor per pack it loaded, a sweep is what bounds the
-// packs, and a shell or a desktop hands a process a few hundred. macOS
-// refuses the unlimited hard limit it reports, so its bounds per process are
-// tried after it.
-@(private)
-files_limit_raise :: proc() {
-    limit:posix.rlimit
-    if posix.getrlimit(.NOFILE,&limit)!=.OK {return}
-    for bound in ([?]posix.rlim_t{limit.rlim_max,1<<20,61440,10240}) {
-        if bound>limit.rlim_max || bound<=limit.rlim_cur {continue}
-        raised:=posix.rlimit{rlim_cur=bound,rlim_max=limit.rlim_max}
-        if posix.setrlimit(.NOFILE,&raised)==.OK {return}
+file_lock :: proc(file:^os.File,mode:Lock_Mode,wait:bool) -> (locked:bool,error:Error) {
+    operation:c.int=LOCK_EX if mode==.Exclusive else LOCK_SH
+    if !wait {operation|=LOCK_NB}
+    for {
+        if flock(c.int(os.fd(file)),operation)==0 {return true,.None}
+        errno:=posix.errno()
+        if errno==.EINTR {continue}
+        if errno==.EWOULDBLOCK {return false,.None}
+        return false,.Io
     }
 }
 
-// Maps size bytes of file read-only; the mapping outlives the file's name.
+@(private)
+file_unlock :: proc(file:^os.File) {
+    flock(c.int(os.fd(file)),LOCK_UN)
+}
+
+@(private)
+no_space :: proc(error:os.Error) -> bool {
+    e,ok:=error.(os.Platform_Error)
+    return ok && (e==.ENOSPC || e==.EDQUOT)
+}
+
+// Maps size bytes of file read-only; the mapping outlives the file's name and
+// its descriptor.
 @(private)
 file_map :: proc(file:^os.File,size:i64) -> ([]u8,Error) {
     if size<=0 || size>i64(max(int)) {return nil,.Invalid_Argument}

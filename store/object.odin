@@ -1,7 +1,6 @@
 package store
 
 import "base:runtime"
-import "core:os"
 import "core:sync"
 import "core:time"
 import "mirai:std/jobs"
@@ -55,6 +54,8 @@ put :: proc(s:^Store,data:[]u8,now:Maybe(time.Time)=nil,worker:=jobs.Worker_Ref{
     at:=(now.? or_else time.now())._nsec
     if len(data)<=CHUNK_MAX && chunk_cut(data)==len(data) {
         // One chunk and a root of one entry, as the builder makes them.
+        batch_enter(s) or_return
+        defer batch_leave(s)
         st:=stage_take(s) or_return
         defer stage_give(s,st)
         p:=Put{s=s,stage=st,now=at}
@@ -85,22 +86,27 @@ put :: proc(s:^Store,data:[]u8,now:Maybe(time.Time)=nil,worker:=jobs.Worker_Ref{
 
 put_begin :: proc(s:^Store,now:Maybe(time.Time)=nil,worker:=jobs.Worker_Ref{}) -> (p:Put,error:Error) {
     if s==nil || s.state==nil {return {},.Invalid_Argument}
-    p.s=s
     p.now=(now.? or_else time.now())._nsec
     p.worker=worker
-    p.stage=stage_take(s) or_return
+    batch_enter(s) or_return
+    p.stage,error=stage_take(s)
+    if error!=.None {
+        batch_leave(s)
+        return {},error
+    }
+    p.s=s
     sync.mutex_lock(&s.state.lock)
     if n:=len(s.state.builders);n>0 {p.builder=pop(&s.state.builders)}
     sync.mutex_unlock(&s.state.lock)
     if p.builder==nil {
         b,e:=new(Object_Writer,s.state.allocator)
         if e!=nil {
-            stage_give(s,p.stage)
+            put_abandon(&p)
             return {},.Out_Of_Memory
         }
         if object_writer_init(b,{},s.state.allocator)!=.None {
             free(b,s.state.allocator)
-            stage_give(s,p.stage)
+            put_abandon(&p)
             return {},.Out_Of_Memory
         }
         p.builder=b
@@ -216,7 +222,8 @@ put_finish :: proc(p:^Put,meta:[]u8={}) -> (address:Hash,total:u64,error:Error) 
     return
 }
 
-// Gives back what a put holds; what it already wrote stays for the batch.
+// Gives back what a put holds; what it already wrote stays for the batch,
+// which commit ends.
 put_abandon :: proc(p:^Put) {
     if p.s==nil {return}
     s:=p.s
@@ -239,6 +246,7 @@ put_abandon :: proc(p:^Put) {
         }
     }
     stage_give(s,p.stage)
+    batch_leave(s)
     p^={}
 }
 
@@ -256,7 +264,6 @@ put_chunk :: proc(p:^Put,address:Hash,bytes:[]u8) -> Error {
     state:=s.state
     sync.mutex_lock(&state.lock)
     w:=&state.writer
-    if w.frames==0 && len(w.deduped)==0 {w.generation=state.generation.number}
     pack,location,found:=lookup_locked(s,address)
     touch:=false
     if found {
@@ -327,6 +334,8 @@ chunk_here :: proc(s:^Store,address:Hash) -> bool {
 chunk_put :: proc(s:^Store,address:Hash,bytes:[]u8,now:Maybe(time.Time)=nil) -> Error {
     if s==nil || s.state==nil || len(bytes)==0 || len(bytes)>CHUNK_MAX {return .Invalid_Argument}
     at:=(now.? or_else time.now())._nsec
+    batch_enter(s) or_return
+    defer batch_leave(s)
     st:=stage_take(s) or_return
     defer stage_give(s,st)
     p:=Put{s=s,stage=st,now=at}
@@ -344,6 +353,8 @@ chunk_put_frame :: proc(s:^Store,address:Hash,codec:u8,stored,raw:[]u8,now:Maybe
     chunk_decode(s,codec,stored,raw) or_return
     if address_of_bytes(raw)!=address {return .Corrupt}
     at:=(now.? or_else time.now())._nsec
+    batch_enter(s) or_return
+    defer batch_leave(s)
     st:=stage_take(s) or_return
     defer stage_give(s,st)
     p:=Put{s=s,stage=st,now=at,codec=codec,stored=stored}
@@ -358,6 +369,8 @@ chunk_put_frame :: proc(s:^Store,address:Hash,codec:u8,stored,raw:[]u8,now:Maybe
 chunk_check :: proc(s:^Store,address:Hash,now:Maybe(time.Time)=nil) -> Error {
     if s==nil || s.state==nil {return .Invalid_Argument}
     at:=(now.? or_else time.now())._nsec
+    batch_enter(s) or_return
+    defer batch_leave(s)
     st:=stage_take(s) or_return
     defer stage_give(s,st)
     {
@@ -385,18 +398,10 @@ chunk_check :: proc(s:^Store,address:Hash,now:Maybe(time.Time)=nil) -> Error {
 // damage; a frame that does not decode is Corrupt.
 chunk_read :: proc(s:^Store,address:Hash,buffer:[]u8) -> (bytes:[]u8,error:Error) {
     if s==nil || s.state==nil {return nil,.Invalid_Argument}
-    file,view,location:=chunk_locate(s,address) or_return
-    if location.codec==CODEC_NONE {
-        if view!=nil {return view[location.offset:][:location.stored],.None}
-        if len(buffer)<int(location.stored) {return nil,.Invalid_Argument}
-        bytes=buffer[:location.stored]
-        if e:=read_exact(file,bytes,i64(location.offset));e!=.None {return nil,e}
-        return bytes,.None
-    }
-    if len(buffer)<int(location.raw) {return nil,.Invalid_Argument}
-    c:=coder_take(s) or_return
+    stored,location,c:=chunk_locate(s,address,buffer,false) or_return
+    if location.codec==CODEC_NONE {return stored,.None}
     defer coder_give(s,c)
-    stored:=chunk_stored(file,view,location,c.scratch) or_return
+    if len(buffer)<int(location.raw) {return nil,.Invalid_Argument}
     frame_decode(c,location.codec,stored,buffer[:location.raw]) or_return
     return buffer[:location.raw],.None
 }
@@ -404,63 +409,46 @@ chunk_read :: proc(s:^Store,address:Hash,buffer:[]u8) -> (bytes:[]u8,error:Error
 // Returns a chunk as stored in its frame and its decoded size.
 chunk_read_frame :: proc(s:^Store,address:Hash,buffer:[]u8) -> (bytes:[]u8,codec:u8,raw:int,error:Error) {
     if s==nil || s.state==nil {return nil,0,0,.Invalid_Argument}
-    file,view,location:=chunk_locate(s,address) or_return
-    bytes=chunk_stored(file,view,location,buffer) or_return
-    return bytes,location.codec,int(location.raw),.None
+    stored,location,_:=chunk_locate(s,address,buffer,true) or_return
+    return stored,location.codec,int(location.raw),.None
 }
 
-// The stored bytes of a frame: of the mapping, or read into buffer.
+// The stored bytes of a chunk's frame: a slice of its pack's mapping once the
+// pack is sealed, otherwise read with the lock held, since another thread may
+// close the file after it, into buffer, or into the scratch of the coder it
+// returns to decode an encoded frame with (unless keep_encoded), which the
+// caller gives back. A sealed pack is mapped the first time it is read.
 @(private)
-chunk_stored :: proc(file:^os.File,view:[]u8,location:Location,buffer:[]u8) -> (stored:[]u8,error:Error) {
-    if view!=nil {return view[location.offset:][:location.stored],.None}
-    if len(buffer)<int(location.stored) {return nil,.Invalid_Argument}
-    read_exact(file,buffer[:location.stored],i64(location.offset)) or_return
-    return buffer[:location.stored],.None
-}
-
-// The file or mapping that holds a chunk; a sealed pack is mapped the first
-// time it is read.
-@(private)
-chunk_locate :: proc(s:^Store,address:Hash) -> (file:^os.File,view:[]u8,location:Location,error:Error) {
+chunk_locate :: proc(s:^Store,address:Hash,buffer:[]u8,keep_encoded:bool) -> (stored:[]u8,location:Location,c:^Coder,error:Error) {
     state:=s.state
     sync.mutex_lock(&state.lock)
     defer sync.mutex_unlock(&state.lock)
-    if error:=s.read_index.? or_else Error.None;error!=.None {return nil,nil,{},error}
+    if e:=s.read_index.? or_else Error.None;e!=.None {return nil,{},nil,e}
+    defer if error!=.None && c!=nil {
+        coder_give_locked(s,c)
+        c=nil
+    }
     for attempt in 0..<2 {
         pack,found_location,found:=find_locked(s,address,use_index=s.read_index!=nil)
         location=found_location
-        if !found {return nil,nil,{},.Missing}
-        p:=&state.packs[pack]
-        if p.file==nil {
-            buffer:[PATH_BYTES]u8
-            path:=pack_file_path(s,p,&buffer) or_return
-            opened,open_error:=io_open(s,path)
-            if open_error==.Missing && attempt==0 {
-                // Retired by a sweep since this value read the generation.
-                if p.retired==0 {p.gone=true}
-                refresh_locked(s) or_return
-                s.retired_scanned=false
-                continue
-            }
-            if open_error!=.None {return nil,nil,{},open_error}
-            p.file=opened
+        if !found {return nil,{},c,.Missing}
+        into:=buffer
+        if location.codec!=CODEC_NONE && !keep_encoded {
+            if c==nil {c=coder_locked(s) or_return}
+            into=c.scratch
         }
-        // Nothing is read beyond the file's size now: a pack cut below a chunk is damaged.
-        end:=i64(location.offset)+i64(location.stored)
-        size,size_error:=os.file_size(p.file)
-        if size_error!=nil {return nil,nil,{},os_error(size_error)}
-        if end>size {
-            p.damaged=true
-            return nil,nil,{},.Corrupt
+        stored,error=location_bytes_locked(s,pack,location,into)
+        if error==.Missing && attempt==0 {
+            // Removed by a sweep since this value read the generation.
+            state.packs[pack].gone=true
+            refresh_locked(s) or_return
+            continue
         }
-        if p.sealed && p.view==nil && size>=p.size {
-            if mapped,map_error:=file_map(p.file,p.size);map_error==.None {p.view=mapped}
-        }
-        p.lent=true
-        if p.view!=nil && end<=i64(len(p.view)) {return p.file,p.view,location,.None}
-        return p.file,nil,location,.None
+        if error!=.None {return nil,{},c,error}
+        if state.packs[pack].view!=nil {state.packs[pack].lent=true}
+        return stored,location,c,.None
     }
-    return nil,nil,{},.Missing
+    return nil,{},c,.Missing
 }
 
 // An object held open to read its bytes, by its root.

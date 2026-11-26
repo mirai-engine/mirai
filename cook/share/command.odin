@@ -276,7 +276,7 @@ offer :: proc(
     packages,_:=asset.root_packages_in(s,root,allocator)
     o.problems=packages.problems
     for e in o.snapshot.entries {append(&served,e.address)}
-    lease,lease_error:=node_lease_open(s,served[:])
+    lease,lease_error:=store.lease_open(s,served[:])
     if lease_error!=.None {
         return {},fmt.aprintf("the project lease could not be kept (%v)",
             lease_error,allocator=allocator)
