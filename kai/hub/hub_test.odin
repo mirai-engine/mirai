@@ -78,12 +78,13 @@ cookie_of :: proc(head:string) -> string {
     return rest[:strings.index_byte(rest,';')]
 }
 
+// A change of files; size, when not negative, is what every entry says it holds.
 @(private="file")
-change_of :: proc(t:^testing.T,s:^store.Store,identity:^kai.Identity,files:[][2]string) -> kai.Revision {
+change_of :: proc(t:^testing.T,s:^store.Store,identity:^kai.Identity,files:[][2]string,size:=-1) -> kai.Revision {
     list:=make([dynamic]kai.File,context.temp_allocator)
     for f in files {
         address,_:=store.put(s,transmute([]u8)f[1])
-        append(&list,kai.File{path=f[0],kind=.File,address=address,size=u64(len(f[1]))})
+        append(&list,kai.File{path=f[0],kind=.File,address=address,size=u64(size>=0?size:len(f[1]))})
     }
     slice.sort_by(list[:],proc(a,b:kai.File) -> bool {return a.path<b.path})
     tree,_:=kai.tree_build(s,list[:])
@@ -234,7 +235,210 @@ hub_http_refuses_hostile_requests :: proc(t:^testing.T) {
         p:=request_parse(transmute([]u8)c.text)
         testing.expectf(t,p.status==c.status,"%q: %d, not %d",c.text,p.status,c.status)
     }
+    // The head's bound holds its blank line: the largest head and body fit
+    // HEAD_MAX+BODY_MAX, the connection's input.
+    start:=fmt.tprintf("POST /login HTTP/1.1\r\nHost: a\r\nContent-Length: %d\r\nX: ",BODY_MAX)
+    pad:=HEAD_MAX-len(start)-4
+    largest:=strings.concatenate({start,strings.repeat("p",pad,context.temp_allocator),"\r\n\r\n",strings.repeat("b",BODY_MAX,context.temp_allocator)},context.temp_allocator)
+    testing.expect_value(t,len(largest),HEAD_MAX+BODY_MAX)
+    testing.expect_value(t,request_parse(transmute([]u8)largest).status,200)
+    longer:=strings.concatenate({start,strings.repeat("p",pad+1,context.temp_allocator),"\r\n\r\n"},context.temp_allocator)
+    testing.expect_value(t,request_parse(transmute([]u8)longer).status,431)
     testing.expect_value(t,form_value(transmute([]u8)string("a=1&name=b%2Fc+d"),"name"),"b/c d")
     testing.expect_value(t,form_value(transmute([]u8)string("name=%zz"),"name"),"")
     testing.expect(t,!account_name_valid("Ben") && !account_name_valid("") && account_name_valid("ben.k-1"),"account names are lowercase")
+}
+
+// A web view without its agent or listener: the server's store and team, and
+// the stores of its orgs under folder when tenants.
+@(private="file")
+bench_open :: proc(t:^testing.T,h:^Hub,folder:string,tenants:bool) -> bool {
+    h^={allocator=context.allocator}
+    h.sessions=make(map[[32]u8]Session)
+    e:store.Error
+    h.s,e=store.open(strings.concatenate({folder,"/server"},context.temp_allocator))
+    if !testing.expect_value(t,e,store.Error.None) {return false}
+    if !testing.expect_value(t,kai.team_open(&h.team,&h.s),kai.Error.None) {return false}
+    if tenants {
+        if !testing.expect_value(t,kai.tenants_init(&h.tenants,folder),kai.Error.None) {return false}
+        h.team.tenants=&h.tenants
+    }
+    return testing.expect_value(t,kai.team_profile_set(&h.team,"ana","cloud"),kai.Error.None)
+}
+
+// What the web view answers to one request.
+@(private="file")
+ask :: proc(h:^Hub,text:string) -> Out {
+    p:=request_parse(transmute([]u8)text)
+    out:=Out{body=make([dynamic]u8,context.temp_allocator),headers=make([dynamic]u8,context.temp_allocator)}
+    if p.status!=200 {
+        out.status=p.status
+        return out
+    }
+    page(h,&p.request,&out)
+    if out.status==0 {out.status=200}
+    return out
+}
+
+// A link names a file percent-encoded and opens it; an escape that is
+// malformed or names a '/' or a NUL opens nothing. A file shows by its
+// object's size, not the size its tree entry claims. A browser's POST from
+// another site is refused before it signs in or out.
+@(test)
+the_web_view_opens_what_its_links_name_and_refuses_cross_site_posts :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-hub-pages")
+    if folder=="" {return}
+    h:Hub
+    defer hub_free(&h)
+    if !bench_open(t,&h,folder,false) {return}
+    org,oe:=kai.team_org_create(&h.team,"studio")
+    if !testing.expect_value(t,oe,kai.Error.None) {return}
+    repo:=kai.random_id(kai.Repo_Id)
+    kai.team_repo_set(&h.team,org,{id=repo,name="lighthouse",public=true})
+    big:=strings.repeat("x",FILE_SHOWN_MAX+1,context.temp_allocator)
+    revision:=change_of(t,&h.s,&h.team.identity,{{"a b/\u00e9.txt","spaced and accented\n"},{"big.txt",big}},size=1)
+    testing.expect_value(t,kai.team_publish(&h.team,org,repo,{{"main",revision}}),kai.Error.None)
+    files:=fmt.tprintf("/%s/%s/t/%s",id_text(org),id_text(repo),id_text(revision))
+    Case :: struct {request:string,status:int,shows,hides:string}
+    get:=proc(path:string,extra:="") -> string {return fmt.tprintf("GET %s HTTP/1.1\r\nHost: kai\r\n%s\r\n",path,extra)}
+    post:=proc(path,extra:string) -> string {
+        body:="name=ben&password=wrong+horse"
+        return fmt.tprintf("POST %s HTTP/1.1\r\nHost: kai\r\n%sContent-Type: application/x-www-form-urlencoded\r\nContent-Length: %d\r\n\r\n%s",path,extra,len(body),body)
+    }
+    cases:=[]Case{
+        {get(fmt.tprintf("%s/a%%20b/%%C3%%A9.txt",files)),200,"spaced and accented",""},
+        {get(fmt.tprintf("%s/a%%20b",files)),200,"a%20b/%C3%A9.txt",""},
+        {get(fmt.tprintf("%s/a%%2Fb",files)),404,"",""},
+        {get(fmt.tprintf("%s/a%%00",files)),404,"",""},
+        {get(fmt.tprintf("%s/a%%2",files)),404,"",""},
+        {get(fmt.tprintf("%s/a%%zzb",files)),404,"",""},
+        {get(fmt.tprintf("%s/big.txt",files)),200,"too large","xxxxxxxx"},
+        {post("/login","Origin: https://evil.example\r\n"),403,"",""},
+        {post("/login","Origin: null\r\n"),403,"",""},
+        {post("/login","Sec-Fetch-Site: cross-site\r\n"),403,"",""},
+        {post("/logout","Sec-Fetch-Site: same-site\r\n"),403,"",""},
+        {post("/login","Origin: http://kai\r\nSec-Fetch-Site: same-origin\r\n"),401,"",""},
+        {post("/login","Origin: https://kai.example\r\nX-Forwarded-Host: kai.example\r\n"),401,"",""},
+        {post("/login",""),401,"",""},
+    }
+    for c in cases {
+        out:=ask(&h,c.request)
+        text:=string(out.body[:])
+        testing.expectf(t,out.status==c.status,"%q: %d, not %d",c.request,out.status,c.status)
+        if c.shows!="" {testing.expectf(t,strings.contains(text,c.shows),"%q shows %q",c.request,c.shows)}
+        if c.hides!="" {testing.expectf(t,!strings.contains(text,c.hides),"%q hides %q",c.request,c.hides)}
+    }
+}
+
+// Setting a password ends the device's sessions; a sign-in while as many
+// passwords derive as the server allows is told to come back; the sessions
+// held stay at SESSIONS_MAX.
+@(test)
+web_accounts_bound_what_a_crowd_of_sign_ins_takes :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-hub-accounts")
+    if folder=="" {return}
+    h:Hub
+    defer hub_free(&h)
+    if !bench_open(t,&h,folder,false) {return}
+    key:=h.team.identity.key
+    if !testing.expect(t,account_set(&h,key,"ben","correct horse"),"a member sets its sign-in") {return}
+    token,result:=session_open(&h,"ben","correct horse")
+    if !testing.expect_value(t,result,Sign_In.Signed) {return}
+    hex:[64]u8
+    cookie:=fmt.tprintf("GET / HTTP/1.1\r\nHost: kai\r\nCookie: kai=%s\r\n\r\n",hex_text(token[:],hex[:]))
+    p:=request_parse(transmute([]u8)cookie)
+    _,_,signed:=session_of(&h,&p.request)
+    testing.expect(t,signed,"the session signs in")
+
+    h.derivations=DERIVATIONS_MAX
+    body:="name=ben&password=correct+horse"
+    out:=ask(&h,fmt.tprintf("POST /login HTTP/1.1\r\nHost: kai\r\nContent-Length: %d\r\n\r\n%s",len(body),body))
+    testing.expect_value(t,out.status,503)
+    testing.expect(t,strings.contains(string(out.headers[:]),"Retry-After: "),"a busy sign-in says when to come back")
+    testing.expect(t,!account_set(&h,key,"ben","another horse"),"a password does not derive while the server is busy")
+    h.derivations=0
+
+    testing.expect(t,account_set(&h,key,"ben","another horse"),"the member changes its password")
+    _,_,signed=session_of(&h,&p.request)
+    testing.expect(t,!signed,"a password changed ends the device's sessions")
+
+    now:=time.now()._nsec
+    for k in 0..<SESSIONS_MAX {
+        filler:[32]u8
+        filler[0],filler[1],filler[31]=u8(k),u8(k>>8),0xff
+        h.sessions[filler]=Session{key=key,expires=now+i64(k+1)*i64(time.Second)}
+    }
+    _,result=session_open(&h,"ben","another horse")
+    testing.expect_value(t,result,Sign_In.Signed)
+    testing.expect_value(t,len(h.sessions),SESSIONS_MAX)
+    oldest:[32]u8
+    oldest[31]=0xff
+    _,kept:=h.sessions[oldest]
+    testing.expect(t,!kept,"the oldest session ends first")
+}
+
+// An org id a stranger names on a server of several orgs makes no folder and
+// opens no store.
+@(test)
+an_unknown_org_makes_nothing_on_a_server :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-hub-tenants")
+    if folder=="" {return}
+    h:Hub
+    defer hub_free(&h)
+    if !bench_open(t,&h,folder,true) {return}
+    for _ in 0..<3 {
+        org:=kai.random_id(kai.Org_Id)
+        out:=ask(&h,fmt.tprintf("GET /%s HTTP/1.1\r\nHost: kai\r\n\r\n",id_text(org)))
+        testing.expect_value(t,out.status,404)
+        out=ask(&h,fmt.tprintf("GET /%s/%s HTTP/1.1\r\nHost: kai\r\n\r\n",id_text(org),id_text(kai.random_id(kai.Repo_Id))))
+        testing.expect_value(t,out.status,404)
+        testing.expect(t,!os.exists(fmt.tprintf("%s/orgs/%s",folder,id_text(org))),"no folder for an org id a request names")
+    }
+    testing.expect_value(t,ask(&h,"GET / HTTP/1.1\r\nHost: kai\r\n\r\n").status,200)
+    testing.expect_value(t,len(h.tenants.stores),0)
+}
+
+// A client that expects 100 Continue gets it before it sends its body, and a
+// client idle between requests does not hold the server's stop.
+@(test)
+the_web_view_answers_100_continue_and_stops_with_idle_clients :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-hub-live")
+    if folder=="" {return}
+    h:Hub
+    why,ok:=hub_start(&h,{root=strings.concatenate({folder,"/server"},context.temp_allocator),port=-1,http="127.0.0.1:0",name="cloud"})
+    if !testing.expectf(t,ok,"the server starts: %s",why) {return}
+    stopped:=false
+    defer if !stopped {hub_stop(&h)}
+
+    socket,e:=net.dial_tcp_from_address_and_port(net.IP4_Loopback,h.port)
+    if !testing.expect(t,e==nil,"a client connects") {return}
+    defer net.close(socket)
+    net.set_option(socket,.Receive_Timeout,5*time.Second)
+    body:="name=ben&password=wrong+horse"
+    head:=fmt.tprintf("POST /login HTTP/1.1\r\nHost: kai\r\nExpect: 100-continue\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: %d\r\n\r\n",len(body))
+    net.send_tcp(socket,transmute([]u8)head)
+    buffer:[4096]u8
+    n,re:=net.recv_tcp(socket,buffer[:])
+    testing.expect(t,re==nil && strings.has_prefix(string(buffer[:max(n,0)]),"HTTP/1.1 100 Continue\r\n\r\n"),"the server asks for the body")
+    net.send_tcp(socket,transmute([]u8)body)
+    reply:=make([dynamic]u8,context.temp_allocator)
+    for !strings.contains(string(reply[:]),"Unauthorized") {
+        n,re=net.recv_tcp(socket,buffer[:])
+        if re!=nil || n<=0 {break}
+        append(&reply,..buffer[:n])
+    }
+    testing.expect(t,strings.contains(string(reply[:]),"HTTP/1.1 401"),"the body is answered")
+
+    idle,de:=net.dial_tcp_from_address_and_port(net.IP4_Loopback,h.port)
+    if !testing.expect(t,de==nil,"a second client connects") {return}
+    defer net.close(idle)
+    net.set_option(idle,.Receive_Timeout,5*time.Second)
+    net.send_tcp(idle,transmute([]u8)string("GET /healthz HTTP/1.1\r\nHost: kai\r\n\r\n"))
+    n,re=net.recv_tcp(idle,buffer[:])
+    testing.expect(t,re==nil && strings.contains(string(buffer[:max(n,0)]),"ok"),"the idle client was served once")
+    started:=time.tick_now()
+    hub_stop(&h)
+    stopped=true
+    took:=time.tick_since(started)
+    testing.expectf(t,took<time.Second,"the server stops in %v with clients idle",took)
 }

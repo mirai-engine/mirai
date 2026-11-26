@@ -11,8 +11,10 @@ import "mirai:store"
 // The web accounts of a server: a name a member chose from its device, the
 // Argon2id of its password and that device's key, under ACCOUNT_NAMESPACE
 // refs of the server's own store. A name belongs to the device that set it
-// first; setting it again from that device changes the password. A session is
-// a random token in a cookie, kept in memory: a restart signs everyone out.
+// first; setting it again from that device changes the password and ends the
+// device's sessions. A session is a random token in a cookie, kept in memory:
+// a restart signs everyone out. At most DERIVATIONS_MAX passwords derive at
+// once, so a crowd of sign-ins does not take the server's memory.
 
 ACCOUNT_NAMESPACE :: "kai-web"
 ACCOUNT_MAGIC :: "kai-web-1"
@@ -50,23 +52,47 @@ account_name_valid :: proc(name:string) -> bool {
 }
 
 // Sets the web sign-in of the device key (kai.Agent_Options.web_login): a
-// member of an org of this server; false when the name is another device's.
+// member of an org of this server; false when the name is another device's or
+// the server is deriving as many passwords as it may. The device's sessions end.
 account_set :: proc(data:rawptr,key:kai.Key,name,password:string) -> bool {
     h:=(^Hub)(data)
     if !account_name_valid(name) || len(password)<PASSWORD_MIN || len(password)>PASSWORD_MAX {return false}
     sync.mutex_lock(&h.lock)
-    defer sync.mutex_unlock(&h.lock)
-    if held,ok:=account_get(h,name);ok && held.key!=key {return false}
+    held,found:=account_get(h,name)
+    sync.mutex_unlock(&h.lock)
+    if found && held.key!=key {return false}
     a:Account
     copy(a.magic[:],ACCOUNT_MAGIC)
     crypto.rand_bytes(a.salt[:])
     a.key=key
-    parameters:=ARGON2ID
-    if argon2id.derive(&parameters,transmute([]u8)password,a.salt[:],a.hash[:])!=nil {return false}
+    if derived,_:=derive(h,password,a.salt[:],a.hash[:]);!derived {return false}
+    sync.mutex_lock(&h.lock)
+    defer sync.mutex_unlock(&h.lock)
+    // Another device may have taken the name while this one derived.
+    if held,found=account_get(h,name);found && held.key!=key {return false}
     bytes:=transmute([size_of(Account)]u8)a
     address,e:=store.put(&h.s,bytes[:])
-    if e!=.None {return false}
-    return store.ref_set(&h.s,ACCOUNT_NAMESPACE,name,address)==.None && store.commit(&h.s)==.None
+    if e!=.None || store.ref_set(&h.s,ACCOUNT_NAMESPACE,name,address)!=.None || store.commit(&h.s)!=.None {return false}
+    for t,session in h.sessions {
+        if session.key==key {delete_key(&h.sessions,t)}
+    }
+    return true
+}
+
+// Argon2id of password into hash; busy when DERIVATIONS_MAX already run.
+@(private)
+derive :: proc(h:^Hub,password:string,salt,hash:[]u8) -> (ok,busy:bool) {
+    sync.mutex_lock(&h.lock)
+    busy=h.derivations>=DERIVATIONS_MAX
+    if !busy {h.derivations+=1}
+    sync.mutex_unlock(&h.lock)
+    if busy {return}
+    parameters:=ARGON2ID
+    ok=argon2id.derive(&parameters,transmute([]u8)password,salt,hash)==nil
+    sync.mutex_lock(&h.lock)
+    h.derivations-=1
+    sync.mutex_unlock(&h.lock)
+    return
 }
 
 @(private)
@@ -83,8 +109,15 @@ account_get :: proc(h:^Hub,name:string) -> (a:Account,ok:bool) {
     return a,string(a.magic[:])==ACCOUNT_MAGIC
 }
 
-// Signs name in: a new session's token when the password holds.
-session_open :: proc(h:^Hub,name,password:string) -> (token:[32]u8,ok:bool) {
+Sign_In :: enum u8 {
+    Refused, // no such name, or another password
+    Signed,
+    Busy,    // DERIVATIONS_MAX passwords derive already: try again in a moment
+}
+
+// Signs name in: a new session's token when the password holds. Past
+// SESSIONS_MAX sessions the oldest ends.
+session_open :: proc(h:^Hub,name,password:string) -> (token:[32]u8,result:Sign_In) {
     if !account_name_valid(name) || len(password)>PASSWORD_MAX {return}
     sync.mutex_lock(&h.lock)
     a,found:=account_get(h,name)
@@ -94,9 +127,9 @@ session_open :: proc(h:^Hub,name,password:string) -> (token:[32]u8,ok:bool) {
         a.salt={}
     }
     hash:[HASH_BYTES]u8
-    parameters:=ARGON2ID
-    if argon2id.derive(&parameters,transmute([]u8)password,a.salt[:],hash[:])!=nil {return}
-    if !found || crypto.compare_constant_time(hash[:],a.hash[:])!=1 {return}
+    derived,busy:=derive(h,password,a.salt[:],hash[:])
+    if busy {return {},.Busy}
+    if !derived || !found || crypto.compare_constant_time(hash[:],a.hash[:])!=1 {return}
     crypto.rand_bytes(token[:])
     session:=Session{key=a.key,expires=time.now()._nsec+i64(SESSION_HOURS)*i64(time.Hour)}
     session.name_len=copy(session.name[:],name)
@@ -106,8 +139,16 @@ session_open :: proc(h:^Hub,name,password:string) -> (token:[32]u8,ok:bool) {
     for t,s in h.sessions {
         if s.expires<now {delete_key(&h.sessions,t)}
     }
-    h.sessions[token]=session
-    return token,true
+    if len(h.sessions)>=SESSIONS_MAX {
+        oldest:[32]u8
+        expires:=max(i64)
+        for t,s in h.sessions {
+            if s.expires<expires {oldest,expires=t,s.expires}
+        }
+        delete_key(&h.sessions,oldest)
+    }
+    if _,e:=map_insert(&h.sessions,token,session);e!=nil {return {},.Refused}
+    return token,.Signed
 }
 
 session_close :: proc(h:^Hub,token:[32]u8) {

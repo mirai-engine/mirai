@@ -23,6 +23,10 @@ FILE_SHOWN_MAX :: 1<<20 // bytes of a file a page shows
 
 @(private)
 page :: proc(h:^Hub,r:^Request,out:^Out) {
+    if r.method==.POST && !same_origin(r) {
+        out.status=403
+        return
+    }
     session,token,signed:=session_of(h,r)
     path:=r.path
     switch {
@@ -36,8 +40,13 @@ page :: proc(h:^Hub,r:^Request,out:^Out) {
         return
     case path=="/login" && r.method==.POST:
         name,password:=form_value(r.body,"name"),form_value(r.body,"password")
-        t,ok:=session_open(h,name,password)
-        if !ok {
+        t,result:=session_open(h,name,password)
+        if result==.Busy {
+            out.status=503
+            header_add(out,"Retry-After: 1\r\n")
+            return
+        }
+        if result!=.Signed {
             login_page(h,out,"that name and password do not sign in: set them from a member's machine (mirai kai web-login)")
             out.status=401
             return
@@ -89,9 +98,47 @@ page :: proc(h:^Hub,r:^Request,out:^Out) {
     switch {
     case len(parts)==2: repo_page(h,&v,i,who,out)
     case len(parts)>=4 && parts[2]=="c": change_page(h,&v,i,parts[3],who,out)
-    case len(parts)>=4 && parts[2]=="t": tree_page(h,&v,i,parts[3],strings.join(parts[4:],"/",context.temp_allocator),who,out)
+    case len(parts)>=4 && parts[2]=="t":
+        file,decoded:=tree_path(parts[4:])
+        if !decoded {
+            out.status=404
+            return
+        }
+        tree_page(h,&v,i,parts[3],file,who,out)
     case: out.status=404
     }
+}
+
+// The repository path of the segments of a link, each percent-decoded (as
+// path_href writes them), in the temp allocator; false when a segment's
+// escape is malformed or decodes to a '/' or a NUL.
+@(private)
+tree_path :: proc(segments:[]string) -> (path:string,ok:bool) {
+    b:=strings.builder_make(context.temp_allocator)
+    for segment,k in segments {
+        name:=percent_decode(segment,false) or_return
+        if strings.index_byte(name,'/')>=0 || strings.index_byte(name,0)>=0 {return}
+        if k>0 {strings.write_byte(&b,'/')}
+        strings.write_string(&b,name)
+    }
+    return strings.to_string(b),true
+}
+
+// Whether a POST comes from a page of this server: a browser names the site
+// of a cross-site form in Sec-Fetch-Site and Origin, which a page cannot
+// forge. A client that sends neither (mirai, curl) is not a browser.
+@(private)
+same_origin :: proc(r:^Request) -> bool {
+    if site,found:=request_header(r,"sec-fetch-site");found && site!="same-origin" {return false}
+    origin,found:=request_header(r,"origin")
+    if !found {return true}
+    scheme:=strings.index(origin,"://")
+    if scheme<0 {return false}
+    from:=origin[scheme+3:]
+    if host,has:=request_header(r,"host");has && strings.equal_fold(from,host) {return true}
+    // Behind a proxy that names the host it was asked for.
+    if host,has:=request_header(r,"x-forwarded-host");has && strings.equal_fold(from,host) {return true}
+    return false
 }
 
 // What an org shows to who.
@@ -251,7 +298,6 @@ tree_page :: proc(h:^Hub,v:^Org_Access,i:int,text,path:string,who:^Session,out:^
     // Down the folders of path to what it names.
     at:=c.tree
     kind:=kai.Entry_Kind.Folder
-    size:u64
     if path!="" {
         for name in strings.split(path,"/",context.temp_allocator) {
             if kind!=.Folder {
@@ -266,7 +312,7 @@ tree_page :: proc(h:^Hub,v:^Org_Access,i:int,text,path:string,who:^Session,out:^
             found:=false
             for x in entries {
                 if x.name!=name {continue}
-                at,kind,size,found=x.address,x.kind,x.size,true
+                at,kind,found=x.address,x.kind,true
             }
             if !found {
                 out.status=404
@@ -296,15 +342,14 @@ tree_page :: proc(h:^Hub,v:^Org_Access,i:int,text,path:string,who:^Session,out:^
         }
         strings.write_string(b,"</table>")
     case .File,.Executable:
-        if size>FILE_SHOWN_MAX {
-            fmt.sbprintf(b,"<p class=\"muted\">%s: too large to show here.</p>",base.bytes_text(i64(size)))
-            break
-        }
-        bytes,fe:=kai.file_bytes(v.s,at,context.temp_allocator)
-        if fe!=.None {
+        // The entry's size is what its writer said: the object's own decides.
+        bytes,fe:=kai.file_bytes(v.s,at,context.temp_allocator,FILE_SHOWN_MAX)
+        if fe==.Too_Large {
+            fmt.sbprintf(b,"<p class=\"muted\">Past %s: too large to show here.</p>",base.bytes_text(FILE_SHOWN_MAX))
+        } else if fe!=.None {
             strings.write_string(b,"<p class=\"muted\">This server does not hold the file yet.</p>")
         } else if !utf8.valid_string(string(bytes)) || strings.index_byte(string(bytes),0)>=0 {
-            fmt.sbprintf(b,"<p class=\"muted\">A binary file of %s: an asset opens in the editor.</p>",base.bytes_text(i64(size)))
+            fmt.sbprintf(b,"<p class=\"muted\">A binary file of %s: an asset opens in the editor.</p>",base.bytes_text(i64(len(bytes))))
         } else {
             fmt.sbprintf(b,"<pre class=\"text\">%s</pre>",html(string(bytes)))
         }
@@ -492,23 +537,31 @@ form_value :: proc(body:[]u8,name:string) -> string {
     for pair in strings.split_iterator(&text,"&") {
         eq:=strings.index_byte(pair,'=')
         if eq<0 || pair[:eq]!=name {continue}
-        b:=strings.builder_make(context.temp_allocator)
-        value:=pair[eq+1:]
-        for k:=0;k<len(value);k+=1 {
-            c:=value[k]
-            switch {
-            case c=='+': strings.write_byte(&b,' ')
-            case c=='%' && k+2<len(value):
-                hi,lo:=hex_digit(lower(value[k+1])),hex_digit(lower(value[k+2]))
-                if hi<0 || lo<0 {return ""}
-                strings.write_byte(&b,u8(hi<<4|lo))
-                k+=2
-            case: strings.write_byte(&b,c)
-            }
-        }
-        return strings.to_string(b)
+        value,_:=percent_decode(pair[eq+1:],true)
+        return value
     }
     return ""
+}
+
+// text with each %XX as its byte, and each '+' as a space when plus, in the
+// temp allocator; false on a '%' not followed by two hex digits.
+@(private)
+percent_decode :: proc(text:string,plus:bool) -> (decoded:string,ok:bool) {
+    b:=strings.builder_make(context.temp_allocator)
+    for k:=0;k<len(text);k+=1 {
+        c:=text[k]
+        switch {
+        case c=='+' && plus: strings.write_byte(&b,' ')
+        case c=='%':
+            if k+2>=len(text) {return}
+            hi,lo:=hex_digit(lower(text[k+1])),hex_digit(lower(text[k+2]))
+            if hi<0 || lo<0 {return}
+            strings.write_byte(&b,u8(hi<<4|lo))
+            k+=2
+        case: strings.write_byte(&b,c)
+        }
+    }
+    return strings.to_string(b),true
 }
 
 @(private)

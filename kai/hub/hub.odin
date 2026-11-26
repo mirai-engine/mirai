@@ -27,7 +27,11 @@ import "mirai:store"
 SERVE_USAGE :: "kai serve [--root <folder>] [--port N] [--http host:port] [--public host:port] [--join <invite>]... [--name <name>] [--ddc-quota <bytes>]"
 HTTP_DEFAULT :: "127.0.0.1:7351"
 CONNECTIONS_MAX :: 256
+REQUEST_SECONDS :: 30  // to receive one request whole, the wait before it included
+SEND_SECONDS :: 30     // of one send to a client
 SESSION_HOURS :: 24*14
+SESSIONS_MAX :: 4096
+DERIVATIONS_MAX :: 4   // Argon2id derivations at once, each of ARGON2ID's memory
 DDC_SWEEP_SECONDS :: 300
 
 Hub :: struct {
@@ -36,13 +40,22 @@ Hub :: struct {
     tenants:kai.Tenants,
     agent:kai.Agent,
     listener:net.TCP_Socket,
+    address:net.IP4_Address, // the web view listens at
     port:int,          // of the web view
     lock:sync.Mutex,   // of what follows
     sessions:map[[32]u8]Session,
-    connections:int,
+    clients:[CONNECTIONS_MAX]Client,
+    derivations:int,   // Argon2id derivations running
     stopping:bool,
     accept:^thread.Thread,
     allocator:runtime.Allocator,
+}
+
+// A connection of the web view; its slot is free when !open.
+@(private)
+Client :: struct {
+    socket:net.TCP_Socket,
+    open:bool,
 }
 
 Hub_Options :: struct {
@@ -56,7 +69,8 @@ Hub_Options :: struct {
 // Opens the server's stores and starts its agent and its web view.
 hub_start :: proc(h:^Hub,options:Hub_Options,allocator:=context.allocator) -> (why:string,ok:bool) {
     h^={allocator=allocator}
-    h.sessions=make(map[[32]u8]Session,allocator)
+    me:runtime.Allocator_Error
+    if h.sessions,me=make(map[[32]u8]Session,SESSIONS_MAX,allocator);me!=nil {return "memory ran out",false}
     if os.make_directory_all(options.root)!=nil && !os.is_dir(options.root) {return fmt.tprintf("%s could not be made: choose a folder this user may write",options.root),false}
     e:store.Error
     if h.s,e=store.open(strings.concatenate({options.root,"/server"},context.temp_allocator),allocator);e!=.None {return fmt.tprintf("the server's store does not open: %s",store.error_text(e)),false}
@@ -89,23 +103,39 @@ hub_start :: proc(h:^Hub,options:Hub_Options,allocator:=context.allocator) -> (w
         hub_free(h)
         return fmt.tprintf("%s is taken: choose another --http",options.http),false
     }
-    h.listener=listener
+    h.listener,h.address,h.port=listener,address,port
     if bound,be:=net.bound_endpoint(listener);be==nil {h.port=bound.port}
     h.accept=thread.create_and_start_with_poly_data(h,hub_accept_run,hub_context(h))
+    if h.accept==nil {
+        net.close(listener)
+        kai.agent_stop(&h.agent)
+        hub_free(h)
+        return "the web view's thread does not start: memory ran out",false
+    }
     return "",true
 }
 
 // Stops the web view and the agent and closes the stores.
 hub_stop :: proc(h:^Hub) {
+    // A client between requests waits in a receive: shut its socket so it ends
+    // now. Its thread frees the slot under the lock before it closes the
+    // socket, so no socket number here is another's.
     sync.mutex_lock(&h.lock)
     h.stopping=true
+    for c in h.clients {
+        if c.open {net.shutdown(c.socket,.Both)}
+    }
     sync.mutex_unlock(&h.lock)
-    if s,e:=net.dial_tcp_from_address_and_port(net.IP4_Loopback,h.port);e==nil {net.close(s)}
+    wake:=h.address==net.IP4_Any?net.IP4_Loopback:h.address
+    if s,e:=net.dial_tcp_from_address_and_port(wake,h.port);e==nil {net.close(s)}
     thread.join(h.accept)
     thread.destroy(h.accept)
     for {
         sync.mutex_lock(&h.lock)
-        open:=h.connections
+        open:=0
+        for c in h.clients {
+            if c.open {open+=1}
+        }
         sync.mutex_unlock(&h.lock)
         if open==0 {break}
         time.sleep(10*time.Millisecond)
@@ -137,48 +167,69 @@ hub_accept_run :: proc(h:^Hub) {
     defer kai.thread_end()
     for {
         socket,_,e:=net.accept_tcp(h.listener)
+        slot:=-1
         sync.mutex_lock(&h.lock)
-        stopping,full:=h.stopping,h.connections>=CONNECTIONS_MAX
-        if !stopping && !full && e==nil {h.connections+=1}
+        stopping:=h.stopping
+        if !stopping && e==nil {
+            for c,k in h.clients {
+                if c.open {continue}
+                h.clients[k]={socket,true}
+                slot=k
+                break
+            }
+        }
         sync.mutex_unlock(&h.lock)
         if stopping {
             if e==nil {net.close(socket)}
             return
         }
         if e!=nil {continue}
-        if full {
+        if slot<0 {
             net.close(socket)
             continue
         }
-        Job :: struct {h:^Hub,socket:net.TCP_Socket}
+        Job :: struct {h:^Hub,slot:int,socket:net.TCP_Socket}
         job,je:=new(Job)
-        if je!=nil {
-            net.close(socket)
-            continue
+        started:^thread.Thread
+        if je==nil {
+            job^={h,slot,socket}
+            started=thread.create_and_start_with_poly_data(job,proc(job:^Job) {
+                defer kai.thread_end()
+                hub_connection(job.h,job.socket)
+                hub_client_end(job.h,job.slot)
+                free(job)
+            },hub_context(h),self_cleanup=true)
         }
-        job^={h,socket}
-        thread.create_and_start_with_poly_data(job,proc(job:^Job) {
-            defer kai.thread_end()
-            hub_connection(job.h,job.socket)
-            net.close(job.socket)
-            sync.mutex_lock(&job.h.lock)
-            job.h.connections-=1
-            sync.mutex_unlock(&job.h.lock)
+        if started==nil {
+            hub_client_end(h,slot)
             free(job)
-        },hub_context(h),self_cleanup=true)
+        }
     }
+}
+
+// Frees a client's slot and closes its socket, in that order (see hub_stop).
+@(private)
+hub_client_end :: proc(h:^Hub,slot:int) {
+    sync.mutex_lock(&h.lock)
+    socket:=h.clients[slot].socket
+    h.clients[slot]={}
+    sync.mutex_unlock(&h.lock)
+    net.close(socket)
 }
 
 // Serves the requests of one connection until it closes or one is refused.
 @(private)
 hub_connection :: proc(h:^Hub,socket:net.TCP_Socket) {
-    net.set_option(socket,.Receive_Timeout,30*time.Second)
+    net.set_option(socket,.Send_Timeout,SEND_SECONDS*time.Second)
     when ODIN_OS==.Darwin {net.set_option(socket,.No_SIGPIPE_From_EPIPE,true)}
+    // The head's bound holds its blank line, so a whole request fits.
     input:[HEAD_MAX+BODY_MAX]u8
     have:=0
     for served:=0;served<REQUESTS_PER_CONNECTION;served+=1 {
         free_all(context.temp_allocator)
         p:Parse
+        started:=time.tick_now()
+        continued:=false
         for {
             p=request_parse(input[:have])
             if p.status!=0 {break}
@@ -186,6 +237,15 @@ hub_connection :: proc(h:^Hub,socket:net.TCP_Socket) {
                 p.status=431
                 break
             }
+            if p.head_done && p.request.expect_continue && !continued {
+                continued=true
+                if !send_all(socket,transmute([]u8)string("HTTP/1.1 100 Continue\r\n\r\n")) {return}
+            }
+            // One deadline for the whole request, not one per receive, so a
+            // client sending a byte now and then does not hold the thread.
+            left:=REQUEST_SECONDS*time.Second-time.tick_since(started)
+            if left<time.Millisecond {return} // a zero timeout would wait forever
+            net.set_option(socket,.Receive_Timeout,left)
             n,e:=net.recv_tcp(socket,input[have:])
             if e!=nil || n<=0 {return}
             have+=n
@@ -228,7 +288,11 @@ respond :: proc(socket:net.TCP_Socket,out:^Out,keep:bool,head_only:=false) -> bo
     strings.write_string(&b,string(out.headers[:]))
     strings.write_string(&b,keep?"\r\n":"Connection: close\r\n\r\n")
     if !head_only {strings.write_bytes(&b,out.body[:])}
-    bytes:=b.buf[:]
+    return send_all(socket,b.buf[:])
+}
+
+@(private)
+send_all :: proc(socket:net.TCP_Socket,bytes:[]u8) -> bool {
     for at:=0;at<len(bytes); {
         n,e:=net.send_tcp(socket,bytes[at:])
         if e!=nil || n<=0 {return false}
