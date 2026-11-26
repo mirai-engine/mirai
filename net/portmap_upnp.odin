@@ -234,23 +234,44 @@ portmap_upnp_descriptor :: proc(description,url:string,gateway:Address) -> (upnp
     return
 }
 
+// What the router holds at the lease's external port.
 @(private)
-portmap_upnp_acquire :: proc(m:^Port_Mapping,u:^Udp,gateway,local:Address,lease:^Portmap_Lease) -> bool {
+Portmap_UPnP_Entry :: enum u8 {
+    Unknown,   // no answer, or an error other than no mapping
+    Free,      // no mapping there (714, NoSuchEntryInArray)
+    Here,      // an enabled one to this machine's port
+    Elsewhere, // one to another machine or port, or a disabled one
+}
+
+// Asks the router for its Internet gateway device: to the multicast group and to the router itself.
+@(private)
+portmap_upnp_discover :: proc(m:^Port_Mapping,u:^Udp,gateway:Address) {
     discover:="M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\n\r\n"
-    multicast:=address_ip4(239,255,255,250,1900)
-    if gateway.ip[0]!=127 {udp_send(u,multicast,transmute([]u8)discover)}
+    if gateway.ip[0]!=127 {udp_send(u,address_ip4(239,255,255,250,1900),transmute([]u8)discover)}
     router:=gateway;router.port=m.discovery_port
     udp_send(u,router,transmute([]u8)discover)
+}
+
+// Takes the answers to the discovery the worker sent first (and asks again,
+// should that one have been lost): the first device that maps the port, or
+// already forwards it to this machine, holds the lease.
+@(private)
+portmap_upnp_acquire :: proc(m:^Port_Mapping,u:^Udp,gateway,local:Address,lease:^Portmap_Lease) -> bool {
+    portmap_upnp_discover(m,u,gateway)
     start:=time.tick_now()
     packet:[1200]u8
     response:[65536]u8
-    for portmap_seconds(start)<2.0 && !portmap_stopped(m) {
+    tried:[512]u8
+    tried_len:=0
+    for portmap_seconds(start)<1.5 && !portmap_stopped(m) {
         size,from,received:=udp_receive(u,packet[:])
         if !received {portmap_pause();continue}
         if from.kind!=.IP4 || from.ip!=gateway.ip {continue}
         location:=portmap_header(string(packet[:size]),"Location")
         endpoint,path,url_ok:=portmap_url(location,gateway)
-        if !url_ok {continue}
+        // The device answers each discovery: one location is tried once.
+        if !url_ok || location==string(tried[:tried_len]) {continue}
+        tried_len=copy(tried[:],location)
         request_bytes:[1024]u8;ip:=endpoint.ip
         request:=fmt.bprintf(request_bytes[:],"GET %s HTTP/1.1\r\nHost: %d.%d.%d.%d:%d\r\nConnection: close\r\n\r\n",path,ip[0],ip[1],ip[2],ip[3],endpoint.port)
         description,status,http_ok:=portmap_http(m,endpoint,transmute([]u8)request,response[:])
@@ -263,16 +284,23 @@ portmap_upnp_acquire :: proc(m:^Port_Mapping,u:^Udp,gateway,local:Address,lease:
         upnp.description_len=30
         lease.upnp=upnp
         lease.external.port=m.port
-        for attempt in 0..<3 {
+        attempts: for attempt in 0..<3 {
             if attempt>0 {lease.external.port=u16(49152+int(portmap_get16(lease.nonce[attempt*2:attempt*2+2]))%16384)}
-            args_bytes:[256]u8
-            args:=fmt.bprintf(args_bytes[:],"<NewRemoteHost></NewRemoteHost><NewExternalPort>%d</NewExternalPort><NewProtocol>%s</NewProtocol>",lease.external.port,upnp_protocol(m))
-            body,code,queried:=portmap_upnp_soap(m,&lease.upnp,"GetSpecificPortMappingEntry",args,response[:])
-            if !queried {break}
-            if code==200 {continue}
-            fault,_,found:=portmap_xml(body,"errorCode")
-            if !found || fault!="714" {break}
-            if portmap_upnp_add(m,local,lease,3600) {return true}
+            entry,mine,seconds:=portmap_upnp_entry(m,local,lease)
+            switch entry {
+            case .Unknown: break attempts
+            case .Elsewhere: continue
+            case .Here:
+                // A mapping the router already holds to this machine (the user's, or
+                // an earlier run's) serves as it is, and stays its owner's: no
+                // release deletes it.
+                lease.upnp.owned,lease.seconds=mine,seconds
+                if portmap_upnp_external(m,lease) {return true}
+                break attempts
+            case .Free:
+                // A conflict (718) or a refused port tries the next one.
+                if portmap_upnp_add(m,local,lease,3600) {return true}
+            }
         }
     }
     return false
@@ -287,51 +315,77 @@ portmap_upnp_add :: proc(m:^Port_Mapping,local:Address,lease:^Portmap_Lease,seco
     body,status,ok:=portmap_upnp_soap(m,&lease.upnp,"AddPortMapping",args,response[:])
     if !ok {portmap_upnp_release(m,local,lease);return false}
     if status!=200 {
+        // A router that takes only permanent leases (725) takes one of 0.
         fault,_,found:=portmap_xml(body,"errorCode")
         if seconds!=0 && found && fault=="725" {return portmap_upnp_add(m,local,lease,0)}
         lease.upnp.owned=false
         return false
     }
     lease.upnp.owned=true;lease.seconds=seconds
-    body,status,ok=portmap_upnp_soap(m,&lease.upnp,"GetExternalIPAddress","",response[:])
-    if ok && status==200 {
-        ip_text,_,found:=portmap_xml(body,"NewExternalIPAddress")
-        address_bytes:[80]u8
-        if found {
-            address_text:=fmt.bprintf(address_bytes[:],"%s:%d",ip_text,lease.external.port)
-            if address,parsed:=address_parse(address_text);parsed && address.kind==.IP4 {lease.external=address;return true}
-        }
-    }
+    if portmap_upnp_external(m,lease) {return true}
     portmap_upnp_release(m,local,lease)
     return false
 }
 
+// The router's address on the Internet, at the lease's external port.
 @(private)
-portmap_upnp_owns :: proc(m:^Port_Mapping,local:Address,lease:^Portmap_Lease,releasing:=false) -> bool {
+portmap_upnp_external :: proc(m:^Port_Mapping,lease:^Portmap_Lease) -> bool {
+    response:[65536]u8
+    body,status,ok:=portmap_upnp_soap(m,&lease.upnp,"GetExternalIPAddress","",response[:])
+    if !ok || status!=200 {return false}
+    ip_text,_,found:=portmap_xml(body,"NewExternalIPAddress")
+    if !found {return false}
+    address_bytes:[80]u8
+    address,parsed:=address_parse(fmt.bprintf(address_bytes[:],"%s:%d",ip_text,lease.external.port))
+    if !parsed || address.kind!=.IP4 {return false}
+    lease.external=address
+    return true
+}
+
+// The router's mapping at the lease's external port: mine when the lease's
+// own description names it, and the seconds left of its lease (0: permanent).
+@(private)
+portmap_upnp_entry :: proc(m:^Port_Mapping,local:Address,lease:^Portmap_Lease,releasing:=false) -> (entry:Portmap_UPnP_Entry,mine:bool,seconds:u32) {
     bytes:[256]u8
     args:=fmt.bprintf(bytes[:],"<NewRemoteHost></NewRemoteHost><NewExternalPort>%d</NewExternalPort><NewProtocol>%s</NewProtocol>",lease.external.port,upnp_protocol(m))
     response:[65536]u8
     body,status,ok:=portmap_upnp_soap(m,&lease.upnp,"GetSpecificPortMappingEntry",args,response[:],releasing)
-    if !ok || status!=200 {return false}
+    if !ok {return}
+    if status!=200 {
+        if fault,_,found:=portmap_xml(body,"errorCode");found && fault=="714" {entry=.Free}
+        return
+    }
     client,_,has_client:=portmap_xml(body,"NewInternalClient")
-    port,_,has_port:=portmap_xml(body,"NewInternalPort")
-    description,_,has_description:=portmap_xml(body,"NewPortMappingDescription")
+    port,_,_:=portmap_xml(body,"NewInternalPort")
+    enabled,_,has_enabled:=portmap_xml(body,"NewEnabled")
+    description,_,_:=portmap_xml(body,"NewPortMappingDescription")
+    duration,_,_:=portmap_xml(body,"NewLeaseDuration")
     ip_bytes:[32]u8
     ip:=local.ip
     expected:=fmt.bprintf(ip_bytes[:],"%d.%d.%d.%d",ip[0],ip[1],ip[2],ip[3])
     numeric,parsed:=strconv.parse_uint(port,10)
-    return has_client && client==expected && has_port && parsed && numeric==uint(m.port) && has_description && description==string(lease.upnp.description[:lease.upnp.description_len])
+    entry=.Elsewhere
+    if !has_client || client!=expected || !parsed || numeric!=uint(m.port) || has_enabled && enabled!="1" {return}
+    entry=.Here
+    mine=description==string(lease.upnp.description[:lease.upnp.description_len])
+    if left,valid:=strconv.parse_uint(duration,10);valid && left<=uint(max(u32)) {seconds=u32(left)}
+    return
 }
 
 @(private)
 portmap_upnp_renew :: proc(m:^Port_Mapping,local:Address,lease:^Portmap_Lease) -> bool {
-    if !portmap_upnp_owns(m,local,lease) {return false}
-    return portmap_upnp_add(m,local,lease,lease.seconds)
+    entry,mine,seconds:=portmap_upnp_entry(m,local,lease)
+    if lease.upnp.owned {return entry==.Here && mine && portmap_upnp_add(m,local,lease,lease.seconds)}
+    // Another owner's mapping serves while it forwards here; once it is gone the lease adds its own.
+    if entry==.Here {lease.seconds=seconds;return true}
+    return entry==.Free && portmap_upnp_add(m,local,lease,3600)
 }
 
+// Deletes only the mapping this lease added, while the router still holds it as it was added.
 @(private)
 portmap_upnp_release :: proc(m:^Port_Mapping,local:Address,lease:^Portmap_Lease) {
-    if !lease.upnp.owned || !portmap_upnp_owns(m,local,lease,true) {return}
+    if !lease.upnp.owned {return}
+    if entry,mine,_:=portmap_upnp_entry(m,local,lease,true);entry!=.Here || !mine {return}
     bytes:[256]u8
     args:=fmt.bprintf(bytes[:],"<NewRemoteHost></NewRemoteHost><NewExternalPort>%d</NewExternalPort><NewProtocol>%s</NewProtocol>",lease.external.port,upnp_protocol(m))
     response:[65536]u8

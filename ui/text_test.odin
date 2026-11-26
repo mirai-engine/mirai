@@ -56,6 +56,16 @@ text_edit_inserts_replaces_and_removes :: proc(t:^testing.T) {
     testing.expect_value(t,text_edit_value(&e),"1234")
     text_edit_insert(&e,7)
     testing.expect_value(t,text_edit_value(&e),"1234")
+    // A read-only text is selected but neither typed, removed nor undone.
+    text_edit_begin(&e,1,"kai2abc")
+    e.read_only=true
+    text_edit_insert(&e,'x')
+    text_edit_delete_selection(&e)
+    text_edit_move(&e,7,false)
+    text_edit_remove(&e,e.cursor-1)
+    testing.expect(t,!text_edit_undo(&e))
+    testing.expect_value(t,text_edit_value(&e),"kai2abc")
+    testing.expect_value(t,e.changes,u32(0))
 }
 
 @(test)

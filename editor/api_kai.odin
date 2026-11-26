@@ -52,6 +52,10 @@ Api_Kai_Describe_Params :: struct {
 
 Api_Kai_Change :: struct {change:string}
 
+Api_Kai_Init_Params :: struct {
+    reset:bool `mirai:"optional,label=When the project's workspace belongs to another store: remove it and start a new history here"`,
+}
+
 Api_Kai_Init :: struct {
     change:string `mirai:"label=The working copy, on the first change, which holds the project's files"`,
 }
@@ -144,7 +148,7 @@ Api_Kai_Bookmarks :: struct {bookmarks:[]Api_Kai_Bookmark}
 
 @(private)
 kai_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="kai.init",summary="Makes the open project, which uses no version control, a Kai workspace whose first change holds its files, and opens it as the Kai tab's Enable Kai does.",result=type_info_of(Api_Kai_Init),run=api_kai_init})
+    api_register(s,st,{name="kai.init",summary="Makes the open project, which uses no version control, a Kai workspace whose first change holds its files, and opens it as the Kai tab's Enable Kai does.",params=type_info_of(Api_Kai_Init_Params),result=type_info_of(Api_Kai_Init),run=api_kai_init})
     api_register(s,st,{name="kai.status",summary="The working copy as the Kai tab shows it, snapshot first: its change, what it changed, the files in conflict and the newest operation.",result=type_info_of(Api_Kai_Status),run=api_kai_status})
     api_register(s,st,{name="kai.snapshot",summary="Records the files of the project as they are now as the working copy, with the editors and agent turns that changed them since.",result=type_info_of(Api_Kai_Snapshot),run=api_kai_snapshot})
     api_register(s,st,{name="kai.new",summary="Starts a new change as the working copy, on the working copy or on given changes, whose trees merge; what does not merge is a conflict in its files that never blocks.",params=type_info_of(Api_Kai_New_Params),result=type_info_of(Api_Kai_Change),run=api_kai_new})
@@ -200,7 +204,8 @@ api_kai_ended :: proc(call:^api.Call,message:string) -> bool {
 
 @(private)
 api_kai_init :: proc(s:^Session,call:^api.Call) {
-    if !api_kai_ended(call,kai_enable(s)) {return}
+    p:=api.call_params(call,Api_Kai_Init_Params)
+    if !api_kai_ended(call,kai_enable(s,p.reset)) {return}
     w:=kai_workspace(s)
     api.call_result(call,Api_Kai_Init).change=api_kai_text(w,vcs.repo_working(&w.repo),call)
 }

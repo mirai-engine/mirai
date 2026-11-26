@@ -30,7 +30,12 @@ kai_panel_build :: proc(s:^Session,width,room:f32) {
             if ui.button(ctx,ui.id(ctx,"kai_enable"),{label="Enable Kai",variant="accent",width=-1,center=true}).clicked {kai_ask(s,"kai.init","{{}}")}
             return
         }
-        ui.label(ctx,kai_missing(s),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),width)
+        if s.kai!=nil && s.kai.error==.Other_Store {
+            kai_line(ctx,"This project's Kai workspace belongs to another store.")
+            if ui.button(ctx,ui.id(ctx,"kai_reset"),{label="Start fresh history",variant="accent",width=-1,center=true}).clicked {kai_ask(s,"kai.init",`{{"reset":true}}`)}
+            return
+        }
+        kai_line(ctx,kai_missing(s))
         return
     }
     st:=s.kai.state

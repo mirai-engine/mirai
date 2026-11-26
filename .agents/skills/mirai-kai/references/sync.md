@@ -89,7 +89,9 @@ a sync; `mirai:net` gives only the
   member (a server's), and the `peers` of `Agent_Options`. The editor and `mirai kai agent` (without
   `--public`) ask the router to forward their TCP port with PCP, NAT-PMP or UPnP (`net`'s
   `Port_Mapping` with `.TCP`); `agent_addresses` then lists the router's address first, which an
-  invite carries.
+  invite carries. A UPnP mapping the router already forwards to this machine serves and is never
+  deleted. `agent_reach` says Local, Connecting or Online; an invite made while the router has not
+  answered waits for it up to 1.5 s (`agent_reach_wait`), and the views move when it does.
 - Without a router that maps and without a server, a machine on another network is reached only
   at a host:port someone forwarded (`--at` of an invite). A server with a public address is the
   usual way.
