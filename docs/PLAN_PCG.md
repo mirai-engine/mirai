@@ -29,12 +29,13 @@ programs, not authored node spaghetti):
      (batches, octahedral impostors, crowns, wind, per-cell static physics covering all cells for
      navmesh/AI determinism).
    - **Tier 2 — Visual Micro-Scatter (`Micro`, GPU Extension Passes in `plugins/foliage`):**
-     ephemeral non-colliding groundcover (grass, pebbles, flowers, litter). Zero changes to
-     `render/batch.odin`! Uses `engine/render`'s existing extension API (`pass_buffer`,
-     `frame_mesh_whole`, `pass_draw_indirect`) with **generation in `Simulate` on tile residency or
-     epoch change** (never re-scattered per frame/per view) and **1-phase Hi-Z cull in `Gbuffer`**.
-     All drawing lives in `plugins/foliage` so wind, `Foliage_Bender`, and shaders are never
-     duplicated; `plugins/pcg` has **no `shaders/` folder**.
+     ephemeral non-colliding groundcover (grass, pebbles, flowers, litter), through
+     `engine/render` alone with **generation in `Simulate` on tile residency or epoch change**
+     (never re-scattered per frame/per view). Each view writes what it keeps, thinned by distance,
+     into a batch the GPU fills (`batch_reserve`, `Instances` stage) that the visibility buffer of
+     the scene draws: the measured direct G-buffer draw cost half a frame. Wind,
+     `Foliage_Bender`, and shaders live in `plugins/foliage`; `plugins/pcg` has **no `shaders/`
+     folder**.
 3. **Manual Editing: Suppress + Promote + Authored Points (Zero Overrides, Zero Gizmo):**
    - One suppression mechanism for both Editor edits of generated points and Play removals:
      replicated **World rows** owned by `plugins/pcg`, keyed by `(graph_entity_id, cell_coord,
@@ -85,10 +86,10 @@ and Mirai's own codebase.
   hoisting, capability bitmasks). Flat layer rows + text field expressions + grammar strings only.
 - **No `Point_Table` mini-ECS** (`Column{rawptr, owned, constant, extra}`). Fused kernels emit
   typed slices of a fixed `Placed` struct into caller-owned preallocated arenas.
-- **No `render/batch.odin` GPU-population hack, no Work Graphs (disabled by Microsoft in SM 6.10),
-  no Slang emitter in Layer 0, no GPU-to-CPU readbacks, no `Out_RemovePoint` sentinels.** CPU
-  evaluates micro density fields into clipmap layers on change; GPU runs one fixed Slang compute
-  kernel in `Simulate` (per tile on change) + 1-phase Hi-Z cull in `Gbuffer` (per view).
+- **No Work Graphs (disabled by Microsoft in SM 6.10), no Slang emitter in Layer 0, no GPU-to-CPU
+  readbacks, no `Out_RemovePoint` sentinels.** CPU evaluates micro density fields on change; GPU
+  runs one fixed Slang compute kernel in `Simulate` (per tile on change) + one fill per view into
+  batches the GPU fills, culled by the scene.
 - **No duplicate ground/mask caches or schedulers.** `Pcg_Ground` is the sole CPU ground cache;
   GPU clipmaps are `@(storage, host, by_world)` uploads of `Pcg_Ground` + micro density tiles by
   revision; `volume.Zone` + `volume.gpu_volume` handle spatial masks without reinventing `Pcg_Mask`;
@@ -142,9 +143,9 @@ Layer 8  plugins/foliage        Depends on: pcg, physics (SOLE rendering & physi
                                 - Tier 2 (Micro GPU): @(storage, host, by_world) clipmap upload of
                                   Pcg_Ground + micro density + pre-suppression occupancy; Simulate
                                   stage generates tiles on residency/epoch change into persistent
-                                  pass_buffer; Gbuffer stage runs 1-phase Hi-Z cull + fixed-count
-                                  pass_draw_indirect (Metal + Vulkan safe, zero render/ changes)
-           shaders/             - Shared wind/sway + micro scatter/cull Slang shaders
+                                  pass_buffer; Instances stage fills GPU batches per view, drawn by
+                                  the visibility buffer (Metal + Vulkan)
+           shaders/             - Shared wind/sway + micro scatter/fill Slang shaders
 
 Layer 8  plugins/pcg_terrain    Automatic bridge (pcg + terrain): Terrain_Conform splines & brushes.
 Layer 8  plugins/pcg_physics    Automatic bridge (pcg + physics): Collider exclusions & 3D overlap.
@@ -224,8 +225,8 @@ Each milestone lands from `main` in its own worktree branch with proving tests:
    - Upload `Pcg_Ground` + CPU-evaluated micro density + pre-suppression occupancy into a
      `@(storage, host, by_world)` clipmap texture array on tile revision change.
    - One fixed Slang compute shader generates micro tiles in `Simulate` (on residency/epoch change)
-     into a persistent `pass_buffer`; 1-phase Hi-Z cull + fixed-count `pass_draw_indirect` in
-     `Gbuffer`, sharing `foliage` wind/sway/bender shaders. Zero changes to `render/`.
+     into a persistent `pass_buffer`; each view fills the batch of each look in `Instances` (thinned
+     by distance), drawn by the visibility buffer with the batches' wind/sway/bender hook.
    - **Verify:** GPU validation on Metal (macOS ARM64) & Vulkan (Windows x64),
      `mirai render check --views`, `mirai bench compare --base main`, headless server skips cleanly.
 7. **M5 — Automatic Bridges & Editor (`pcg_terrain`, `pcg_physics`, `pcg_shapes`,

@@ -30,7 +30,9 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   [partial changes](references/scene.md#partial-scene-changes)
 - Visual copies and replacements → [visual instances](references/scene.md#visual-instances)
 - Instance batches (`batch_set`, `Batch_Desc`, `Batch_Instance`), their cull, their rays and the
-  instance index of a batch → [batches](references/scene.md#instance-batches)
+  instance index of a batch → [batches](references/scene.md#instance-batches); batches the GPU
+  fills in the `Instances` stage (`batch_reserve`, `pass_batch_target`) →
+  [filled](references/scene.md#instance-batches)
 - Meshes and textures one at a time, geometry publication →
   [scene](references/scene.md#meshes-and-textures-one-at-a-time); geometry that uploads over several
   frames (`mesh_add_over_frames`, `mesh_uploading`) →
