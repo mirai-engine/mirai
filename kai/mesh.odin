@@ -192,6 +192,7 @@ Agent :: struct {
     fetches:[dynamic]Agent_Fetch,
     queries:[AGENT_QUERIES]Agent_Query,
     hints:[dynamic]Agent_Fetch, // what peers told, taken in agent_update
+    hints_held:int,             // of hints, those told before the last update that the fetches had no room for
     deferred:[dynamic]Agent_Fetch, // logs that came before this end could place them, and a grant holder's refs whose changes are still coming
     grants_turn:i64, // ns: the next time a grant of the log starts or ends, 0 for none
     now:f64,
@@ -1001,7 +1002,21 @@ agent_asked :: proc(user:rawptr,peer:exchange.Peer_Id,address:store.Hash) {
 @(private)
 agent_hint :: proc(user:rawptr,peer:exchange.Peer_Id,namespace,name:string,address:store.Hash) {
     a:=(^Agent)(user)
-    if address=={} || len(a.hints)>=AGENT_HINTS || !agent_takes(a,agent_peer_find(a,peer.tag),namespace,name) {return}
+    if address=={} || !agent_takes(a,agent_peer_find(a,peer.tag),namespace,name) {return}
+    agent_hint_keep(a,namespace,name,address)
+}
+
+// Keeps what a peer said a ref names until the fetches take it: the newest
+// address of each ref, since a peer says it once and nothing asks again.
+@(private)
+agent_hint_keep :: proc(a:^Agent,namespace,name:string,address:store.Hash) {
+    for &h in a.hints {
+        if string(h.namespace[:h.namespace_len])==namespace && string(h.name[:h.name_len])==name {
+            h.address=address
+            return
+        }
+    }
+    if len(a.hints)>=AGENT_HINTS {return}
     h:Agent_Fetch
     h.address=address
     h.namespace_len=copy(h.namespace[:],namespace)
@@ -1065,25 +1080,27 @@ fetch_kind :: proc(a:^Agent,namespace:string) -> Fetch_Kind {
 
 // Fetches what a peer's ref names when it differs from the one held. A
 // hosted org takes no derived data, and past its bound only the org's log and
-// the users' logs.
+// the users' logs. False when the fetches have no room for it now: the caller
+// keeps it (agent_hint_keep), or it is never fetched.
 @(private)
-agent_want :: proc(a:^Agent,namespace,name:string,address:store.Hash) {
+agent_want :: proc(a:^Agent,namespace,name:string,address:store.Hash) -> (placed:bool) {
     kind:=fetch_kind(a,namespace)
-    if kind==.None || address=={} {return}
-    if a.desc.hosted && kind==.DDC {return}
+    if kind==.None || address=={} {return true}
+    if a.desc.hosted && kind==.DDC {return true}
     if agent_full(a) && kind!=.User {
         id,ok:=store.parse_hex(name)
-        if kind!=.Log || !ok || id!=a.desc.org {return}
+        if kind!=.Log || !ok || id!=a.desc.org {return true}
     }
-    if held,e:=store.ref_get(a.desc.store,namespace,name);e==.None && held==address {return}
+    if held,e:=store.ref_get(a.desc.store,namespace,name);e==.None && held==address {return true}
     for &f in a.fetches {
-        if f.address==address && string(f.name[:f.name_len])==name {return}
+        if f.address==address && string(f.name[:f.name_len])==name {return true}
     }
-    if len(a.fetches)>=AGENT_FETCHES || exchange.want(&a.x,address)!=.None {return}
+    if len(a.fetches)>=AGENT_FETCHES || exchange.want(&a.x,address)!=.None {return false}
     f:=Agent_Fetch{kind=kind,address=address}
     f.namespace_len=copy(f.namespace[:],namespace)
     f.name_len=copy(f.name[:],name)
     append(&a.fetches,f)
+    return true
 }
 
 @(private)
@@ -1264,7 +1281,7 @@ agent_update :: proc(a:^Agent,now:f64) {
         namespace:=string(q.namespace[:q.namespace_len])
         last:=""
         for n in result.names {
-            if agent_takes(a,q.peer,namespace,n.name) {agent_want(a,namespace,n.name,n.address)}
+            if agent_takes(a,q.peer,namespace,n.name) && !agent_want(a,namespace,n.name,n.address) {agent_hint_keep(a,namespace,n.name,n.address)}
             last=n.name
         }
         more,peer:=result.more,q.peer
@@ -1275,11 +1292,18 @@ agent_update :: proc(a:^Agent,now:f64) {
         if more {agent_query(a,peer,namespace,string(after[:after_len]))}
     }
     // A peer tells every ref when it admits this end: what it held back may come now.
-    told:=len(a.hints)>0
-    for len(a.hints)>0 {
-        h:=pop(&a.hints)
-        agent_want(a,string(h.namespace[:h.namespace_len]),string(h.name[:h.name_len]),h.address)
+    told:=len(a.hints)>a.hints_held
+    // A ref the fetches have no room for stays told until they do.
+    held:=0
+    for k in 0..<len(a.hints) {
+        h:=a.hints[k]
+        if !agent_want(a,string(h.namespace[:h.namespace_len]),string(h.name[:h.name_len]),h.address) {
+            a.hints[held]=h
+            held+=1
+        }
     }
+    base.truncate(&a.hints,held)
+    a.hints_held=held
     for k:=0;k<len(a.fetches); {
         progress,known:=exchange.progress(&a.x,a.fetches[k].address)
         // An object a seed lacks stays wanted: the exchange asks again when a peer joins.

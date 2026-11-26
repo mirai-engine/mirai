@@ -444,6 +444,54 @@ a_closed_agent_leaves_its_peers_at_once :: proc(t:^testing.T) {
     testing.expect(t,mesh_until(m,0.5,nil,left),"bob drops alice as soon as she closes")
 }
 
+// A ref a peer tells while the fetches are full (a pull of more objects than
+// they hold at once) is fetched once they have room: a peer says a move once
+// and nothing asks again, so one dropped then would never come.
+@(test)
+a_ref_told_while_the_fetches_are_full_is_fetched_once_there_is_room :: proc(t:^testing.T) {
+    m:=new(Mesh)
+    defer free(m)
+    if !mesh_init(t,m,"kai-mesh-full") {return}
+    defer mesh_destroy(m)
+    o:Test_Org
+    test_org_make(t,&o);defer test_org_destroy(&o)
+    for k in 0..<2 {
+        for l in ([]^Log{&o.alice.log,&o.bob.log,&o.carol.log,&o.org,&o.project}) {log_save(&m.stores[k],l)}
+    }
+    if !mesh_start(t,m,0,o.alice.devices[0],o.alice.dhs[0],o.alice.log.id,o.org.id) {return}
+    if !mesh_start(t,m,1,o.bob.devices[0],o.bob.dhs[0],o.bob.log.id,o.org.id) {return}
+    a,b:=&m.agents[0],&m.agents[1]
+    testing.expect_value(t,agent_connect(b,Dh_Key(o.alice.dhs[0].public),false,net.address_memory(mesh_endpoint(0))),Error.None)
+    connected :: proc(m:^Mesh,data:rawptr) -> bool {
+        _,n:=agent_peers(&m.agents[1])
+        return n==1 && len(m.agents[1].fetches)==0
+    }
+    if !testing.expect(t,mesh_until(m,5,nil,connected),"bob connects to alice") {return}
+
+    // Bob wants as many objects as his fetches hold, which no peer has.
+    for k in 0..<AGENT_FETCHES {
+        name:=[2]int{k,7}
+        agent_want_object(b,store.address_of_bytes(slice.to_bytes(name[:])))
+    }
+    if !testing.expect_value(t,len(b.fetches),AGENT_FETCHES) {return}
+    work:=test_change(t,&m.stores[0],&o.alice.devices[0],"alice's work")
+    _,e:=agent_append(a,o.project.id,.Bookmark_Move,body_make(Bookmark_Move_Body{to=work},transmute([]u8)string("main")),2)
+    testing.expect_value(t,e,Error.None)
+    for _ in 0..<20 {mesh_step(m)}
+    // The pull ends: what it wanted is let go.
+    for f in b.fetches {
+        if f.kind==.Object {exchange.forget(&b.x,f.address)}
+    }
+    clear(&b.fetches)
+    moved :: proc(m:^Mesh,data:rawptr) -> bool {
+        name:[64]u8
+        project:=log_name((^Log_Id)(data)^,&name)
+        held,e:=store.ref_get(&m.stores[0],LOG_NAMESPACE,project)
+        return e==.None && ref_is(&m.stores[1],LOG_NAMESPACE,project,held)
+    }
+    testing.expectf(t,mesh_until(m,5,&o.project.id,moved),"the move told while the fetches were full never came: bob %v",b.stats)
+}
+
 @(private="file")
 grant_issue :: proc(t:^testing.T,a:^Agent,o:^Test_Org,holder:Key,dh:Dh_Key,rights:Rights,path:string,not_after:i64) {
     g:=Grant{head={org=o.org.id,org_head=test_heads(agent_log(a,o.org.id))[0],issuer=o.alice.devices[0].key,subject_dh=dh,subject_key=holder,rights=rights,project=o.project.id,not_before=time.now()._nsec-i64(time.Second),not_after=not_after},path=path}

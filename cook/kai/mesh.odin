@@ -22,7 +22,9 @@ import vcs "mirai:kai"
 // the runner has every object the record lists; what an import or a cook keeps
 // is published as this device's record, listing the object of the ref and, for
 // a build, every object the build lists. The key of a result is the hash of
-// its cache ref.
+// its cache ref. A build found here that the org has no record of (kept before
+// the project was the org's, or while no runner ran) is published the same
+// way, so the builds a project came with reach the peers that pull it.
 //
 // A result made from a file of one of the project's scopes inherits those
 // scopes (vcs.overlay_taint): its record names them as tainted and its output
@@ -109,7 +111,7 @@ mesh_cache_close :: proc(c:^Mesh_Cache) {
 
 // The source a cache.Cache of the machine's store takes.
 mesh_source :: proc(c:^Mesh_Cache) -> cache.Source {
-    return {fetch=mesh_fetch,kept=mesh_kept,user=c}
+    return {fetch=mesh_fetch,kept=mesh_kept,here=mesh_here,user=c}
 }
 
 // What the imports and cooks of the project at root take from and give to
@@ -230,9 +232,14 @@ mesh_kept :: proc(user:rawptr,namespace,name:string,object:store.Hash,from:[]str
     if c.project!={} {
         // Whose scopes cannot be told is not published.
         if !c.scoped {return}
-        paths:=make([dynamic]string,context.temp_allocator)
-        if !provenance(c.root,from,&paths) {return}
-        if vcs.overlay_taint(&c.state.fold,c.project,paths[:],&tainted)!=.None {return}
+        // A project with no scope taints nothing, whatever a result was made from.
+        scopes:=false
+        for sc in c.state.fold.scopes {scopes||=sc.project==c.project}
+        if scopes {
+            paths:=make([dynamic]string,context.temp_allocator)
+            if !provenance(c.root,from,&paths) {return}
+            if vcs.overlay_taint(&c.state.fold,c.project,paths[:],&tainted)!=.None {return}
+        }
     }
     if len(tainted)>0 {
         sealed,e:=output_seal(c,&s,objects[:],tainted[:])
@@ -241,6 +248,23 @@ mesh_kept :: proc(user:rawptr,namespace,name:string,object:store.Hash,from:[]str
         append(&objects,sealed)
     }
     if _,e:=vcs.machine_publish_ddc(c.machine,c.org,ddc_key(namespace,name),objects[:],tainted[:]);e==.None {c.published+=1}
+}
+
+// Publishes a result found here when the org's records name none of its key:
+// one kept before this machine shared the project's cache. A key with a
+// record is left as it is, so nothing is signed or sealed twice.
+@(private)
+mesh_here :: proc(user:rawptr,namespace,name:string,object:store.Hash,from:[]string) {
+    c:=(^Mesh_Cache)(user)
+    if !c.connected {return}
+    {
+        sync.mutex_lock(&c.lock)
+        defer sync.mutex_unlock(&c.lock)
+        s:=store.read_index(&c.machine.store)
+        records:=make([dynamic]vcs.DDC_Record,context.temp_allocator)
+        if vcs.ddc_lookup(&s,c.org,ddc_key(namespace,name),&records)==.None && len(records)>0 {return}
+    }
+    mesh_kept(user,namespace,name,object,from)
 }
 
 // The paths under the folder root (resolved as mesh_cache_open resolves it)

@@ -250,6 +250,21 @@ a_cook_takes_derived_data_a_peer_built :: proc(t:^testing.T) {
     other:=cache.Cache{store=&cooks[1].store,source=ka.mesh_source(&meshes[1])}
     testing.expect(t,!cache.has(other,"textures",KEY+1,VERSION),"what no peer built is a miss")
 
+    // What Alice's store kept before it shared with the org, which no source
+    // heard of, is published when her cook finds it here, once: Bob's miss
+    // takes it.
+    early,early_error:=store.put(&cooks[0].store,transmute([]u8)string("kept before the org"))
+    testing.expect(t,early_error==.None && store.ref_set(&cooks[0].store,"textures-early","one",early)==.None)
+    alice_source,bob_source:=ka.mesh_source(&meshes[0]),ka.mesh_source(&meshes[1])
+    early_before:=meshes[0].published
+    alice_source.here(alice_source.user,"textures-early","one",early,nil)
+    alice_source.here(alice_source.user,"textures-early","one",early,nil)
+    testing.expect_value(t,meshes[0].published,early_before+1)
+    early_asked:=[1]string{"one"}
+    early_given:[1]bool
+    bob_source.fetch(bob_source.user,&cooks[1].store,"textures-early",early_asked[:],early_given[:])
+    testing.expect(t,early_given[0],"bob takes what alice kept before she shared")
+
     // A project of the org in Alice's workspace and in Bob's; its files under
     // assets/private/ are a scope only admins read, which Bob, a writer, does not.
     pa,pb:=new(ka.Project),new(ka.Project)

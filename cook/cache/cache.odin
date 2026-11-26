@@ -30,6 +30,7 @@ Kept :: #type proc(user:rawptr,namespace,name:string,object:store.Hash,from:[]st
 Source :: struct {
     fetch:Fetch, // nil: none
     kept:Kept,   // nil: none
+    here:Kept,   // nil: none. Told of a result found here that no source was told it kept (made before the project shared, or with none): one that shares publishes it when its peers have none
     user:rawptr,
 }
 
@@ -147,7 +148,12 @@ chain_source :: proc(c:^Chain) -> Source {
         if c.first.kept!=nil {c.first.kept(c.first.user,namespace,name,object,from)}
         if c.second.kept!=nil {c.second.kept(c.second.user,namespace,name,object,from)}
     }
-    return {fetch=fetch,kept=kept,user=c}
+    here :: proc(user:rawptr,namespace,name:string,object:store.Hash,from:[]string) {
+        c:=(^Chain)(user)
+        if c.first.here!=nil {c.first.here(c.first.user,namespace,name,object,from)}
+        if c.second.here!=nil {c.second.here(c.second.user,namespace,name,object,from)}
+    }
+    return {fetch=fetch,kept=kept,here=here,user=c}
 }
 
 @(private)

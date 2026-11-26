@@ -1572,7 +1572,7 @@ runner_ddc_step :: proc(r:^Runner) {
                 waiting=true
                 continue
             }
-            if known && result.state==.Found {agent_want(a,ns,name,result.address)}
+            if known && result.state==.Found && !agent_want(a,ns,name,result.address) {agent_hint_keep(a,ns,name,result.address)}
             exchange.query_end(&a.x,q)
             l.query_used[i]=false
         }

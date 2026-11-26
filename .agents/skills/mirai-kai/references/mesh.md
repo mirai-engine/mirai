@@ -31,10 +31,11 @@ How the machines of an org find each other and what each may read from the other
   loopback. Every other process (the CLI, a cook, a second editor) talks to it through that control
   channel.
 - Nothing polls. A write of this machine reaches the runner as `Machine.changed`; a ref that moved
-  is told to the peers that may read its namespace; on connect each end asks the other's names per
-  namespace and fetches a ref that differs. A log's ref names its index: the pages the store lacks
-  are fetched in turn, and the log merges by union of verified entries; refs and derived data merge
-  by their own rules.
+  is told to the peers that may read its namespace, and one told while the fetches are full (a
+  pull of more objects than `AGENT_FETCHES`) is kept, by its newest address, until they have room;
+  on connect each end asks the other's names per namespace and fetches a ref that differs. A log's
+  ref names its index: the pages the store lacks are fetched in turn, and the log merges by union
+  of verified entries; refs and derived data merge by their own rules.
 - An agent holds loaded the logs of its org it folds: users, the org, projects, keyrings and open
   proposals, at most `AGENT_LOGS` at once. A closed or landed proposal stays in the store and loads
   when a view or a merge asks for it, until the next fold lets it go; past the bound a log is left
@@ -199,3 +200,7 @@ or anonymous (an empty claim). The namespace decides who reads it:
   control for a record of the project's org and a build publishes its own, with the key the hash of
   the cache ref. With no runner the cook builds alone, which is the same result slower
   (`a_cook_takes_derived_data_a_peer_built`).
+- A package's build found here that the org has no record of is published when the project is
+  refreshed (`cache.Source.here`): what was imported before the project joined the org, or while no
+  runner ran, reaches the peer that pulls it, also when its source is in no project. A project
+  with no scope publishes without reading what a build was made from.
