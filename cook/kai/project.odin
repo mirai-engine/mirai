@@ -12,13 +12,10 @@ import vcs "mirai:kai"
 
 // A project under Kai: its workspace at the project's root over the store of
 // the machine, signed by the identity of this machine, with the asset driver.
-// When its repository is a project of an org, its snapshots route the private
-// paths of the org's scopes into encrypted overlays (project_route). The
-// editor and `mirai kai` go through these procedures alike.
+// The editor and `mirai kai` go through these procedures alike.
 
 CHANGE_TEXT :: 12               // hex digits a change id is shown with
 CHANGE_TEXT_MIN :: 4            // the fewest digits a change is named by
-UNROUTED :: "the org's scopes do not read on this device, so its private files would go out in plain text: let the agent fetch the org's logs; snapshots wait until they route"
 
 // It must not move once opened: the workspace keeps its drivers, which point
 // into it.
@@ -28,11 +25,6 @@ Project :: struct {
     drivers:[1]vcs.Driver,
     workspace:vcs.Workspace,
     owns_types:bool,
-    routing:vcs.Overlay_Routing, // what the workspace's snapshots route by, while routed
-    org:vcs.Org_State,
-    keyrings:[dynamic]^vcs.Keyring_Fold,
-    public_allow:[dynamic]string,
-    routed:bool,
 }
 
 // What a change in a log shows.
@@ -84,33 +76,18 @@ project_open :: proc(p:^Project,root:string,s:^store.Store,types:^asset.Types=ni
         project_close(p)
         return e
     }
-    if e:=project_route(p);e!=.None {
-        project_close(p)
-        return e
-    }
     return .None
 }
 
 project_close :: proc(p:^Project) {
-    route_drop(p)
     if p.workspace.repo.s!=nil || p.workspace.root!="" {vcs.workspace_close(&p.workspace)}
     if p.owns_types {asset.types_destroy(&p.types)}
     p^={}
 }
 
-// Snapshots the working copy: Unauthorized while its repository is a project
-// of an org whose scopes do not route here (project_route failed, or has not
-// run since it became one), as its private files would land in the public
-// tree in plain text. Every snapshot of Kai's operations goes through it.
+// Snapshots the working copy: every snapshot of Kai's operations goes through it.
 snapshot :: proc(w:^vcs.Workspace) -> (report:vcs.Snapshot_Report,error:vcs.Error) {
-    if unrouted(w) {return {},.Unauthorized}
     return vcs.workspace_snapshot(w)
-}
-
-@(private)
-unrouted :: proc(w:^vcs.Workspace) -> bool {
-    if w.repo.overlay!=nil {return false}
-    return vcs.store_project_bound(w.repo.s,w.repo.id)
 }
 
 // Snapshots the working copy and records coauthors and attachments in it
@@ -269,10 +246,9 @@ undo :: proc(w:^vcs.Workspace,changed:^[dynamic]string,allocator:=context.temp_a
     snapshot(w) or_return
     target:=vcs.op_undo_target(r) or_return
     undone=vcs.op_get(r.s,target,allocator) or_return
-    before,working:=w.state.tree,vcs.repo_working(r)
+    before:=w.state.tree
     vcs.op_undo(r,target) or_return
     vcs.workspace_update(w) or_return
-    vcs.overlay_checkout(w.repo.overlay,r.s,w.root,working,vcs.repo_working(r)) or_return
     return undone,files_changed(w,before,changed,allocator)
 }
 
@@ -287,22 +263,19 @@ prune :: proc(s:^store.Store,now:i64) -> (result:store.Sweep_Result,error:vcs.Er
     return swept,vcs.store_error(e)
 }
 
-// Gives the working copy the files of another change and writes them, with
-// the private files of that change this device reads: what public files
-// changed.
+// Gives the working copy the files of another change and writes them: what
+// files changed.
 restore :: proc(w:^vcs.Workspace,from:vcs.Revision,changed:^[dynamic]string,allocator:=context.temp_allocator) -> vcs.Error {
     r:=&w.repo
     snapshot(w) or_return
     before,working:=w.state.tree,vcs.repo_working(r)
     vcs.change_restore(r,working,from) or_return
     vcs.workspace_update(w) or_return
-    vcs.overlay_checkout(w.repo.overlay,r.s,w.root,working,from) or_return
     return files_changed(w,before,changed,allocator)
 }
 
 // A new change on parents (the working copy when none) as the working copy,
-// written, with the private files this device reads: what public files that
-// changed. With several parents their trees merge, and what does not merge is
+// written: what files that changed. With several parents their trees merge, and what does not merge is
 // a conflict in its files. closing, when given, describes the working change
 // it leaves, in the same operation.
 new_change :: proc(w:^vcs.Workspace,parents:[]vcs.Revision,description:string,changed:^[dynamic]string,allocator:=context.temp_allocator,closing:Maybe(string)=nil) -> (revision:vcs.Revision,error:vcs.Error) {
@@ -312,7 +285,6 @@ new_change :: proc(w:^vcs.Workspace,parents:[]vcs.Revision,description:string,ch
     working:=[1]vcs.Revision{vcs.repo_working(&w.repo)}
     if len(on)==0 {on=working[:]}
     revision=vcs.workspace_new(w,on,description,closing) or_return
-    vcs.overlay_checkout(w.repo.overlay,w.repo.s,w.root,working[0],revision) or_return
     return revision,files_changed(w,before,changed,allocator)
 }
 

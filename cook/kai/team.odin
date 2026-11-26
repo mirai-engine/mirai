@@ -1,221 +1,332 @@
 package kai_assets
 
-import "core:crypto"
+import "base:runtime"
+import "core:fmt"
 import "core:os"
+import "core:path/filepath"
 import "core:strings"
+import "mirai:asset"
+import "mirai:project"
+import "mirai:std/base"
 import "mirai:store"
 import vcs "mirai:kai"
 
 // What a team does with a project of an org, for the operations that need
-// its workspace: joining the org, linking a second workspace, the private
-// paths its snapshots route, the shared bookmarks and the devices' ones, and
-// the names they are called by. What needs no workspace is in kai (machine_*
-// and team.odin there); each operation tells the machine's runner through
-// Machine.changed, and m.why says what failed and how to fix it.
+// its workspace: publishing it into an org, linking a workspace to an org's
+// repository, pulling one into a new folder, the shared bookmarks and the
+// views the editor and the CLI show. What needs no workspace is in kai
+// (team.odin there); t.why says what failed and how to fix it.
 
-// Routes the private paths of the workspace's snapshots by the scopes and
-// keyrings its org has in the store now, when its repository is a project of
-// an org; call it again after they change. When they do not read, nothing of
-// them stays and snapshots are refused until a later call routes (snapshot).
-project_route :: proc(p:^Project) -> (error:vcs.Error) {
-    route_drop(p)
-    w:=&p.workspace
-    project,org,ok:=vcs.store_project_of(w.repo.s,w.repo.id)
-    if !ok {
-        if vcs.store_project_bound(w.repo.s,w.repo.id) {return .Missing}
-        return .None
-    }
-    p.routed=true
-    defer if error!=.None {route_drop(p)}
-    allocator:=w.allocator
-    p.keyrings=make([dynamic]^vcs.Keyring_Fold,allocator)
-    p.public_allow=make([dynamic]string,allocator)
-    vcs.org_state_load(w.repo.s,org,&p.org,allocator) or_return
-    vcs.machine_keyrings(w.repo.s,&p.org,&p.keyrings,allocator) or_return
-    device:=vcs.machine_device_of(w.repo.s) or_return
-    defer crypto.zero_explicit(&device,size_of(device))
-    for x in p.org.fold.publics {
-        if x.project==project && x.fingerprint=={} {
-            if _,e:=append(&p.public_allow,x.path);e!=nil {return .Out_Of_Memory}
-        }
-    }
-    p.routing={org=&p.org.fold,project=project,keyrings=p.keyrings[:],device=device,public_allow=p.public_allow[:]}
-    w.repo.overlay=&p.routing
-    return .None
-}
+// What a project publishes to and is pulled from by default.
+BOOKMARK_DEFAULT :: "main"
 
-@(private)
-route_drop :: proc(p:^Project) {
-    if !p.routed {return}
-    p.workspace.repo.overlay=nil
-    for k in p.keyrings {
-        l:=k.log
-        vcs.keyring_fold_destroy(k)
-        if l!=nil {
-            vcs.log_destroy(l)
-            free(l,p.workspace.allocator)
-        }
-        free(k,p.workspace.allocator)
-    }
-    delete(p.keyrings)
-    delete(p.public_allow)
-    vcs.org_state_destroy(&p.org)
-    crypto.zero_explicit(&p.routing,size_of(p.routing))
-    p.routing,p.routed,p.keyrings,p.public_allow={},false,nil,nil
-}
-
-// The project and org the workspace's repository is.
-project_of :: proc(p:^Project,m:^vcs.Machine) -> (project,org:vcs.Log_Id,error:vcs.Error) {
+// The org repository the workspace is.
+project_of :: proc(p:^Project,t:^vcs.Team) -> (l:vcs.Link,error:vcs.Error) {
     ok:bool
-    if project,org,ok=vcs.machine_project_of(m,p.workspace.repo.id);!ok {
-        m.why="this workspace is no project of an org: mirai kai org add makes it one, or mirai kai init <project> in a new folder links one"
-        return {},{},.Missing
+    if l,ok=vcs.team_link_of(t,p.workspace.repo.id);!ok {
+        t.why="this project is in no org yet: Publish to main shares it with one of your orgs"
+        return {},.Missing
     }
-    return
+    return l,.None
 }
 
-// Makes the workspace's repository a project of org, public or the org's
-// alone, named as its folder; its bookmarks reach the org's peers.
-project_join :: proc(p:^Project,m:^vcs.Machine,org:vcs.Log_Id,public:bool) -> (project:vcs.Log_Id,error:vcs.Error) {
-    title:=strings.trim_right(p.workspace.root,"/\\")
+// The title a project's repository takes: its manifest's name, else its folder's.
+project_title :: proc(root:string) -> string {
+    m,e:=project.manifest_read(project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator))
+    if name:=base.text_get(m.name[:]);e.code==.None && name!="" {return strings.clone(name[:min(len(name),vcs.NAME_MAX)],context.temp_allocator)}
+    title:=strings.trim_right(root,"/\\")
     if cut:=strings.last_index_any(title,"/\\");cut>=0 {title=title[cut+1:]}
-    project=vcs.machine_project_add(m,org,p.workspace.repo.id,title,public) or_return
-    bookmarks_publish(p,m) or_return
-    if e:=project_route(p);e!=.None {
-        m.why="the org's scopes do not read: fetch the org's logs again"
-        return project,e
-    }
-    return project,.None
+    return title[:min(len(title),vcs.NAME_MAX)]
 }
 
-// Makes the workspace's repository the project of an org another machine
-// added, so this workspace works on it.
-project_link :: proc(p:^Project,m:^vcs.Machine,project:vcs.Log_Id) -> vcs.Error {
-    vcs.machine_project_link(m,p.workspace.repo.id,project) or_return
-    if e:=project_route(p);e!=.None {
-        m.why="the org's scopes do not read: fetch the org's logs again"
-        return e
+// Makes the workspace's repository a repository of org, public or the org's
+// alone, named as the project: one record of the org, so no reader sees a
+// repository without its setting.
+project_join :: proc(p:^Project,t:^vcs.Team,org:vcs.Org_Id,public:bool) -> (l:vcs.Link,error:vcs.Error) {
+    if held,ok:=vcs.team_link_of(t,p.workspace.repo.id);ok {
+        if held.org!=org {
+            t.why="this project is already in another org"
+            return held,.Invalid_Argument
+        }
+        o,_:=vcs.team_org(t,org) or_return
+        i:=vcs.org_repo(&o,held.repo)
+        if i>=0 && o.repos[i].public==public {return held,.None}
+        x:=i>=0?o.repos[i]:vcs.Org_Repo{id=held.repo,name=project_title(p.workspace.root)}
+        x.public=public
+        vcs.team_repo_set(t,org,x) or_return
+        return held,.None
     }
-    return .None
+    l={local=p.workspace.repo.id,org=org,repo=p.workspace.repo.id}
+    vcs.team_repo_set(t,org,{id=l.repo,name=project_title(p.workspace.root),public=public}) or_return
+    vcs.team_link(t,l) or_return
+    return l,.None
 }
 
-// Keeps path public though the deny set holds it, or, with line from 1,
-// waives the leak the publish scanner found on that line of the file in the
-// working copy.
-public_add :: proc(p:^Project,m:^vcs.Machine,path:string,line:int) -> vcs.Error {
-    project,org:=project_of(p,m) or_return
-    if line<=0 {
-        vcs.machine_public_add(m,org,project,path) or_return
-        return project_route(p)
-    }
-    bytes,e:=os.read_entire_file(strings.concatenate({p.workspace.root,"/",path},context.temp_allocator),context.temp_allocator)
-    if e!=nil {
-        m.why="the file does not read in the working copy: give its path from the project's folder"
-        return .Io
-    }
-    lines:=strings.split(string(bytes),"\n",context.temp_allocator)
-    if line>len(lines) {
-        m.why="the file has fewer lines"
-        return .Invalid_Argument
-    }
-    vcs.machine_public_add(m,org,project,path,lines[line-1]) or_return
-    return project_route(p)
+// Makes the workspace's repository the repository of an org another machine
+// published, so this workspace works on it.
+project_link :: proc(p:^Project,t:^vcs.Team,org:vcs.Org_Id,repo:vcs.Repo_Id) -> vcs.Error {
+    return vcs.team_link(t,{local=p.workspace.repo.id,org=org,repo=repo})
 }
 
-// A bookmark of the project's log, shared by the org, or one a device
-// published.
+// A shared bookmark of a repository: whether every object it reaches is here.
 Shared_Bookmark :: struct {
-    name:string,     // as it is called: main, or <handle>/<device>:<bookmark> for a device's
-    bookmark:string,
+    name:string,
     target:vcs.Revision,
-    device:vcs.Key,  // zero for a bookmark of the project's log
-    here:bool,       // its change is in the store
+    here:bool,
 }
 
-// The bookmarks of the project's log, then every device's, in allocator.
-bookmarks_shared :: proc(p:^Project,m:^vcs.Machine,out:^[dynamic]Shared_Bookmark,allocator:=context.temp_allocator) -> vcs.Error {
-    project,_:=project_of(p,m) or_return
-    ps:vcs.Project_State
-    if e:=vcs.project_state_load(&m.store,project,&ps,context.temp_allocator);e!=.None {
-        m.why="this store lacks the logs of the project or its org: let the agent fetch them"
-        return e
-    }
-    here :: proc(s:^store.Store,r:vcs.Revision) -> bool {
-        _,e:=vcs.change_get(s,r,context.temp_allocator)
-        return e==.None
-    }
-    for b in ps.fold.bookmarks {
-        name:=strings.clone(b.name,allocator)
-        if _,e:=append(out,Shared_Bookmark{name=name,bookmark=name,target=b.target,here=here(&m.store,b.target)});e!=nil {return .Out_Of_Memory}
-    }
-    ns:[len(vcs.REFS_PREFIX)+64]u8
-    refs,_:=store.ref_list(&m.store,vcs.refs_namespace(project,&ns),context.temp_allocator)
-    for r in refs {
-        bytes,ge:=vcs.object_get(&m.store,r.hash,.Device_Refs,context.temp_allocator)
-        if ge!=.None {continue}
-        d,de:=vcs.device_refs_decode(bytes,context.temp_allocator)
-        if de!=.None {continue}
-        display:=vcs.device_display(&ps.org,d.device)
-        for b in d.refs {
-            shown:=strings.concatenate({display,":",b.name},allocator)
-            bookmark:=strings.clone(b.name,allocator)
-            if _,a:=append(out,Shared_Bookmark{name=shown,bookmark=bookmark,target=b.target,device=d.device,here=here(&m.store,b.target)});a!=nil {return .Out_Of_Memory}
-        }
+// The shared bookmarks of a repository of org, in allocator.
+repo_bookmarks :: proc(t:^vcs.Team,org:vcs.Org_Id,repo:vcs.Repo_Id,out:^[dynamic]Shared_Bookmark,allocator:=context.temp_allocator) -> vcs.Error {
+    s:=vcs.team_store(t,org) or_return
+    refs,_,e:=vcs.repo_refs_head(s,org,repo,context.temp_allocator)
+    if e==.Missing {return .None}
+    if e!=.None {return e}
+    for b in refs.bookmarks {
+        missing:=make([dynamic]store.Hash,context.temp_allocator)
+        vcs.closure_walk(s,{b.target},nil,&missing)
+        name,ce:=strings.clone(b.name,allocator)
+        if ce!=nil {return .Out_Of_Memory}
+        if _,ae:=append(out,Shared_Bookmark{name,b.target,len(missing)==0});ae!=nil {return .Out_Of_Memory}
     }
     return .None
 }
 
-// The change of the current stack of a proposal of the project that text
-// names by a prefix of its id, as mirai kai proposal show prints it: what a
-// reviewer reads before it is in any view of its own.
-@(private)
-revision_proposed :: proc(p:^Project,m:^vcs.Machine,text:string) -> (revision:vcs.Revision,found:int) {
-    lower:=strings.to_lower(text,context.temp_allocator)
-    if len(lower)<CHANGE_TEXT_MIN {return}
-    project,_,e:=project_of(p,m)
-    if e!=.None {return}
-    ps:vcs.Project_State
-    if vcs.project_state_load(&m.store,project,&ps,context.temp_allocator)!=.None {return}
-    stacks:=make([dynamic]vcs.Proposal_Stack,context.temp_allocator)
-    for f in ps.proposals {
-        if vcs.proposal_stacks(f,&stacks)!=.None || len(stacks)==0 {continue}
-        for item in stacks[len(stacks)-1].items {
-            id:=item.change
-            if !strings.has_prefix(hex(id[:]),lower) || item.revision==revision {continue}
-            if _,ce:=vcs.change_get(&m.store,item.revision,context.temp_allocator);ce!=.None {continue}
-            revision=item.revision
-            found+=1
-        }
-    }
-    return
+// The shared bookmarks of the workspace's repository.
+bookmarks_shared :: proc(p:^Project,t:^vcs.Team,out:^[dynamic]Shared_Bookmark,allocator:=context.temp_allocator) -> vcs.Error {
+    l:=project_of(p,t) or_return
+    return repo_bookmarks(t,l.org,l.repo,out,allocator)
 }
 
-// The change text names as revision_find does, or else a bookmark of the
-// project's log, or a device's as <handle>/<device>:<bookmark>, or a change
-// of a proposal's stack by a prefix of its id, whose change must be in the
-// store.
-revision_resolve :: proc(p:^Project,m:^vcs.Machine,text:string) -> (revision:vcs.Revision,error:vcs.Error) {
-    if r,e:=revision_find(&p.workspace,text);e==.None {return r,.None}
+// The bookmark a repository is pulled from: main, else the first; -1 when none.
+bookmark_default :: proc(list:[]Shared_Bookmark) -> int {
+    for b,i in list {
+        if b.name==BOOKMARK_DEFAULT {return i}
+    }
+    return len(list)>0?0:-1
+}
+
+// Makes root a workspace of a repository of an org: a folder that is not
+// there yet or is empty, or the workspace a pull of the same repository left
+// there. The files come with clone_checkout once the agent pulled them.
+project_clone :: proc(p:^Project,t:^vcs.Team,root:string,s:^store.Store,org:vcs.Org_Id,repo:vcs.Repo_Id,types:^asset.Types=nil,allocator:=context.allocator) -> vcs.Error {
+    if project_exists(root) {
+        project_open(p,root,s,types,allocator) or_return
+        if l,ok:=vcs.team_link_of(t,p.workspace.repo.id);ok && (l.org!=org || l.repo!=repo) {
+            project_close(p)
+            t.why="that folder is a workspace of another repository: choose another location"
+            return .Invalid_Argument
+        }
+    } else {
+        if os.exists(root) {
+            entries,error:=os.read_all_directory_by_path(root,context.temp_allocator)
+            if !os.is_dir(root) || error!=nil || len(entries)>0 {
+                t.why="that folder is not empty: choose another location, or an empty folder"
+                return .Invalid_Argument
+            }
+        } else if os.make_directory_all(root)!=nil {
+            t.why="that folder could not be made: choose a location this user may write"
+            return .Io
+        }
+        project_create(p,root,s,types,allocator) or_return
+    }
+    return project_link(p,t,org,repo)
+}
+
+// Writes the files of the repository's default bookmark in the workspace, as
+// a new working change on it; a workspace that has the project's files
+// already keeps them. Missing, with t.why, while nobody published a bookmark
+// or its objects are not all here yet. bookmark: the one written, in the temp
+// allocator.
+clone_checkout :: proc(p:^Project,t:^vcs.Team) -> (bookmark:string,error:vcs.Error) {
+    if os.is_file(project.path(p.workspace.root,project.PROJECT_FILE,allocator=context.temp_allocator)) {return "",.None}
     list:=make([dynamic]Shared_Bookmark,context.temp_allocator)
-    if bookmarks_shared(p,m,&list)!=.None {
-        m.why="it names no single visible change: @, @-, a bookmark or a prefix of a change id as mirai kai log shows it"
+    bookmarks_shared(p,t,&list) or_return
+    i:=bookmark_default(list[:])
+    if i<0 {
+        t.why="nobody published this repository yet: Publish to main from a machine that has it"
+        return "",.Missing
+    }
+    b:=list[i]
+    if !b.here {
+        t.why=fmt.tprintf("%s is not all here yet: the agent pulls it from the org's machines",b.name)
+        return b.name,.Missing
+    }
+    on:=[1]vcs.Revision{b.target}
+    if _,e:=new_change(&p.workspace,on[:],"",nil);e!=.None {return b.name,e}
+    return b.name,.None
+}
+
+// Publishes the working copy to the repository's shared bookmark name for
+// the whole org: the working change closes first when it changed a file or
+// has a description (closing describes it), and the bookmark moves to what it
+// closed, or to the working copy's parent when there was nothing to close.
+publish :: proc(p:^Project,t:^vcs.Team,name:string,closing:string,changed:^[dynamic]string) -> (revision:vcs.Revision,error:vcs.Error) {
+    project_of(p,t) or_return
+    if !vcs.bookmark_name_valid(name) {
+        t.why=fmt.tprintf("%q is no bookmark name: letters, digits, - _ . and / of at most %d bytes",name,vcs.BOOKMARK_NAME_MAX)
         return {},.Invalid_Argument
     }
-    found:=0
-    for b in list {
-        if b.name!=text {continue}
-        if !b.here {
-            m.why="that bookmark's change is not in this store yet: let the agent fetch it"
-            return {},.Missing
+    w:=&p.workspace
+    snapshot(w) or_return
+    working:=vcs.repo_working(&w.repo)
+    c:=vcs.change_get(w.repo.s,working,context.temp_allocator) or_return
+    diffs:=make([dynamic]vcs.Diff,context.temp_allocator)
+    diff(w,working,&diffs) or_return
+    if len(diffs)>0 || c.description!="" || closing!="" || len(c.parents)>1 {
+        text:Maybe(string)
+        if closing!="" {text=closing}
+        new_change(w,nil,"",changed,closing=text) or_return
+        revision=revision_find(w,"@-") or_return
+    } else {
+        if len(c.parents)==0 {
+            t.why="the project has no change to publish yet: change a file first"
+            return {},.Invalid_Argument
         }
-        revision=b.target
-        found+=1
+        revision=c.parents[0]
     }
-    if found==0 {revision,found=revision_proposed(p,m,text)}
-    switch found {
-    case 1: return revision,.None
-    case 0: m.why="it names no single change: @, @-, a bookmark, <handle>/<device>:<bookmark> as mirai kai bookmarks shows it, or a prefix of a change id"
-    case: m.why="that shared bookmark diverged: move it to one change with mirai kai bookmarks move"
+    bookmark_move(p,t,name,revision) or_return
+    return revision,.None
+}
+
+// Moves the repository's shared bookmark name to revision for the whole org.
+bookmark_move :: proc(p:^Project,t:^vcs.Team,name:string,to:vcs.Revision) -> vcs.Error {
+    l:=project_of(p,t) or_return
+    s:=vcs.team_store(t,l.org) or_return
+    if s!=p.workspace.repo.s {
+        t.why="this project's store is not the org's"
+        return .Other_Store
     }
-    return {},.Invalid_Argument
+    list:=make([dynamic]vcs.Bookmark_Ref,context.temp_allocator)
+    if refs,_,e:=vcs.repo_refs_head(s,l.org,l.repo,context.temp_allocator);e==.None {
+        for b in refs.bookmarks {
+            if b.name!=name {append(&list,b)}
+        }
+    }
+    append(&list,vcs.Bookmark_Ref{name,to})
+    return vcs.team_publish(t,l.org,l.repo,list[:])
+}
+
+// The change text names: a shared bookmark of the workspace's repository,
+// else what revision_find names in the workspace.
+revision_resolve :: proc(p:^Project,t:^vcs.Team,text:string) -> (revision:vcs.Revision,error:vcs.Error) {
+    list:=make([dynamic]Shared_Bookmark,context.temp_allocator)
+    if bookmarks_shared(p,t,&list)==.None {
+        for b in list {
+            if b.name==text {return b.target,.None}
+        }
+    }
+    return revision_find(&p.workspace,text)
+}
+
+// The paths of a tree whose names look like secrets (keys, credentials,
+// environment files): what a public publish warns of, in the temp allocator.
+secret_paths :: proc(p:^Project,revision:vcs.Revision) -> []string {
+    out:=make([dynamic]string,context.temp_allocator)
+    c,e:=vcs.change_get(p.workspace.repo.s,revision,context.temp_allocator)
+    if e!=.None {return nil}
+    files:=make([dynamic]vcs.File,context.temp_allocator)
+    if vcs.tree_files(p.workspace.repo.s,c.tree,&files,context.temp_allocator)!=.None {return nil}
+    SECRET_NAMES :: [?]string{".env","id_rsa","id_ed25519","credentials.json",".npmrc",".netrc"}
+    SECRET_EXTENSIONS :: [?]string{".pem",".key",".p12",".pfx",".keystore"}
+    names:=SECRET_NAMES
+    extensions:=SECRET_EXTENSIONS
+    for f in files {
+        name:=filepath.base(f.path)
+        lower:=strings.to_lower(name,context.temp_allocator)
+        secret:=strings.has_prefix(lower,".env.")
+        for n in names {secret||=lower==n}
+        for x in extensions {secret||=strings.has_suffix(lower,x)}
+        if secret {append(&out,f.path)}
+    }
+    return out[:]
+}
+
+// --- Views ---
+
+role_of :: proc(text:string) -> (role:vcs.Role,ok:bool) {
+    switch text {
+    case "reader": return .Reader,true
+    case "node": return .Node,true
+    case "writer": return .Writer,true
+    case "admin": return .Admin,true
+    }
+    return
+}
+
+role_text :: proc(role:vcs.Role) -> string {
+    switch role {
+    case .Reader: return "reader"
+    case .Node: return "node"
+    case .Writer: return "writer"
+    case .Admin: return "admin"
+    }
+    return ""
+}
+
+Member_View :: struct {
+    key:vcs.Key,
+    name,device,role:string,
+    you:bool,
+}
+
+Repo_View :: struct {
+    id:vcs.Repo_Id,
+    name:string,
+    public:bool,
+    main:string,   // the change id main names, "" when nobody published it
+    here:bool,     // every object main reaches is here
+    linked:bool,   // a workspace of this machine is one of it
+}
+
+Org_View :: struct {
+    id:vcs.Org_Id,
+    name:string,
+    version:u64,
+    role:string, // this machine's
+    members:[]Member_View,
+    repos:[]Repo_View,
+}
+
+// What an org shows; its strings in allocator.
+org_view :: proc(t:^vcs.Team,id:vcs.Org_Id,v:^Org_View,allocator:=context.temp_allocator) -> vcs.Error {
+    o,_:=vcs.team_org(t,id) or_return
+    s:=vcs.team_store(t,id) or_return
+    v^={id=id,version=o.version}
+    v.name=clone(o.name,allocator) or_return
+    if role,ok:=vcs.org_role(&o,t.identity.key);ok {v.role=role_text(role)}
+    members,me:=make([]Member_View,len(o.members),allocator)
+    repos,re:=make([]Repo_View,len(o.repos),allocator)
+    if me!=nil || re!=nil {return .Out_Of_Memory}
+    v.members,v.repos=members,repos
+    for m,i in o.members {
+        x:=&v.members[i]
+        x.key,x.role,x.you=m.key,role_text(m.role),m.key==t.identity.key
+        x.name=clone(m.name,allocator) or_return
+        x.device=clone(m.device,allocator) or_return
+    }
+    links:=vcs.team_links(t)
+    for r,i in o.repos {
+        x:=&v.repos[i]
+        x.id,x.public=r.id,r.public
+        x.name=clone(r.name,allocator) or_return
+        if refs,_,e:=vcs.repo_refs_head(s,id,r.id,context.temp_allocator);e==.None {
+            for b in refs.bookmarks {
+                if b.name!=BOOKMARK_DEFAULT {continue}
+                c,ce:=vcs.change_get(s,b.target,context.temp_allocator)
+                if ce==.None {x.main=change_text(c.id,allocator)} else {x.main=clone("?",allocator) or_return}
+                missing:=make([dynamic]store.Hash,context.temp_allocator)
+                vcs.closure_walk(s,{b.target},nil,&missing)
+                x.here=ce==.None && len(missing)==0
+            }
+        }
+        for l in links {x.linked||=l.org==id && l.repo==r.id}
+    }
+    return .None
+}
+
+@(private)
+clone :: proc(text:string,allocator:runtime.Allocator) -> (string,vcs.Error) {
+    made,e:=strings.clone(text,allocator)
+    if e!=nil {return "",.Out_Of_Memory}
+    return made,.None
 }

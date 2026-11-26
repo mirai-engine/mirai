@@ -1,11 +1,6 @@
 package kai_assets
 
 import "base:runtime"
-import "core:crypto"
-import "core:mem"
-import "core:os"
-import "core:path/filepath"
-import "core:strings"
 import "core:sync"
 import "core:time"
 import "mirai:asset"
@@ -14,42 +9,26 @@ import "mirai:std/blake3"
 import "mirai:store"
 import vcs "mirai:kai"
 
-// What a project's imports and cooks share through the Kai mesh. A miss of
-// cook/cache or of the library asks the machine's runner, through its control,
-// for a signed DDC_Record a peer of the project's org published (the runner
-// asks LAN peers before the others and keeps only what ddc_accept takes:
-// writers, DDC nodes and ddc grant holders), and takes its output whole once
-// the runner has every object the record lists; what an import or a cook keeps
-// is published as this device's record, listing the object of the ref and, for
-// a build, every object the build lists. The key of a result is the hash of
-// its cache ref. A build found here that the org has no record of (kept before
-// the project was the org's, or while no runner ran) is published the same
-// way, so the builds a project came with reach the peers that pull it.
-//
-// A result made from a file of one of the project's scopes inherits those
-// scopes (vcs.overlay_taint): its record names them as tainted and its output
-// is one sealed blob of the chunks of its objects (vcs.Blob_Sealer),
-// which only a device that reads every one of those scopes opens. Nodes,
-// grant holders and members below the scopes' readers hold ciphertext at most.
+// What a project's imports and cooks share with its org's machines. A miss of
+// cook/cache or of the library asks the connected members of the project's
+// org, through an agent of this process, for a signed DDC_Record a writer
+// published (ddc_accept keeps only writers' records), and takes its output
+// whole; what an import or a cook keeps is published as this device's record,
+// listing the object of the ref and, for a build, every object the build
+// lists, and told to the org's nodes, which keep it. The key of a result is
+// the hash of its cache ref. A build found here that the org has no record of
+// (kept before the project was the org's) is published the same way, so the
+// builds a project came with reach the machines that pull it.
 
 LABEL_DDC_CACHE :: "kai-1/ddc-cache"
-SEALED_VERSION :: 1 // of the chunks a sealed output holds
-FOLDED_PATHS :: ODIN_OS==.Darwin || ODIN_OS==.Windows // whose file systems ignore case by default
+PEERS_WAIT :: 2*time.Second // a cook waits this long for the org's machines to connect
 
 Mesh_Cache :: struct {
-    machine:^vcs.Machine, // signs what is published; its store is the runner's
-    control:vcs.Control,
-    org:vcs.Log_Id,
-    project:vcs.Log_Id, // whose scopes taint what is published; zero: no scope applies
-    root:string,        // the project's folder as the file system resolves it; "": unresolved
-    state:vcs.Org_State,
-    keyrings:[dynamic]^vcs.Keyring_Fold,
-    scoped:bool,        // keyrings are held
-    stated:bool,        // state is held
-    connected:bool,
-    lock:sync.Mutex,    // the control and the machine are asked by one thread at a time
+    team:^vcs.Team,   // signs what is published
+    agent:^vcs.Agent, // asks the org's connected machines
+    org:vcs.Org_Id,
+    lock:sync.Mutex,
     taken,published:int, // results taken from peers and published since it opened
-    allocator:runtime.Allocator,
 }
 
 // The key a cache ref is published under.
@@ -64,85 +43,58 @@ ddc_key :: proc(namespace,name:string) -> store.Hash {
     return store.Hash(blake3.final(&h))
 }
 
-// Shares the cache of the org's project through the runner of the machine's
-// store, which hears through the control what m changes, so what is published
-// reaches the peers at once; c stays where it is while open. Missing when no
-// runner runs: the cook then builds alone. With
-// project, the files under root what is kept is made from decide its scopes;
-// when the org's scopes or root do not read, nothing is published.
-mesh_cache_open :: proc(c:^Mesh_Cache,m:^vcs.Machine,org:vcs.Log_Id,project:=vcs.Log_Id{},root:="",allocator:=context.allocator) -> vcs.Error {
-    c^={machine=m,org=org,project=project,allocator=allocator}
-    vcs.control_open(&c.control,m.store.root) or_return
-    c.connected=true
-    m.changed=vcs.control_machine_changed(&c.control)
-    if project=={} {return .None}
-    if info,e:=os.stat(root,context.temp_allocator);e==nil {c.root=strings.clone(info.fullpath,allocator)}
-    if vcs.org_state_load(&m.store,org,&c.state,allocator)!=.None {
-        vcs.org_state_destroy(&c.state)
-        c.state={}
-        return .None
-    }
-    c.stated=true
-    c.keyrings=make([dynamic]^vcs.Keyring_Fold,allocator)
-    c.scoped=vcs.machine_keyrings(&m.store,&c.state,&c.keyrings,allocator)==.None
-    return .None
-}
-
-mesh_cache_close :: proc(c:^Mesh_Cache) {
-    if c.connected {
-        c.machine.changed={}
-        vcs.control_close(&c.control)
-    }
-    for k in c.keyrings {
-        l:=k.log
-        vcs.keyring_fold_destroy(k)
-        if l!=nil {
-            vcs.log_destroy(l)
-            free(l,c.allocator)
-        }
-        free(k,c.allocator)
-    }
-    delete(c.keyrings)
-    if c.stated {vcs.org_state_destroy(&c.state)}
-    delete(c.root,c.allocator)
-    c^={}
-}
-
-// The source a cache.Cache of the machine's store takes.
+// The source a cache.Cache of the org's store takes.
 mesh_source :: proc(c:^Mesh_Cache) -> cache.Source {
     return {fetch=mesh_fetch,kept=mesh_kept,here=mesh_here,user=c}
 }
 
 // What the imports and cooks of the project at root take from and give to
-// its org's peers, through the runner of the store at store_root
-// (cache.Peers_Open): when root is a workspace of a project of an org on this
-// machine and the runner runs. Otherwise no source, and close is nil: the
-// imports and cooks work alone, as without Kai.
+// its org's machines (cache.Peers_Open): when root is a workspace of an org's
+// repository on the machine of the store at store_root, an agent of this
+// process that dials the org's members. Otherwise no source, and close is
+// nil: the imports and cooks work alone, as without Kai.
 peers_open :: proc(store_root,root:string) -> (source:cache.Source,close:cache.Peers_Close) {
     allocator:=context.allocator
     if store_root=="" || root=="" {return}
     repo,workspace:=vcs.workspace_repo_of(root)
     if !workspace {return}
-    p:=new(Peers,allocator)
-    if p==nil {return}
+    p,pe:=new(Peers,allocator)
+    if pe!=nil {return}
     p.allocator=allocator
-    if vcs.machine_open(&p.machine,store_root,allocator)!=.None {
+    se:store.Error
+    if p.s,se=store.open(store_root,allocator);se!=.None {
         free(p,allocator)
         return
     }
-    folder,_:=filepath.abs(root,context.temp_allocator)
-    project,org,linked:=vcs.machine_project_of(&p.machine,repo)
-    if !linked || mesh_cache_open(&p.cache,&p.machine,org,project,folder,allocator)!=.None {
-        peers_free(p)
+    if vcs.team_open(&p.team,&p.s,allocator)!=.None {
+        store.close(&p.s)
+        free(p,allocator)
         return
+    }
+    l,linked:=vcs.team_link_of(&p.team,repo)
+    if !linked || vcs.agent_start(&p.agent,&p.team,{port=-1},allocator)!=.None {
+        vcs.team_close(&p.team)
+        store.close(&p.s)
+        free(p,allocator)
+        return
+    }
+    p.cache={team=&p.team,agent=&p.agent,org=l.org}
+    started:=time.tick_now()
+    for time.tick_since(started)<PEERS_WAIT {
+        peers:=make([dynamic]vcs.Peer_Info,context.temp_allocator)
+        vcs.agent_peers(&p.agent,&peers,context.temp_allocator)
+        if len(peers)>0 {break}
+        time.sleep(20*time.Millisecond)
     }
     return mesh_source(&p.cache),peers_close
 }
 
 @(private="file")
 Peers :: struct {
-    cache:Mesh_Cache, // first: the user of the source is the Peers
-    machine:vcs.Machine,
+    cache:Mesh_Cache,
+    s:store.Store,
+    team:vcs.Team,
+    agent:vcs.Agent,
     allocator:runtime.Allocator,
 }
 
@@ -150,309 +102,85 @@ Peers :: struct {
 peers_close :: proc(source:cache.Source) -> (taken,published:int) {
     p:=(^Peers)(source.user)
     taken,published=p.cache.taken,p.cache.published
-    peers_free(p)
-    return
-}
-
-@(private="file")
-peers_free :: proc(p:^Peers) {
-    mesh_cache_close(&p.cache)
-    vcs.machine_close(&p.machine)
+    vcs.agent_stop(&p.agent)
+    vcs.team_close(&p.team)
+    store.close(&p.s)
     free(p,p.allocator)
+    return
 }
 
 @(private)
 mesh_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
     c:=(^Mesh_Cache)(user)
-    if !c.connected {return}
-    Wanted :: struct {key,output_root:store.Hash,state:vcs.DDC_State}
-    wanted:=make([]Wanted,len(names),context.temp_allocator)
-    for name,k in names {wanted[k]={key=ddc_key(namespace,name),state=.Waiting}}
-    // Asks one round with the lock held; the wait between rounds lets mesh_kept in.
-    ask :: proc(c:^Mesh_Cache,wanted:[]Wanted) -> (waiting:bool,error:vcs.Error) {
-        sync.mutex_lock(&c.lock)
-        defer sync.mutex_unlock(&c.lock)
-        for &w in wanted {
-            if w.state!=.Waiting {continue}
-            state,output_root:=vcs.control_ddc_ask(&c.control,c.org,w.key) or_return
-            w.state,w.output_root=state,output_root
-            waiting||=w.state==.Waiting
-        }
-        return
-    }
-    // The runner says how long: a lookup waits while its output arrives (vcs.ddc_lookup_stalled).
-    for {
-        waiting,e:=ask(c,wanted)
-        if e!=.None {return}
-        if !waiting {break}
-        time.sleep(20*time.Millisecond)
-    }
-    sync.mutex_lock(&c.lock)
-    defer sync.mutex_unlock(&c.lock)
-    from:=store.read_index(&c.machine.store)
+    s,se:=vcs.team_store(c.team,c.org)
+    if se!=.None {return}
+    records:=make([dynamic]vcs.DDC_Record,context.temp_allocator)
     scratch:[]u8
-    for &w,k in wanted {
-        if w.state!=.Found {continue}
-        objects,e:=vcs.ddc_output_get(&from,w.output_root,context.temp_allocator)
+    for name,k in names {
+        key:=ddc_key(namespace,name)
+        if vcs.ddc_lookup(s,c.org,key,&records)!=.None || len(records)==0 {
+            if !vcs.agent_ddc_ask(c.agent,c.org,key) {continue}
+            if vcs.ddc_lookup(s,c.org,key,&records)!=.None || len(records)==0 {continue}
+        }
+        objects,e:=vcs.ddc_output_get(s,records[0].output_root,context.temp_allocator)
         if e!=.None || len(objects)==0 {continue}
-        if output_tainted(&from,c.org,w.key,w.output_root) {
-            if objects,e=output_unseal(c,&from,into,objects[0]);e!=.None || len(objects)==0 {continue}
-        } else if into.root!=from.root {
+        if into.root!=s.root {
             whole:=true
             if scratch==nil {scratch=make([]u8,cache.COPY_SCRATCH,context.temp_allocator)}
-            for o in objects {whole&&=cache.object_copy(&from,into,o,scratch)==.None}
+            for o in objects {whole&&=cache.object_copy(s,into,o,scratch)==.None}
             if !whole {continue}
         }
         given[k]=store.ref_set(into,namespace,names[k],objects[0])==.None
-        if given[k] {c.taken+=1}
+        if given[k] {
+            sync.mutex_lock(&c.lock)
+            c.taken+=1
+            sync.mutex_unlock(&c.lock)
+        }
     }
 }
 
 // Publishes what the cache kept: the object of the ref and, for a build
 // (asset.REF_IMPORTS, asset.REF_IMPORTS_FAST or asset.REF_BUILDS), every
-// object the build lists, which must come with it; sealed when what it was
-// made from falls in scopes of the project.
+// object the build lists, which must come with it.
 @(private)
 mesh_kept :: proc(user:rawptr,namespace,name:string,object:store.Hash,from:[]string) {
     c:=(^Mesh_Cache)(user)
-    if !c.connected {return}
-    sync.mutex_lock(&c.lock)
-    defer sync.mutex_unlock(&c.lock)
-    s:=store.read_index(&c.machine.store)
+    s,se:=vcs.team_store(c.team,c.org)
+    if se!=.None {return}
     objects:=make([dynamic]store.Hash,context.temp_allocator)
     append(&objects,object)
     if namespace==asset.REF_IMPORTS || namespace==asset.REF_IMPORTS_FAST || namespace==asset.REF_BUILDS {
-        b,e:=asset.build_get(&s,object,context.temp_allocator)
+        b,e:=asset.build_get(s,object,context.temp_allocator)
         if e!=.None {return}
         listed:=asset.Build_Objects{build=&b,with_thumbnails=true}
         for address in asset.build_object_next(&listed) {append(&objects,address)}
     }
-    tainted:=make([dynamic]vcs.Scope_Id,context.temp_allocator)
-    if c.project!={} {
-        // Whose scopes cannot be told is not published.
-        if !c.scoped {return}
-        // A project with no scope taints nothing, whatever a result was made from.
-        scopes:=false
-        for sc in c.state.fold.scopes {scopes||=sc.project==c.project}
-        if scopes {
-            paths:=make([dynamic]string,context.temp_allocator)
-            if !provenance(c.root,from,&paths) {return}
-            if vcs.overlay_taint(&c.state.fold,c.project,paths[:],&tainted)!=.None {return}
-        }
-    }
-    if len(tainted)>0 {
-        sealed,e:=output_seal(c,&s,objects[:],tainted[:])
-        if e!=.None {return}
-        clear(&objects)
-        append(&objects,sealed)
-    }
-    if _,e:=vcs.machine_publish_ddc(c.machine,c.org,ddc_key(namespace,name),objects[:],tainted[:]);e==.None {c.published+=1}
+    key:=ddc_key(namespace,name)
+    if _,e:=vcs.ddc_publish(s,c.org,&c.team.identity,key,objects[:],time.now()._nsec);e!=.None {return}
+    if store.commit(s)!=.None {return}
+    ns:[len(vcs.DDC_PREFIX)+32]u8
+    hex:[64]u8
+    if address,e:=store.ref_get(s,vcs.ddc_namespace(c.org,&ns),store.hex(key,&hex));e==.None {vcs.agent_ddc_published(c.agent,c.org,key,address)}
+    sync.mutex_lock(&c.lock)
+    c.published+=1
+    sync.mutex_unlock(&c.lock)
 }
 
 // Publishes a result found here unless a record of its key names an output
-// this store holds whole, which it then serves: one kept before this machine
-// shared the project's cache, or whose only records are of peers that built
-// another output. Nothing is signed or sealed twice.
+// this store holds whole, which it then serves.
 @(private)
 mesh_here :: proc(user:rawptr,namespace,name:string,object:store.Hash,from:[]string) {
     c:=(^Mesh_Cache)(user)
-    if !c.connected {return}
-    {
-        sync.mutex_lock(&c.lock)
-        defer sync.mutex_unlock(&c.lock)
-        s:=store.read_index(&c.machine.store)
-        records:=make([dynamic]vcs.DDC_Record,context.temp_allocator)
-        vcs.ddc_lookup(&s,c.org,ddc_key(namespace,name),&records)
-        lacking:=make([dynamic]store.Hash,context.temp_allocator)
-        for d in records {
-            clear(&lacking)
-            if _,e:=vcs.ddc_output_lacking(&s,d.output_root,&lacking);e==.None && len(lacking)==0 {return}
-        }
+    s,se:=vcs.team_store(c.team,c.org)
+    if se!=.None {return}
+    records:=make([dynamic]vcs.DDC_Record,context.temp_allocator)
+    vcs.ddc_lookup(s,c.org,ddc_key(namespace,name),&records)
+    lacking:=make([dynamic]store.Hash,context.temp_allocator)
+    for d in records {
+        clear(&lacking)
+        if _,e:=vcs.ddc_output_lacking(s,d.output_root,&lacking);e==.None && len(lacking)==0 {return}
     }
     mesh_kept(user,namespace,name,object,from)
-}
-
-// The paths under the folder root (resolved as mesh_cache_open resolves it)
-// of the files from, which decide the scopes what they made falls in, into
-// out, in the temp allocator. Each file is taken as the file system resolves
-// it (its case, every link) and as its folder does with its own name (a link
-// inside root stays the path it is there). False when what they were made
-// from cannot be told: none are known, root is unresolved, or a file does not
-// resolve. A file resolved outside root is in no scope.
-@(private)
-provenance :: proc(root:string,from:[]string,out:^[dynamic]string) -> (known:bool) {
-    if root=="" || len(from)==0 {return false}
-    for file in from {
-        real,ok:=path_real(file,context.temp_allocator)
-        if !ok {return false}
-        dir,name:=os.split_path(file)
-        folder,fok:=path_real(dir,context.temp_allocator)
-        if !fok {return false}
-        named:=strings.concatenate({folder,"/",name},context.temp_allocator)
-        for full in ([2]string{real,named}) {
-            if path,under:=project_path(root,full);under {append(out,path)}
-        }
-    }
-    return true
-}
-
-// The path of file under the folder root, with forward slashes; false outside
-// it. Where file systems ignore case, so does the folder's match.
-@(private)
-project_path :: proc(root,file:string) -> (path:string,under:bool) {
-    if root=="" {return}
-    slashed,_:=strings.replace_all(file,"\\","/",context.temp_allocator)
-    top,_:=strings.replace_all(root,"\\","/",context.temp_allocator)
-    top=strings.trim_right(top,"/")
-    if len(slashed)<=len(top)+1 || slashed[len(top)]!='/' {return}
-    head:=slashed[:len(top)]
-    when FOLDED_PATHS {
-        if !strings.equal_fold(head,top) {return}
-    } else {
-        if head!=top {return}
-    }
-    return slashed[len(top)+1:],true
-}
-
-// Whether the record of key whose output is output_root names tainted scopes.
-@(private)
-output_tainted :: proc(s:^store.Store,org:vcs.Log_Id,key,output_root:store.Hash) -> bool {
-    records:=make([dynamic]vcs.DDC_Record,context.temp_allocator)
-    vcs.ddc_lookup(s,org,key,&records)
-    for d in records {
-        if d.output_root==output_root {return len(d.tainted_scopes)>0}
-    }
-    return false
-}
-
-// One sealed blob of every chunk of objects, nodes and data, after the list of
-// objects: u32 version, u32 objects, the objects, then each chunk as its
-// address, u32 size and bytes, sealed as it is walked.
-@(private)
-output_seal :: proc(c:^Mesh_Cache,s:^store.Store,objects:[]store.Hash,tainted:[]vcs.Scope_Id) -> (sealed:store.Hash,error:vcs.Error) {
-    device:=vcs.machine_device_of(&c.machine.store) or_return
-    defer crypto.zero_explicit(&device,size_of(device))
-    b:vcs.Blob_Sealer
-    vcs.overlay_blob_begin(&b,&c.machine.store,c.keyrings[:],&device,c.project,tainted) or_return
-    head:=[2]u32le{SEALED_VERSION,u32le(len(objects))}
-    vcs.overlay_blob_write(&b,mem.slice_to_bytes(head[:]))
-    vcs.overlay_blob_write(&b,mem.slice_to_bytes(objects))
-    seen:=make(map[store.Hash]bool,context.temp_allocator)
-    buffer:=make([]u8,store.CHUNK_MAX,context.temp_allocator)
-    walk :: proc(s:^store.Store,address:store.Hash,level,depth:int,buffer:[]u8,b:^vcs.Blob_Sealer,seen:^map[store.Hash]bool) -> vcs.Error {
-        if depth>store.NODE_LEVEL_MAX+1 {return .Corrupt}
-        if address in seen^ {return .None}
-        seen^[address]=true
-        chunk,e:=store.chunk_read(s,address,buffer)
-        if e!=.None || store.address_of_bytes(chunk)!=address {return .Corrupt}
-        a:=address
-        size:=u32le(len(chunk))
-        vcs.overlay_blob_write(b,a[:])
-        vcs.overlay_blob_write(b,mem.ptr_to_bytes(&size))
-        vcs.overlay_blob_write(b,chunk)
-        if level<0 {return .None}
-        n,pe:=store.node_parse(chunk)
-        if pe!=.None || level!=ROOT_LEVEL && n.level!=level {return .Corrupt}
-        entries:=make([]store.Entry,len(n.entries),context.temp_allocator)
-        copy(entries,n.entries)
-        below:=n.level-1 if n.level>0 else -1
-        for x in entries {walk(s,x.address,below,depth+1,buffer,b,seen) or_return}
-        return .None
-    }
-    for o in objects {
-        if e:=walk(s,o,ROOT_LEVEL,0,buffer,&b,&seen);e!=.None {
-            vcs.overlay_blob_abandon(&b)
-            return {},e
-        }
-    }
-    return vcs.overlay_blob_finish(&b)
-}
-
-// Opens the sealed blob of an output into the batch of into, chunk by chunk,
-// each checked against its address: the objects it holds, the first the one
-// the cache ref names. What it holds at once is one record and one opened chunk.
-@(private)
-output_unseal :: proc(c:^Mesh_Cache,from,into:^store.Store,sealed:store.Hash) -> (objects:[]store.Hash,error:vcs.Error) {
-    if !c.scoped {return nil,.Unauthorized}
-    device:=vcs.machine_device_of(&c.machine.store) or_return
-    defer crypto.zero_explicit(&device,size_of(device))
-    r:vcs.Blob_Reader
-    vcs.overlay_blob_open(&r,from,c.keyrings[:],&device,sealed) or_return
-    defer vcs.overlay_blob_close(&r)
-    RECORD :: size_of(store.Hash)+4
-    pending:=make([]u8,RECORD+store.CHUNK_MAX+vcs.OVERLAY_CHUNK_MAX,context.temp_allocator)
-    have:=0
-    count:=-1
-    listed:=make([dynamic]store.Hash,context.temp_allocator)
-    for {
-        plain:=vcs.overlay_blob_next(&r) or_return
-        if len(plain)==0 {break}
-        have+=copy(pending[have:],plain)
-        at:=0
-        for {
-            rest:=pending[at:have]
-            if count<0 {
-                if len(rest)<8 {break}
-                head:=(^[2]u32le)(raw_data(rest))^
-                if head[0]!=SEALED_VERSION || head[1]==0 || int(head[1])>vcs.DDC_OUTPUT_MAX {return nil,.Corrupt}
-                count=int(head[1])
-                at+=8
-            } else if len(listed)<count {
-                if len(rest)<size_of(store.Hash) {break}
-                o:store.Hash
-                copy(o[:],rest)
-                append(&listed,o)
-                at+=size_of(store.Hash)
-            } else {
-                if len(rest)<RECORD {break}
-                size:=int((^u32le)(raw_data(rest[size_of(store.Hash):]))^)
-                if size==0 || size>store.CHUNK_MAX {return nil,.Corrupt}
-                if len(rest)<RECORD+size {break}
-                address:store.Hash
-                copy(address[:],rest)
-                chunk:=rest[RECORD:][:size]
-                if store.address_of_bytes(chunk)!=address {return nil,.Corrupt}
-                if !store.chunk_here(into,address) && store.chunk_put(into,address,chunk)!=.None {return nil,.Io}
-                at+=RECORD+size
-            }
-        }
-        copy(pending,pending[at:have])
-        have-=at
-    }
-    if have!=0 || count<0 || len(listed)!=count {return nil,.Corrupt}
-    for o in listed {
-        if !asset.object_whole(into,o,false) {return nil,.Corrupt}
-    }
-    return listed[:],.None
-}
-
-@(private="file")
-ROOT_LEVEL :: 1<<20 // the root of an object: a node of any level
-
-// Publishes the bookmarks of a workspace as this device's signed refs of its
-// project, when the repository is a project of an org: the mesh sends them
-// to the org's peers at once, then the previews of the assets the changes
-// they newly reach touched (previews_publish), with the thumbnails the
-// editor keeps. Nothing when it is not.
-bookmarks_publish :: proc(p:^Project,m:^vcs.Machine,thumbnails:=Thumbnail_Source{}) -> vcs.Error {
-    r:=&p.workspace.repo
-    project,org,ok:=vcs.machine_project_of(m,r.id)
-    if !ok {return .None}
-    refs:=make([dynamic]vcs.Bookmark_Ref,context.temp_allocator)
-    targets:=make([dynamic]vcs.Revision,context.temp_allocator)
-    for &b in r.view.bookmarks {
-        if target,resolved:=vcs.terms_resolved(&b.terms);resolved && target!={} {
-            append(&refs,vcs.Bookmark_Ref{name=b.name,target=target})
-            append(&targets,target)
-        }
-    }
-    known:=make([dynamic]vcs.Revision,context.temp_allocator)
-    if held,_,e:=vcs.device_refs_get(&m.store,project,m.identity.key,context.temp_allocator);e==.None {
-        for b in held.refs {append(&known,b.target)}
-    }
-    vcs.machine_publish_refs(m,project,refs[:]) or_return
-    previews_publish(m,r.s,org,project,targets[:],known[:],thumbnails)
-    return .None
 }
 
 // The identity of this machine: the seed kept in the root of the store, made
