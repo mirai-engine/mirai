@@ -1,6 +1,7 @@
 package importer
 
 import "base:runtime"
+import "core:crypto"
 import "core:fmt"
 import "core:math/linalg"
 import "core:mem"
@@ -8,7 +9,6 @@ import "core:os"
 import "core:path/filepath"
 import "core:slice"
 import "core:strings"
-import "core:time"
 import "mirai:asset"
 import "mirai:cook/textures"
 import "mirai:project"
@@ -491,7 +491,11 @@ writer_init :: proc(w:^Writer,path,folder:string,options:Import_Options,report:^
     w.created.allocator=context.temp_allocator
     w.names.allocator=context.temp_allocator
     w.followed.allocator=context.temp_allocator
-    w.rng=base.rng_make(u64(time.time_to_unix_nano(time.now())),u64(uintptr(w)))
+    // From the system: imports in one process can begin in the same tick with
+    // the writer at the same address, and their new ids must still differ.
+    seed:[2]u64
+    crypto.rand_bytes(mem.slice_to_bytes(seed[:]))
+    w.rng=base.rng_make(seed[0],seed[1])
     asset.types_init(&w.types)
     zone(options,"import.scan")
     return writer_source(w,path,folder) && writer_changed(w)
