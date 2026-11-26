@@ -667,18 +667,18 @@ editor_kai_is_optional_until_enabled :: proc(t:^testing.T) {
     // Without a store kai.init says where Kai keeps the changes.
     store_root:=s.store.root
     s.store.root=""
-    call,_=kai_call(s,api_kai_init,&none,Api_Kai_Init)
+    call,_=kai_call(s,api_kai_init,&Api_Kai_Init_Params{},Api_Kai_Init)
     testing.expectf(t,call.failed && strings.contains(call.error.message,"--store"),"%s",call.error.message)
     s.store.root=store_root
 
     // kai.init makes the workspace whose first change holds the files; once.
     init:^Api_Kai_Init
-    call,init=kai_call(s,api_kai_init,&none,Api_Kai_Init)
+    call,init=kai_call(s,api_kai_init,&Api_Kai_Init_Params{},Api_Kai_Init)
     if !kai_ok(t,call,"kai.init") {return}
     w:=kai_workspace(s)
     if !testing.expect(t,w!=nil && ka.project_exists(k.root) && init.change!="") {return}
     testing.expect(t,strings.contains(kai_paths(w,vcs.repo_working(&w.repo)),"notes.txt"),"the first change holds the files")
-    call,_=kai_call(s,api_kai_init,&none,Api_Kai_Init)
+    call,_=kai_call(s,api_kai_init,&Api_Kai_Init_Params{},Api_Kai_Init)
     testing.expectf(t,call.failed && strings.contains(call.error.message,"already"),"%s",call.error.message)
     kai_panel_still(t,s)
 
@@ -687,6 +687,29 @@ editor_kai_is_optional_until_enabled :: proc(t:^testing.T) {
     s.kai.tried=false
     kai_open(s)
     testing.expect(t,kai_workspace(s)!=nil && s.kai.error==.None,"the workspace opens with the project")
+    first:=vcs.repo_working(&kai_workspace(s).repo)
+
+    // With another store the workspace does not open; the tab offers a fresh
+    // history, which kai.init with reset starts in place.
+    kai_close(s)
+    mine:=s.store
+    other,oe:=store.open(base.test_folder(t,"kai-optional-other-store"))
+    if !testing.expect_value(t,oe,store.Error.None) {return}
+    s.store=other
+    defer {kai_close(s);store.close(&s.store);s.store=mine}
+    s.kai.tried=false
+    kai_open(s)
+    testing.expect_value(t,s.kai.error,vcs.Error.Other_Store)
+    call,_=kai_call(s,api_kai_init,&Api_Kai_Init_Params{},Api_Kai_Init)
+    testing.expect(t,call.failed,"without reset kai.init keeps the workspace")
+    kai_panel_still(t,s)
+    if !kai_panel_click(t,s,ui.id(&ctx,"kai_reset")) {return}
+    method,params=kai_panel_asked(s)
+    testing.expectf(t,method=="kai.init" && params==`{"reset":true}`,"%s %s",method,params)
+    call,init=kai_call(s,api_kai_init,&Api_Kai_Init_Params{reset=true},Api_Kai_Init)
+    if !kai_ok(t,call,"kai.init reset") {return}
+    w=kai_workspace(s)
+    testing.expect(t,w!=nil && s.kai.error==.None && vcs.repo_working(&w.repo)!=first,"a new history opens in place")
 }
 
 // kai.status, kai.snapshot, kai.describe, kai.undo, kai.restore,
