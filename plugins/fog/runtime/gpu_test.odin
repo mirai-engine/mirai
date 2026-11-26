@@ -213,6 +213,45 @@ a_fog_shows_its_glow_without_any_light :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// A frame whose volumes stop no light, dry boxes and media without density,
+// draws no fog; one with a medium or a fog of the world that stops some does.
+@(test)
+fog_draws_nothing_for_volumes_that_stop_no_light :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	gpu.scene_update(r, 0, {{object_id = 1, mesh = f.cube, transform = trs({0, 0, -30}, {200, 200, 1}), tint = {0.2, 0.2, 0.2}}}, true)
+	camera := gpu.Camera{position = {0, 0, 0}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.1, far = 200, exposure = gpu.UNIT_EXPOSURE}
+	box := mm.Transform{position = {0, 0, -6}, rotation = 1, scale = {4, 3, 5}}
+	water := Medium{box = box, density = 0.3, color = {0.1, 0.6, 0.7}, anisotropy = 0.6, carved = true, sun_only = true, shade = 0.3, glass = true}
+	Case :: struct {
+		name:  string,
+		media: []Medium,
+		fogs:  []Fog_Volume,
+		drawn: bool,
+	}
+	cases := []Case{
+		{"nothing", nil, nil, false},
+		{"a dry box", {{box = box, priority = 1, dry = true}}, nil, false},
+		{"a medium without density", {{box = box, density = 0, color = {1, 1, 1}, sun_only = true, shade = 0.2}}, nil, false},
+		{"a dry box over a medium without density", {{box = box, color = {1, 1, 1}, carved = true}, {box = box, priority = 1, dry = true}}, nil, false},
+		{"a dry box and water", {water, {box = box, priority = 1, dry = true}}, nil, true},
+		{"a fog of the world by a dry box", {{box = box, priority = 1, dry = true}}, {{density = 0.05, color = {1, 1, 1}}}, true},
+	}
+	for c in cases {
+		f.state.count, f.state.dry, f.state.shade, f.state.outlines.count = 0, false, false, {}
+		for fog in c.fogs {volume_gpu(&f.state, fog, volume.box({0.5, 0.5, 0.5}), box, nil)}
+		for medium in c.media {testing.expectf(t, medium_gpu(&f.state, medium), "%s: the medium goes into the frame", c.name)}
+		before := r.pass_count
+		fog_submit(&f.state, &f.app)
+		testing.expectf(t, (r.pass_count > before) == c.drawn, "%s: the fog drawn is %v, not %v", c.name, r.pass_count > before, c.drawn)
+		testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
+	}
+	expect_clean(t, f.device)
+}
+
 // Looking down at a dark ground through a fog in an L outline: the L is fogged, its notch, inside the
 // box of the outline, is as clear as the ground without the fog.
 @(test)

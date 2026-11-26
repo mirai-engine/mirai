@@ -132,6 +132,7 @@ Water_Look :: struct {
     entity:core.Entity,
     row:u32,
     ior:f32,
+    opaque:bool, // its surface hides what is under it (surface_opaque)
 }
 
 // The row of the material of a volume and the index of refraction of its surface.
@@ -143,12 +144,20 @@ look_of :: proc(state:^Water_Gpu,assets:^host.Assets,e:core.Entity,look:Water,pr
         made.row=host.assets_material_row(assets,look.material)
         made.ior=max(host.assets_material_values(assets,made.row).ior,1)
     } else {made.row,_=default_material(assets,look,program)}
+    made.opaque=made.row!=0 && surface_opaque(host.assets_material_values(assets,made.row))
     // A material not loaded yet is asked for again.
     if made.row!=0 && state.look_count<CAPACITY {
         state.looks[state.look_count]=made
         state.look_count+=1
     }
     return made
+}
+
+// Whether a surface of a material hides all that is behind it: no glass, no
+// blending and no holes.
+@(private)
+surface_opaque :: proc "contextless" (m:render.Material_Desc) -> bool {
+    return m.alpha_mode==.Opaque && !(m.transmission>0)
 }
 
 // The row of the material of a surface without one of its own: a solid of
@@ -287,6 +296,8 @@ water_render :: proc(
     lens:=false
     materials:[CAPACITY]u32
     kept:[CAPACITY]phys.Fluid_Info
+    pending:[CAPACITY]Body_Medium
+    pending_count:=0
     for info,i in found[:count] {
         desc:=info.desc
         look,custom:=core.get(waters,info.entity)
@@ -321,14 +332,13 @@ water_render :: proc(
                 }
             }
         }
-        if !dry {
-            // The solid of the glass absorbs what the view crosses along its bent way and scatters the light
-            // around; the fog scatters the light of the sun in the water, with its shafts, and takes what the
-            // water takes of it on its way down.
-            fog.medium_add(media,{box=box,density=extinction(look),color=look.scatter_color,anisotropy=MEDIUM_ANISOTROPY,priority=desc.priority,carved=true,sun_only=true,shade=extinction(look),glass=true})
-        } else {
-            fog.medium_add(media,{box=box,priority=desc.priority,dry=true})
-        }
+        // The solid of the glass absorbs what the view crosses along its bent way and scatters the light
+        // around; the fog scatters the light of the sun in the water, with its shafts, and takes what the
+        // water takes of it on its way down.
+        medium:=fog.Medium{box=box,priority=desc.priority,dry=true}
+        if !dry {medium={box=box,density=extinction(look),color=look.scatter_color,anisotropy=MEDIUM_ANISOTROPY,priority=desc.priority,carved=true,sun_only=true,shade=extinction(look),glass=true}}
+        pending[pending_count]={medium=medium,body=-1}
+        pending_count+=1
         to_world:=mm.transform_matrix(box)
         if abs(linalg.determinant(to_world))<1e-12 {continue}
         body.to_box=mm.mat4_rows(linalg.inverse(to_world))
@@ -336,8 +346,7 @@ water_render :: proc(
         body.look={max(look.caustics,0),diffuse_share(look),made.ior,f32(desc.waves.count)}
         taken:=absorption(look)
         body.absorption={taken.r,taken.g,taken.b,0}
-        state.wet||=!dry
-        if !state.caustic && !dry && look.caustics>0 {state.caustic,state.ior=true,made.ior}
+        pending[pending_count-1].body,pending[pending_count-1].opaque,pending[pending_count-1].caustics=state.count,made.opaque,!dry && look.caustics>0
         lens||=!dry && abs(view.position.y-top)<=LENS_WIDTH+reach+lens_reach(view)
         materials[state.count]=made.row
         kept[state.count]=info
@@ -345,6 +354,7 @@ water_render :: proc(
         state.bodies[state.count]=body
         state.count+=1
     }
+    water_media(state,media,pending[:pending_count],view)
     for info,i in kept[:state.count] {
         desc:=info.desc
         if desc.shape==.Plane {
@@ -378,6 +388,40 @@ water_render :: proc(
     if state.wet && state.pipelines[0]!=0 && state.pipelines[1]!=0 {render.frame_pass(app.renderer,.Lit,under_record,state)}
     // Over the glass: the line of a surface the near plane may cross.
     if state.pipelines[2]!=0 && lens {render.frame_pass(app.renderer,.Blend,over_record,state)}
+}
+
+// The medium a fluid or a dry box of the frame gives the fog, in the order of the fluids, and what
+// water_media decides by.
+@(private)
+Body_Medium :: struct {
+    medium:fog.Medium,
+    body:int,      // the body it is drawn as among those of the frame; -1: none
+    opaque:bool,   // its surface hides what is under it
+    caustics:bool, // its water has caustics
+}
+
+// The media of the bodies of the frame into the fog, and the water under_record lights: neither of a water
+// nothing under whose surface shows (water_hidden), and no medium of one that stops no light.
+@(private)
+water_media :: proc(state:^Water_Gpu,media:^fog.Fog_Media,bodies:[]Body_Medium,view:core.View) {
+    for b in bodies {
+        if !b.medium.dry && b.body>=0 && b.opaque && water_hidden(state,b.body,view) {continue}
+        if b.medium.dry || b.medium.density>0 {fog.medium_add(media,b.medium)}
+        if b.medium.dry || b.body<0 {continue}
+        state.wet=true
+        if !state.caustic && b.caustics {state.caustic,state.ior=true,state.bodies[b.body].look.z}
+    }
+}
+
+// Whether nothing under the opaque surface of water `body` of the frame shows in a view: a plane whose waves
+// and lens the eye is over, which no dry box of the frame opens. Of a lake the eye may see under its surface
+// through the sides of its basin.
+@(private)
+water_hidden :: proc "contextless" (state:^Water_Gpu,body:int,view:core.View) -> bool {
+    b:=state.bodies[body]
+    if !(b.surface.y>0.5) || !(view.position.y-b.surface.x>LENS_WIDTH+phys.waves_reach(state.waves[body])+lens_reach(view)) {return false}
+    for dry in 0..<state.count {if dry_crosses(state,dry,body) {return false}}
+    return true
 }
 
 // How far from the eye of a view its near plane reaches within the image: where a surface can cross the lens.
