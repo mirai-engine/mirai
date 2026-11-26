@@ -78,6 +78,11 @@ AIR_TRANSMITTANCE_TEXTURE :: 1
 AIR_SCATTERING_TEXTURE    :: 2
 AIR_SKY_TEXTURE           :: 3
 
+// The color of the ground (render/ground.odin): the samples a chunk holds along a side, a texel
+// each, and the chunks along a side of the table that names the texture of each.
+GROUND_TEXELS :: 256
+GROUND_TABLE  :: 32
+
 // The constants of a frame (Gpu_Frame).
 VIEW_CAPACITY        :: 4
 NESTED_VIEW_CAPACITY :: 4

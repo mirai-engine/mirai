@@ -321,6 +321,28 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
 }
 ```
 
+### Ground color
+
+- **Read (`mirai_ground_color(ctx, world_position, fallback)`, `scene.slang`):** one sample of the
+  base color of the terrain under a place, for what stands on it (grass, a path). `rgb` and
+  coverage in `a`; `fallback` where no chunk keeps a color (no terrain, a hole, not baked yet).
+- **Chunks (`ground.odin`, `engine/render.ground_chunk_set` / `ground_chunk_remove`):** a chunk is
+  the instance that draws it, its square of the world (`low`, `size`) and a `revision`; all on one
+  regular grid. `Settings.ground_chunks` slots (`GROUND_CHUNK_BYTES` each, made with the first
+  chunk), `GROUND_TEXELS` samples a side whose texel centers are the samples, so neighbors hold the
+  same along a shared edge and a read never leaves its chunk. A table texture of `GROUND_TABLE`
+  chunks a side names the texture of each baked chunk (`Gpu_Frame.ground`, `ground_table`).
+- **Bake (`ground_bake`, `ground_bake.comp`):** one stale chunk a frame, with the first view: a
+  ray per sample straight up from under the instance, its point evaluated by the points stage at
+  the footprint of a sample, base color kept premultiplied by coverage in sRGB with
+  `GROUND_MIPS` levels. A chunk waits while a points pipeline is made
+  (`ground_programs_ready`): points read as material rows then, which a bake would keep. Every
+  chunk is baked again when the stages of programs change (`program_stages_publish`).
+- **Focal tests:** `ground_chunks_take_a_slot_by_their_cell_of_one_grid`,
+  `the_table_of_the_ground_names_the_baked_chunks_from_the_lowest_cell` (`--no-gpu`);
+  `the_color_of_the_ground_is_baked_on_its_samples_and_read_with_a_fallback`,
+  `the_color_of_the_ground_waits_for_the_pipelines_of_its_programs` (GPU).
+
 ### Vertex functions
 
 - Declared via `//! vertex [reach <metres>|reach <parameter>]` and

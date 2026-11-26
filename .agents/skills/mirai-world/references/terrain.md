@@ -71,6 +71,14 @@ on top (`layers_vertex`).
 - **Heightfield `Surface_Maps` (`surface.odin`):** per-piece `control`, `normal`, optional `paint`
   (Tint/Roughness, `paint.odin`), and `mask` (holes), sampled via `uv0`. Volumes pack top-4 piece
   weights in `uv0`/`uv1`.
+- **Ground color (`ground_color.odin`, `terrain_ground_color`):** each Heightfield chunk shown
+  (depth 0, terrain unrotated) is registered with the renderer
+  ([ground color](../../mirai-rendering/references/materials.md#ground-color)) with its instance,
+  its square of the world and a revision of its build, materials and values; given again when the
+  chunk rows, the values, the place of a terrain or the instances change, or the view moves on by
+  `GROUND_VIEW_STEP`. The renderer has fewer slots than a terrain has chunks: the nearest to the
+  view take those of the farthest. Nodes of the quadtree and Volumes keep none
+  (`the_nearest_heightfield_chunks_keep_the_color_of_their_ground`).
 - **`Terrain_Layers` shader (`terrain_surface.slang`, `terrain_blend.slang`):** reads a generated
   `layers_table` texture, blends top 2-3 layers (`terrain_heaviest`, `terrain_height_blend` via
   base-color alpha), applies biplanar projection (flat ground reads top only; whiteout normals;

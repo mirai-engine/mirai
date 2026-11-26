@@ -220,6 +220,7 @@ program_stages_publish :: proc(r: ^Renderer, next: []rhi.Shader_Code, moved: []u
 		if slot, _ := program_graphics_entry(r, entry.target, entry.program); slot != nil {slot^ = entry}
 	}
 	program_computes_publish(r, &r.points.stages, next, moved)
+	ground_stale(r)
 	program_computes_publish(r, &r.vertex_stages, next, moved)
 	for &entry in r.stage_pipelines {
 		if !entry.asked || entry.program == 0 {continue}

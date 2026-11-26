@@ -564,6 +564,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     prepared_ok:=(r.main.targets.ldr!=0 || create_targets(r,&r.main,r.window_width,r.window_height,window_render_scale(r,f32(r.window_height)),true)) &&
                  prepare_views(r,frame.views,alone) && (r.view_count>0 || (alone || frame.ui_only || scene_targets(r,&r.main)) && ensure_glass_targets(r,&r.main.targets)) &&
                  (frame.ui_only || air_tables_ensure(r) && points_prepare(r))
+    if prepared_ok {ground_prepare(r)}
     if prepared_ok && r.view_count>0 {main_scene_release(r)}
     // A window whose pipeline generates frames shows them through the presenter of the device.
     if prepared_ok && !frame.offscreen {
@@ -613,7 +614,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     base.profile_end(zone)
     zone=render_zone_begin(r,"uploads")
     texture_uploads_record(r,cmd)
-    recorded_ok:=renderer_commit_geometry(r,cmd,slot) && font_record(r,cmd,slot)
+    recorded_ok:=renderer_commit_geometry(r,cmd,slot) && font_record(r,cmd,slot) && ground_table_record(r,cmd)
     base.profile_end(zone)
     zone=render_zone_begin(r,"scene tables")
     recorded_ok=recorded_ok && upload_scene(r,cmd) && viewmodels_place(r,cmd,frame)
@@ -947,6 +948,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 		f.detail_footprint = {pixel * chosen[3, 3], -pixel * chosen[3, 2], 0, 0}
 	}
 	f.origin = origin_cells(r.origin)
+	f.ground, f.ground_table = ground_frame(r)
 	f.scene_box = {{low.x, low.y, low.z, 0}, {high.x, high.y, high.z, 0}}
 	if !p.view.has_previous {p.view.prev_view_proj, p.view.prev_depth_plane, p.view.prev_eye = unjittered, f.depth_plane, camera.position}
 	f.prev_view_proj, f.prev_depth_plane = p.view.prev_view_proj, p.view.prev_depth_plane
@@ -1652,6 +1654,7 @@ pass_world_lighting :: proc(p: ^Pass) -> bool {
 	g := &r.ddgi
 	changes := &r.scene.changes
 	update_gi := p.first && (!p.offscreen || p.settle_gi)
+	if p.first {ground_bake(p)}
 	if update_gi && p.use_gi {
 		if changes.count > 0 && !changes.all && !upload_transient(r, cmd, changes.spheres[:changes.count], r.light_changes) {return false}
 		if r.gi_warm {r.gi_warm_spread = max(r.gi_warm_spread, ddgi_warm_frames(g, GI_WARM_UPDATES))}

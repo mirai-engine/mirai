@@ -81,7 +81,7 @@ struct Frame_Data {
     uint own;               // bits 0-7: 1 + the local slot whose body (INSTANCE_FLAG_OWNED) is the view's own, 0: none; bits 16-31: how much of it the view fades out, unorm
     uint flags;             // FRAME_FLAG_*
     uint shadowless_lights;  // the root of the tree of the local lights that cast no shadows (render/light_tree.odin), which ends at light_nodes; 0: none
-    uint3 pad0;
+    float3 ground;          // xy where the first chunk of the table of the color of the ground starts along x and z, relative to the origin; z chunks a metre (mirai_ground_color)
     float4 jitter;            // xy current TAA jitter in render pixels, zw previous
     float4 texturing;         // x = mip bias of rasterized material textures
     float4 time; // current, previous simulation time in seconds
@@ -101,7 +101,7 @@ struct Frame_Data {
     float4 clip_plane;       // world plane nothing is drawn behind; zero for none
     float2 footprint;        // x width of a pixel at depth 0, y what it grows by per unit of depth
     uint layers;             // the instances the view draws: those whose layers share a bit with these
-    uint pad1;
+    uint ground_table;       // that table in the texture table, GROUND_TABLE chunks a side, each the texture of its chunk in two bytes; 0: none
     float4 sky_map;          // x = the image of the sky in the texture table, y = 1 for an atmosphere lit by the sun, z = its last level, w = 1 with an image
     float4 sky_orientation;  // the turn of the sky, a quaternion (xyz, w): a direction of the world is one of the sky by its inverse
     float4 sky_from;         // a change of the sky on its way: rgb the luminance it changes from (render units), a how much of it still shows

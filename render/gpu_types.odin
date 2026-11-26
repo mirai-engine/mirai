@@ -38,7 +38,7 @@ Gpu_Frame :: struct {
 	own:             u32,  // bits 0-7: 1 + the local slot whose body (INSTANCE_FLAG_OWNED) is the view's own, 0: none; bits 16-31: how much of it the view fades out, unorm
 	flags:           u32,
 	shadowless_lights: u32, // the root of the tree of the local lights that cast no shadows, which ends at light_nodes; 0: none (light_tree_shadowless)
-	pad0:            [3]u32,
+	ground:          [3]f32, // xy where the first chunk of the table of the color of the ground starts along x and z, relative to the origin; z chunks a metre (ground.odin)
 	jitter:          Vec4, // xy current jitter (render pixels), zw previous
 	texturing:       Vec4, // x mip bias of rasterized material textures
 	time: Vec4, // current seconds, previous seconds, frame dt, reserved
@@ -53,7 +53,7 @@ Gpu_Frame :: struct {
 	clip_plane:       Vec4, // world plane nothing is drawn behind; zero: none
 	footprint:        Vec2, // width of a pixel at depth 0, and what it grows by per unit of depth
 	layers:           u32,  // bits 0-15: the layers the view draws; bits 16-31: those of its own body it does not draw
-	pad1:             u32,
+	ground_table:     u32,  // the table of the color of the ground in the texture table; 0: none
 	sky_map:          Vec4, // x = the image of the sky in the texture table, y = 1 for an atmosphere lit by the sun, z = its last level, w = 1 with an image
 	sky_orientation:  Vec4, // the turn of the sky, a quaternion (xyz, w)
 	sky_from:         Vec4, // rgb the luminance a change of the sky comes from (render units), a how much of it still shows
