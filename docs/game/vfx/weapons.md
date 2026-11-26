@@ -39,6 +39,12 @@ constant for the whole effect. A Mesh particle blends as the `alpha_mode` of its
 `Additive` adds its light without darkening anything (glowing arcs, flashes). The `blend` of the
 effect is for sprites, ribbons and beams only.
 
+A Vfx program places each mesh on its own: in `render`, `visual.orientation` (a quaternion of the
+world) takes the place of `facing` and `visual.scale` stretches that particle over the `scale` of
+the effect. The Surface program of a blended material fades or erodes an arc with
+`ctx.particle_life` (0 to 1) and `ctx.particle_color`, masks it with the `ctx.vertex_color` of its
+mesh and rims it with `ctx.view_direction`. A program with `//! births` needs `max_particles`.
+
 ## Muzzle flash light
 
 `light` gives a layer one point light at its emitter, moved by `light.offset` (metres, in the
