@@ -110,17 +110,22 @@ program_computes_destroy :: proc(r: ^Renderer, table: ^Program_Computes) {
 }
 
 // With the GPU idle, before the renderer takes the stages of programs of
-// another generation, next: the pipelines whose code is the same stay.
+// another generation, next: the pipelines whose code is the same stay, under
+// the id their program has there (moved, program_stages_publish).
 @(private)
-program_computes_publish :: proc(r: ^Renderer, table: ^Program_Computes, next: []rhi.Shader_Code) {
-	for &pipeline, id in table.pipelines {
-		if code := program_code_same(next, table.codes[id]); code != nil && pipeline != 0 {
-			table.codes[id] = code
+program_computes_publish :: proc(r: ^Renderer, table: ^Program_Computes, next: []rhi.Shader_Code, moved: []u32) {
+	kept, error := new(Program_Computes, context.temp_allocator)
+	if error != nil {program_computes_destroy(r, table); return}
+	for pipeline, id in table.pipelines {
+		if pipeline == 0 {continue}
+		to := program_id_moved(moved, u32(id))
+		if code := program_code_same(next, table.codes[id]); code != nil && to != 0 && int(to) < len(kept.pipelines) {
+			kept.pipelines[to], kept.codes[to], kept.asked[to] = pipeline, code, true
 			continue
 		}
-		if pipeline != 0 {rhi.pipeline_destroy(r.device, pipeline)}
-		pipeline, table.asked[id], table.codes[id] = 0, false, nil
+		rhi.pipeline_destroy(r.device, pipeline)
 	}
+	table^ = kept^
 }
 
 // The stage <stem>__<program>.comp of a Surface program; 0 until it is made

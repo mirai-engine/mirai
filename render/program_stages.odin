@@ -200,31 +200,59 @@ program_graphics_destroy :: proc(r: ^Renderer) {
 // stages changed go, and those whose stages are the same stay, with the code
 // of next. Those asked for and not made are asked for again. A program edited
 // in the editor makes again only the pipelines of its own stages.
+// The ids of programs are their places in the catalog, so a program added or
+// removed moves those after it: moved gives each id of the catalog in use the
+// one its program has in next (program_ids_moved), and a pipeline kept goes
+// under it.
 @(private)
-program_stages_publish :: proc(r: ^Renderer, next: []rhi.Shader_Code) {
+program_stages_publish :: proc(r: ^Renderer, next: []rhi.Shader_Code, moved: []u32) {
 	same :: program_code_same
 	kept := make([dynamic]Program_Graphics, context.temp_allocator)
 	for entry in r.program_graphics {
 		if entry.target == nil {continue}
-		if code := same(next, entry.code); code != nil && entry.pipeline != 0 {
-			append(&kept, Program_Graphics{entry.target, entry.program, entry.pipeline, code})
+		to := program_id_moved(moved, entry.program)
+		if code := same(next, entry.code); code != nil && entry.pipeline != 0 && to != 0 {
+			append(&kept, Program_Graphics{entry.target, to, entry.pipeline, code})
 		} else if entry.pipeline != 0 {rhi.pipeline_destroy(r.device, entry.pipeline)}
 	}
 	r.program_graphics = {}
 	for entry in kept {
 		if slot, _ := program_graphics_entry(r, entry.target, entry.program); slot != nil {slot^ = entry}
 	}
-	program_computes_publish(r, &r.points.stages, next)
-	program_computes_publish(r, &r.vertex_stages, next)
+	program_computes_publish(r, &r.points.stages, next, moved)
+	program_computes_publish(r, &r.vertex_stages, next, moved)
 	for &entry in r.stage_pipelines {
 		if !entry.asked || entry.program == 0 {continue}
-		if code := same(next, entry.code); code != nil && entry.pipeline != 0 {
+		// Its key holds the id of its program: it stays only under the same id.
+		if code := same(next, entry.code); code != nil && entry.pipeline != 0 && program_id_moved(moved, entry.program) == entry.program {
 			entry.code = code
 			continue
 		}
 		if entry.pipeline != 0 {rhi.pipeline_destroy(r.device, entry.pipeline)}
 		entry = {}
 	}
+}
+
+// For each id of current, the id its program has in next, by name and
+// domain; 0 for a program next does not have. Without memory, none: every
+// pipeline of a program goes.
+@(private)
+program_ids_moved :: proc(current, next: []Program, allocator := context.allocator) -> []u32 {
+	last: u32
+	for program in current {last = max(last, program.id)}
+	moved, error := make([]u32, last + 1, allocator)
+	if error != nil {return nil}
+	for program in current {
+		for other in next {
+			if other.name == program.name && other.domain == program.domain {moved[program.id] = other.id; break}
+		}
+	}
+	return moved
+}
+
+@(private)
+program_id_moved :: proc "contextless" (moved: []u32, id: u32) -> u32 {
+	return moved[id] if int(id) < len(moved) else 0
 }
 
 // The code of next with the name of code, when it is the same code; nil otherwise.

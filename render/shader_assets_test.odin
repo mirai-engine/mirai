@@ -161,3 +161,26 @@ shader_generation_with_a_broken_manifest_is_not_loaded :: proc(t:^testing.T) {
         base.remove_all(folder)
     }
 }
+
+// The id of a program is its place in the catalog: a program added before it
+// moves it, and a stage made for it goes under the id it has in the next
+// catalog, never staying under one another program has now.
+@(test)
+a_program_keeps_its_stages_under_the_id_it_has_in_the_next_catalog :: proc(t:^testing.T) {
+    current:=[]Program{{id=1,name="Dirt",domain=.Surface},{id=2,name="Grass",domain=.Surface}}
+    next:=[]Program{{id=1,name="Added",domain=.Surface},{id=2,name="Dirt",domain=.Surface},{id=3,name="Grass",domain=.Surface}}
+    moved:=program_ids_moved(current,next,context.temp_allocator)
+    testing.expect_value(t,program_id_moved(moved,1),2)
+    testing.expect_value(t,program_id_moved(moved,2),3)
+    testing.expect_value(t,program_id_moved(moved,9),0)
+    old:=rhi.Shader_Code{name="surface_points__Grass.comp",stage=.Compute}
+    codes:=[]rhi.Shader_Code{{name="surface_points__Grass.comp",stage=.Compute}}
+    r:=new(Renderer)
+    defer free(r)
+    table:=&r.points.stages
+    table.pipelines[2],table.codes[2],table.asked[2]=rhi.Pipeline(7),&old,true
+    program_computes_publish(r,table,codes,moved)
+    testing.expect_value(t,table.pipelines[3],rhi.Pipeline(7))
+    testing.expect(t,table.codes[3]==&codes[0] && table.asked[3],"the stage of Grass is under its new id with the code of the next generation")
+    testing.expect(t,table.pipelines[2]==0 && table.codes[2]==nil && !table.asked[2],"the id Dirt has now keeps nothing of Grass")
+}

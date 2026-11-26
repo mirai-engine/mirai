@@ -333,7 +333,7 @@ renderer_reload_shaders :: proc(r:^Renderer,assets:^Shader_Assets)->bool {
     if !valid {set_error(r,"invalid material program catalog");return false}
     defer program_catalog_destroy(&catalog)
     if shader_assets_match_codes(assets,&r.shader_codes) {
-        renderer_publish_shader_metadata(r,assets)
+        renderer_publish_shader_metadata(r,assets,catalog.programs)
         r.programs=catalog;r.programs.loaded=true;catalog={}
         displaced_programs_changed(r)
         return true
@@ -348,16 +348,18 @@ renderer_reload_shaders :: proc(r:^Renderer,assets:^Shader_Assets)->bool {
     return true
 }
 
-renderer_publish_shader_metadata :: proc(r:^Renderer,assets:^Shader_Assets) {
+// next: the programs of the catalog of assets, which the renderer takes
+// after; a program keeps its pipelines under the id it has there.
+renderer_publish_shader_metadata :: proc(r:^Renderer,assets:^Shader_Assets,next:[]Program) {
     // The stages of an extension or of a program changed alone: their pipelines are made again, those of the engine stay.
+    // Those kept, and the jobs of the pipeline thread, point into the codes of
+    // the generation in use, which goes: they go to those of the next one
+    // first, even when its stages are the same.
     extensions:=shader_stages_match(assets.extensions,r.shader_assets.extensions)
-    programs:=shader_stages_match(assets.programs,r.shader_assets.programs)
-    if !extensions || !programs {
-        rhi.device_wait_idle(r.device)
-        pipelines_drop(r)
-        if !extensions {stage_pipelines_destroy(r)}
-        program_stages_publish(r,assets.programs)
-    }
+    rhi.device_wait_idle(r.device)
+    pipelines_drop(r)
+    if !extensions {stage_pipelines_destroy(r)}
+    program_stages_publish(r,assets.programs,program_ids_moved(renderer_programs(r),next,context.temp_allocator))
     shader_assets_destroy(&r.shader_assets)
     r.shader_assets=assets^;assets^={}
     r.shader_codes=r.shader_assets.codes

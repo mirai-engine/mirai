@@ -65,7 +65,30 @@ render_draws_the_same_image_with_a_generation_loaded_from_disk :: proc(t:^testin
     if metadata_error!="" {return}
     changed,_:=strings.replace(string(metadata.catalog),"\"defaults\": [1, 0, 0, 0]","\"defaults\": [0.25, 0, 0, 0]",1,metadata.allocator)
     delete(metadata.catalog,metadata.allocator);metadata.catalog=transmute([]u8)changed
+    // A stage of a program asked for and not made yet keeps its code: a
+    // generation with the same stages takes its place, and the code is
+    // that of the new one or none, never the one it frees.
+    probe :: proc(assets:^Shader_Assets) {
+        code:=rhi.Shader_Code{name=strings.clone("surface_points__Probe.comp",assets.allocator),stage=.Compute}
+        rhi.shader_code_set(&code,make([]u8,4,assets.allocator),"")
+        delete(assets.programs,assets.allocator)
+        programs:=make([]rhi.Shader_Code,1,assets.allocator)
+        programs[0]=code
+        assets.programs=programs
+    }
+    probe(&r.shader_assets)
+    probe(&metadata)
+    r.vertex_stages.asked[1],r.vertex_stages.codes[1]=true,&r.shader_assets.programs[0]
+    r.points.stages.asked[1],r.points.stages.codes[1]=true,&r.shader_assets.programs[0]
     testing.expect(t,renderer_reload_shaders(r,&metadata),r.error)
+    live :: proc(r:^Renderer,code:^rhi.Shader_Code) -> bool {
+        if code==nil {return true}
+        for &each in r.shader_assets.programs {if code==&each {return true}}
+        return false
+    }
+    for code in r.vertex_stages.codes {testing.expect(t,live(r,code),"the vertex stages keep no code of the generation that went")}
+    for code in r.points.stages.codes {testing.expect(t,live(r,code),"the point stages keep no code of the generation that went")}
+    for entry in r.program_graphics {testing.expect(t,live(r,entry.code),"the pipelines of programs keep no code of the generation that went")}
     testing.expect_value(t,r.pipelines,pipelines)
     testing.expect_value(t,r.targets,targets)
     testing.expect_value(t,r.ddgi,probes)

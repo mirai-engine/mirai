@@ -285,7 +285,7 @@ app_shaders_poll :: proc(app:^App) {
             sh.state=.Failed
             log.errorf("shaders: the generation of %s was not taken: %s",load.folder,r.error)
         case:
-            if load.candidate==nil {render.renderer_publish_shader_metadata(r,&load.assets)}
+            if load.candidate==nil {render.renderer_publish_shader_metadata(r,&load.assets,load.catalog.programs)}
             r.programs=load.catalog
             r.programs.loaded=true
             load.catalog={}
