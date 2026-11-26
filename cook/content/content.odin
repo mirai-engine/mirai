@@ -101,16 +101,30 @@ check :: proc(w:^Writer,path:string,error:asset.Error,loc:=#caller_location) -> 
 
 // Imports a source of the project (a WAV, a glTF, an image the tool wrote or
 // art beside it, relative to the root of the project) as mirai import does,
-// with the store of the machine, keeping its settings and ids in the package
-// of the source. Its assets count as check counts them. The report is freed
-// by importer.report_destroy; on failure it is empty, said with the line of
-// the caller.
+// with the store of the machine: its package keeps its settings and ids and is
+// pinned in packages.mirai under the folder of the source, and the registry
+// lists its assets. Its assets count as check counts them. The report is
+// freed by importer.report_destroy; on failure it is empty, said with the line
+// of the caller.
 import_source :: proc(w:^Writer,path:string,loc:=#caller_location) -> (report:importer.Import_Report,ok:bool) {
     if !w.stored {return {},fail(w,loc,fmt.tprintf("%s: this machine has no store for what an import builds",path))}
+    imports:=sources.Library_Imports{world=w.info}
+    added:sources.Library_Report
     error:importer.Error
-    if report,error=sources.import_source(path,{store=&w.store,root=w.root});error.code!=.None {return {},fail(w,loc,fmt.tprintf("%s: %s",path,error.message))}
+    report,added,error=sources.project_ingest(w.root,path,nil,{store=&w.store,root=w.root,fast_textures=true,imports=&imports})
+    defer sources.library_report_destroy(&added)
+    if error.code!=.None {return {},fail(w,loc,fmt.tprintf("%s: %s",path,error.message))}
+    for failure in added.failures {fail(w,loc,fmt.tprintf("%s: %s",path,failure))}
     for &a in report.assets {
         if a.path!="" {check(w,a.path,.None,loc)}
+    }
+    packages,error_listed:=asset.root_packages(w.root,w.store.root,context.temp_allocator)
+    listed:=error_listed==.None && asset.registry_listed_set(&w.registry,"",packages.listed)
+    if !listed {fail(w,loc,fmt.tprintf("%s: no memory to list the packages of the project",path))}
+    asset.registry_scan(&w.registry)
+    if len(added.failures)>0 || !listed {
+        importer.report_destroy(&report)
+        return {},false
     }
     return report,true
 }

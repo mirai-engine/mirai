@@ -5,10 +5,12 @@ import "core:os"
 import "core:testing"
 import "core:time"
 import "mirai:asset"
+import importer "mirai:cook/import"
 import "mirai:cook/records"
 import "mirai:core"
 import "mirai:std/base"
 import "mirai:std/geom"
+import "mirai:store"
 
 // A writer with the types alone, as a test makes one: no project.
 @(private="file")
@@ -101,4 +103,53 @@ what_the_writer_writes_is_what_the_repack_of_the_cook_writes :: proc(t:^testing.
 @(test)
 a_transform_is_written_as_the_keys_of_its_entity :: proc(t:^testing.T) {
     testing.expect_value(t,transform(core.Transform{position={1,2.5,-3},rotation=quaternion(w=0.5,x=0.5,y=-0.5,z=0.5),scale={1,1,2}}),`"position":[1,2.5,-3],"rotation":[0.5,-0.5,0.5,0.5],"scale":[1,1,2]`)
+}
+
+// Images of one name in two folders, imported by a tool in one run: each is
+// pinned in packages.mirai under its folder, as mirai import pins it, and the
+// registry of the tool lists both built textures.
+@(test)
+a_tool_imports_images_of_one_name_in_two_folders_as_two_pins :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"content-import")
+    if root=="" {return}
+    w:Writer
+    writer_test(&w,"content_test")
+    defer asset.types_destroy(&w.types)
+    w.root,w.assets_root=root,fmt.tprintf("%s/assets",root)
+    os.make_directory_all(w.assets_root)
+    asset.registry_init(&w.registry,w.assets_root)
+    defer asset.registry_destroy(&w.registry)
+    opened,store_error:=store.open(fmt.tprintf("%s/store",root))
+    if !testing.expect_value(t,store_error,store.Error.None) {return}
+    w.store,w.stored=opened,true
+    defer store.close(&w.store)
+    data,_:=os.read_entire_file(#directory+"/../../demo/assets/surfaces/bricks/bricks_color.png",context.temp_allocator)
+    if !testing.expect(t,len(data)>0) {return}
+    for folder in ([]string{"fx_a","fx_b"}) {
+        path:=fmt.tprintf("%s/%s/spark.png",w.assets_root,folder)
+        testing.expect(t,source_write(&w,path,data))
+        report,imported:=import_source(&w,path)
+        if !testing.expectf(t,imported,"%s imports",path) {return}
+        importer.report_destroy(&report)
+    }
+    testing.expect(t,!w.failed)
+    list,_,list_error:=asset.packages_load(root,context.temp_allocator)
+    if !testing.expectf(t,list_error==.None && len(list.packages)==2,"two pins: %v %v",list_error,list.packages) {return}
+    testing.expect(t,list.packages[0].id!=list.packages[1].id && list.packages[0].folder=="fx_a" && list.packages[1].folder=="fx_b")
+    for p in list.packages {
+        text:[base.ASSET_ID_TEXT]u8
+        manifest:=fmt.tprintf("%s/packages/%s.mirai",root,base.asset_id_format(p.id,text[:]))
+        testing.expectf(t,os.exists(manifest),"%s is written",manifest)
+    }
+    resolved,resolve_error:=asset.packages_resolve(&w.store,root,&list,context.temp_allocator)
+    if !testing.expect_value(t,resolve_error,asset.Error.None) {return}
+    built:=0
+    for listed in resolved.listed {
+        if (listed.path=="fx_a/spark.tex" || listed.path=="fx_b/spark.tex") && listed.state==.Built {built+=1}
+    }
+    testing.expectf(t,built==2,"both are built: %v",resolved.listed)
+    for path in ([]string{"fx_a/spark.tex","fx_b/spark.tex"}) {
+        _,listed:=asset.registry_find_path(&w.registry,path)
+        testing.expectf(t,listed,"the registry of the tool lists %s",path)
+    }
 }
