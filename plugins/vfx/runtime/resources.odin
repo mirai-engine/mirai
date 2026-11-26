@@ -57,7 +57,7 @@ bindings_sync :: proc(sync:^Particle_Sync,bindings:^core.Table(Particle_Binding,
     }
 }
 
-Resource_Kind :: enum u32 {None,Surface,Channel,Grid,Bones}
+Resource_Kind :: enum u32 {None,Surface,Channel,Grid,Bones,Transform}
 
 // A resource of an emitter in a frame.
 Resource_Desc :: struct {
@@ -77,7 +77,7 @@ Resource_Need :: struct {
 
 // shaders/particles.slang: Particle_Resource.
 Gpu_Resource :: struct {
-    head:[4]u32, // kind; a surface: mesh, first triangle in the surfaces, triangles; a channel: 0, first birth, births; a grid: bytes to its row; bones: bytes to the first, 0, bones
+    head:[4]u32, // kind; a surface: mesh, first triangle in the surfaces, triangles; a channel: 0, first birth, births; a grid: bytes to its row; bones: bytes to the first, 0, bones; transform: 0
     world,previous:[3][4]f32,
 }
 #assert(size_of(Gpu_Resource)==112)
@@ -89,7 +89,7 @@ Gpu_Resource :: struct {
 emitter_resources :: proc(
     sync:^Particle_Sync,shown:^Emitter_Shown,bindings:^Particle_Bindings,
     sources:^core.Table(Particle_Binding,.Read),bones:^Particle_Bones,
-    e:core.Entity,extras:[]erender.Instance_Desc,drawn:^erender.Render_Sync,meshes:^core.Table(erender.Mesh_Renderer,.Read),worlds:^core.Table(core.World_Transform,.Read),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,
+    e:core.Entity,extras:[]erender.Instance_Desc,drawn:^erender.Render_Sync,meshes:^core.Table(erender.Mesh_Renderer,.Read),worlds:^core.Table(core.World_Transform,.Read),id:core.World_Id,frame:core.Frame_Time,assets:^host.Assets,renderer:^erender.Renderer,
 ) -> (resources:[RESOURCE_ROWS]Resource_Desc) {
     source:=bindings.surface if bindings.surface!=core.NONE else e
     shape:=shown.desc.info.shape if shown.desc.spec!=nil else effect.Particle_Shape.Point
@@ -127,13 +127,20 @@ emitter_resources :: proc(
             resources[1+at]=bones_resource(sync,bones,source)
             continue
         }
+        if need.kind==.Transform && source!=core.NONE {
+            if world,placed:=core.get(worlds,source);placed {
+                pose:=erender.drawn_transform(world,frame) if shown.resource_placed[1+at] else world.transform
+                resources[1+at]={kind=.Transform,transform=mm.transform_matrix(pose)}
+            }
+            continue
+        }
         if need.kind==.Surface && source!=core.NONE {
             resources[1+at]=entity_surface(sync,extras,drawn,meshes,worlds,id,assets,renderer,source)
         }
     }
     // Where each was the frame before: the first frame, where it is.
     for &resource,row in resources {
-        if resource.kind!=.Surface {shown.resource_placed[row]=false;continue}
+        if resource.kind!=.Surface && resource.kind!=.Transform {shown.resource_placed[row]=false;continue}
         resource.previous=shown.resource_previous[row] if shown.resource_placed[row] else resource.transform
         shown.resource_previous[row],shown.resource_placed[row]=resource.transform,true
     }

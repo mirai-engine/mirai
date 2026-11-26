@@ -381,13 +381,15 @@ Mirai_Vfx_Bone mirai_vfx_bone(Mirai_Vfx_Context ctx, uint resource, uint index) 
     bone.parent = INVALID;
     if (r.kind != PARTICLE_RESOURCE_BONES || index >= r.count) return bone;
     uint at = r.mesh + index * PARTICLE_BONE_BYTES;
-    float4 world[3] = { particle_frame_row(at), particle_frame_row(at + 16u), particle_frame_row(at + 32u) };
-    float4 last = particle_frame_row(at + 48u);
-    bone.position = float3(world[0].w, world[1].w, world[2].w);
-    bone.rotation = particle_turn_of(world);
-    bone.scale = float3(length(float3(world[0].x, world[1].x, world[2].x)), length(float3(world[0].y, world[1].y, world[2].y)), length(float3(world[0].z, world[1].z, world[2].z)));
-    bone.velocity = last.xyz;
-    bone.parent = asuint(last.w);
+    float4 pos_parent = particle_frame_row(at);
+    float4 rot = particle_frame_row(at + 16u);
+    float4 scl = particle_frame_row(at + 32u);
+    float4 vel = particle_frame_row(at + 48u);
+    bone.position = pos_parent.xyz;
+    bone.rotation = rot;
+    bone.scale = scl.xyz;
+    bone.velocity = vel.xyz;
+    bone.parent = asuint(pos_parent.w);
     bone.valid = true;
     return bone;
 }
@@ -396,6 +398,33 @@ Mirai_Vfx_Bone mirai_vfx_bone_sample(Mirai_Vfx_Context ctx, uint resource, inout
     uint count = mirai_vfx_bones_count(ctx, resource);
     if (count == 0u) return mirai_vfx_bone(ctx, resource, INVALID);
     return mirai_vfx_bone(ctx, resource, min(uint(random01(seed) * float(count)), count - 1u));
+}
+
+Mirai_Vfx_Transform mirai_vfx_transform(Mirai_Vfx_Context ctx, uint resource) {
+    Particle_Resource r = particle_resource(ctx.emitter, 1u + resource);
+    Mirai_Vfx_Transform tr = (Mirai_Vfx_Transform)0;
+    if (r.kind != PARTICLE_RESOURCE_TRANSFORM) return tr;
+    tr.position = float3(r.world[0].w, r.world[1].w, r.world[2].w);
+    tr.rotation = particle_turn_of(r.world);
+    tr.scale = particle_scale_of(r.world);
+    tr.previous_position = float3(r.previous[0].w, r.previous[1].w, r.previous[2].w);
+    tr.previous_rotation = particle_turn_of(r.previous);
+    tr.previous_scale = particle_scale_of(r.previous);
+    tr.valid = true;
+    return tr;
+}
+
+Mirai_Vfx_Transform mirai_vfx_transform_at(Mirai_Vfx_Context ctx, uint resource, float t) {
+    Mirai_Vfx_Transform tr = mirai_vfx_transform(ctx, resource);
+    if (!tr.valid) return tr;
+    float u = saturate(t);
+    float4 prev_r = dot(tr.previous_rotation, tr.rotation) < 0.0 ? -tr.previous_rotation : tr.previous_rotation;
+    tr.position = lerp(tr.previous_position, tr.position, u);
+    tr.scale = lerp(tr.previous_scale, tr.scale, u);
+    float4 q = lerp(prev_r, tr.rotation, u);
+    float q2 = dot(q, q);
+    tr.rotation = q2 > 1e-12 ? q * rsqrt(q2) : tr.rotation;
+    return tr;
 }
 
 uint mirai_vfx_channel_count(Mirai_Vfx_Context ctx, uint resource) {

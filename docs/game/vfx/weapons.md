@@ -71,3 +71,14 @@ are drawn coming from where the emitter was the frame before, without smearing.
 
 `blend` `Multiply` multiplies what is behind a sprite by its color (scorch puffs, shadows of
 smoke). It adds no light and is not lit.
+
+## Bones and transforms
+
+A Vfx program reads a whole skeleton with `//! resource <name> bones` (`mirai_vfx_bones_count`,
+`mirai_vfx_bone`, `mirai_vfx_bone_sample`) or a single tracked entity with
+`//! resource <name> transform` (`mirai_vfx_transform`, `mirai_vfx_transform_at`). Bind each
+resource with `vfx.Particle_Binding` to the rig entity or to any entity with a transform (such as a
+`Bone_Attachment` on a named bone or socket). `mirai_vfx_transform_at(ctx, res, t)` interpolates
+between the previous frame (`t = 0`) and current frame (`t = 1`) along the shortest rotation arc,
+so `initialize` can place sub-frame blade sparks without `delta_time`. Unbound resources return
+`valid = false`.

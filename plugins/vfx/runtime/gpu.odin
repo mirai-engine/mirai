@@ -712,7 +712,7 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
     pool.bones_at=u32(len(pool.frame_bytes))
     for bone in sync.bones {
         row:=bone
-        row.world=erender.origin_to_world(bone.world,pass.origin)
+        row.position=erender.origin_point(bone.position,pass.origin)
         append(&pool.frame_bytes,..([^]u8)(&row)[:size_of(row)])
     }
     pool.steps=u32(clamp(math.ceil(pool.dt/STEP),1,STEPS))
@@ -801,6 +801,8 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
                     if d.view==0 && int(resource.first+resource.count)<=len(sync.bones) {
                         row.head={u32(Resource_Kind.Bones),pool.bones_at+resource.first*size_of(Gpu_Bone),0,resource.count}
                     }
+                case .Transform:
+                    if d.view==0 {row.head={u32(Resource_Kind.Transform),0,0,0}}
                 }
                 append(&pool.frame_bytes,..([^]u8)(&row)[:size_of(row)])
             }

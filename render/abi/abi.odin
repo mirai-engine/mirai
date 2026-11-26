@@ -746,8 +746,9 @@ Frame_Extension :: struct {name:string,offset,size:int}
 Program_Domain :: enum u8 {Surface,Postprocess,Vfx,Ui}
 Program_Kind :: enum u8 {Float,Int,Uint,Bool,Texture}
 // The surface of a mesh or of what an entity draws, the births a game gives,
-// a grid of the world, or the bones of the skeleton an entity shows.
-Program_Resource_Kind :: enum u8 {Surface,Channel,Grid,Bones}
+// a grid of the world, the bones of the skeleton an entity shows, or the
+// transform of an entity.
+Program_Resource_Kind :: enum u8 {Surface,Channel,Grid,Bones,Transform}
 PROGRAM_STAGE_PARTICLES :: 255 // Program_Stage.over of a stage over the particles
 
 Program :: struct {

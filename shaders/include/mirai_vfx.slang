@@ -21,7 +21,8 @@
 // this frame. grid: a grid of the world of that name (vfx.Particle_Grid), layers of four floats in each cell; one
 // declared `//! resource name grid cleared` starts at zero each stage that
 // writes it. bones: the bones of the skeleton an entity shows in the frame,
-// in the order of its skeleton.
+// in the order of its skeleton. transform: the transform of an entity in the
+// world, this frame and the frame before.
 //
 // A line `//! stage name over particles|grid [iterations N] [writes
 // grid,grid]` names a stage, a function of the namespace that runs every
@@ -183,6 +184,18 @@ struct Mirai_Vfx_Bone {
     uint parent;
     bool valid;
 };
+// The transform of a transform resource in the world, this frame and the
+// frame before: its turns are unit quaternions (xyzw). valid is false while
+// the resource has no entity.
+struct Mirai_Vfx_Transform {
+    float3 position;
+    float4 rotation;
+    float3 scale;
+    float3 previous_position;
+    float4 previous_rotation;
+    float3 previous_scale;
+    bool valid;
+};
 // A birth a game gave a channel: where and how fast, the color and size it
 // gives its particles, how many it asked for and its values.
 struct Mirai_Vfx_Birth {
@@ -224,6 +237,8 @@ Mirai_Vfx_Surface mirai_vfx_surface_at(Mirai_Vfx_Context ctx, uint resource, uin
 uint mirai_vfx_bones_count(Mirai_Vfx_Context ctx, uint resource) { return 0u; }
 Mirai_Vfx_Bone mirai_vfx_bone(Mirai_Vfx_Context ctx, uint resource, uint index) { return (Mirai_Vfx_Bone)0; }
 Mirai_Vfx_Bone mirai_vfx_bone_sample(Mirai_Vfx_Context ctx, uint resource, inout uint seed) { return (Mirai_Vfx_Bone)0; }
+Mirai_Vfx_Transform mirai_vfx_transform(Mirai_Vfx_Context ctx, uint resource) { return (Mirai_Vfx_Transform)0; }
+Mirai_Vfx_Transform mirai_vfx_transform_at(Mirai_Vfx_Context ctx, uint resource, float t) { return (Mirai_Vfx_Transform)0; }
 uint mirai_vfx_channel_count(Mirai_Vfx_Context ctx, uint resource) { return 0u; }
 Mirai_Vfx_Birth mirai_vfx_channel_birth(Mirai_Vfx_Context ctx, uint resource, uint index) { return (Mirai_Vfx_Birth)0; }
 Mirai_Vfx_Grid mirai_vfx_grid(Mirai_Vfx_Context ctx, uint resource) { return (Mirai_Vfx_Grid)0; }
@@ -254,6 +269,10 @@ Mirai_Vfx_Surface mirai_vfx_surface_at(Mirai_Vfx_Context ctx, uint resource, uin
 uint mirai_vfx_bones_count(Mirai_Vfx_Context ctx, uint resource);
 Mirai_Vfx_Bone mirai_vfx_bone(Mirai_Vfx_Context ctx, uint resource, uint index);
 Mirai_Vfx_Bone mirai_vfx_bone_sample(Mirai_Vfx_Context ctx, uint resource, inout uint seed);
+// The transform of a transform resource, and interpolated between the frame
+// before (t 0) and this frame (t 1).
+Mirai_Vfx_Transform mirai_vfx_transform(Mirai_Vfx_Context ctx, uint resource);
+Mirai_Vfx_Transform mirai_vfx_transform_at(Mirai_Vfx_Context ctx, uint resource, float t);
 // The births of a channel resource in this frame, and the index-th of them.
 uint mirai_vfx_channel_count(Mirai_Vfx_Context ctx, uint resource);
 Mirai_Vfx_Birth mirai_vfx_channel_birth(Mirai_Vfx_Context ctx, uint resource, uint index);

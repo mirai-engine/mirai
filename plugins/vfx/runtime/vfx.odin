@@ -655,7 +655,7 @@ layer_tell :: proc(f:^Sync_Frame,e:core.Entity,emitter:Particle_Emitter,world:^c
     desc.resources,desc.stages,desc.births=0,0,{}
     if shown.desc.info.shape==.Surface || shown.needs.resources[0].kind!=.None || shown.needs.stages[0].kind!=.None {
         bound,_:=core.get(f.bindings,e)
-        rows:=emitter_resources(sync,shown,&bound,f.sources,f.bones,e,host.extras_instances(&f.app.extras),f.drawn,f.meshes,f.worlds,f.id,a,r)
+        rows:=emitter_resources(sync,shown,&bound,f.sources,f.bones,e,host.extras_instances(&f.app.extras),f.drawn,f.meshes,f.worlds,f.id,f.frame,a,r)
         desc.resources=u32(len(sync.resources))+1
         append(&sync.resources,..rows[:])
     }
