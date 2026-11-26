@@ -89,16 +89,20 @@ micro_fixture_init :: proc(t:^testing.T,f:^Micro_Fixture,mesh:render.Mesh_Handle
     look:=Micro_Look{entity=e,layer=f.grass,index=1,mesh=mesh,side=32,thin=max(u32),seed=5,pose=mm.TRANSFORM_IDENTITY,frame=linalg.MATRIX4F32_IDENTITY,cell_size=MICRO_TEST_CELL}
     look.row.sphere={0,0,0,0.87}
     look.row.scale={0.15,0.15,1,1}
+    look.row.turn={0,0,0,1}
     look.row.distance={50,60,0,0}
-    look.row.mesh={u32(mesh),1,0,32*32}
+    look.row.frame={0,0,0,1}
+    look.desc={mesh=mesh,tint={1,1,1},object_id=u64(e)}
+    look.needed=32*32
     f.micro.app=&f.app
     append(&f.micro.looks,look)
     block,taken:=micro_block_take(&f.micro,32*32)
     if !testing.expect(t,taken) {return false}
-    _,revision:=pcg.ground_cell(&f.grounds.owners[0],{0,0})
+    ground,revision:=pcg.ground_cell(&f.grounds.owners[0],{0,0})
     want:=micro_tile_key(77,revision,f.generated.graphs[0].cells[0].occupied_hash,f.grass,32,max(u32))
-    append(&f.micro.tiles,Micro_Tile{used=true,entity=e,layer=f.grass,coord={0,0},block=block,want=want})
-    f.micro.visible=32*32
+    low,high:=micro_tile_box(&f.micro.looks[0],{0,0},ground.heights)
+    f.micro.looks[0].low,f.micro.looks[0].high=low,high
+    append(&f.micro.tiles,Micro_Tile{used=true,entity=e,layer=f.grass,coord={0,0},block=block,want=want,low=low,high=high})
     return true
 }
 
@@ -299,4 +303,47 @@ micro_foliage_does_nothing_without_a_renderer :: proc(t:^testing.T) {
     }
     testing.expect_value(t,tracking.total_allocation_count,i64(0))
     testing.expect(t,m.app==nil && len(m.tiles)==0 && len(m.looks)==0 && m.capacity==0)
+}
+
+// Where a look starts to thin out follows how large its mesh shows: farther
+// for a larger mesh or frame, a taller view or a narrower field of view;
+// never in a view without a perspective.
+@(test)
+micro_thinning_starts_where_a_clump_shows_small :: proc(t:^testing.T) {
+    row:=Micro_Look_Row{sphere={0,0.3,0,0.6},scale={1,1,1,1},turn={0,0,0,1}}
+    base:=micro_thin_onset(row,60,1080)
+    // 1.2 m across a 1080-line view of 60 degrees spans MICRO_THIN_PIXELS pixels about 35 m away.
+    testing.expectf(t,base>30 && base<40,"onset %v m",base)
+    Case :: struct {scale,frame,fov:f32,height:u32,farther:bool}
+    cases:=[?]Case{{2,1,60,1080,true},{1,2,60,1080,true},{1,1,60,2160,true},{1,1,30,1080,true},{0.5,1,60,1080,false},{1,1,90,1080,false},{1,1,60,540,false}}
+    for c in cases {
+        r:=row
+        r.scale={c.scale,c.scale,1,1}
+        r.turn.w=c.frame
+        onset:=micro_thin_onset(r,c.fov,c.height)
+        testing.expectf(t,(onset>base)==c.farther && onset!=base,"%v: onset %v m against %v",c,onset,base)
+    }
+    testing.expect_value(t,micro_thin_onset(row,0,1080),f32(0))
+    testing.expect_value(t,micro_thin_onset(row,60,0),f32(0))
+}
+
+// A view writes the instances of the tiles whose box it sees within the
+// distance of their look: not those behind it, beside it or too far.
+@(test)
+a_view_writes_only_the_tiles_it_sees :: proc(t:^testing.T) {
+    // From the origin along -z, 90 degrees across, depth from 1 at the near plane to 0 far away.
+    view:=mm.Mat4{1,0,0,0, 0,1,0,0, 0,0,0,0.1, 0,0,-1,0}
+    Case :: struct {low,high:[3]f32,reach:f32,seen:bool}
+    cases:=[?]Case{
+        {{-1,-1,-6},{1,1,-4},0,true},     // ahead
+        {{-1,-1,4},{1,1,6},0,false},      // behind
+        {{20,-1,-6},{22,1,-4},0,false},   // to the right of the frustum
+        {{-30,-1,-6},{30,1,-4},0,true},   // across it
+        {{-1,-1,-6},{1,1,-4},3,false},    // past its reach
+        {{-1,-1,-6},{1,1,-4},4.5,true},   // within it
+        {{-1,-1,-1},{1,1,1},0,true},      // about the eye
+    }
+    for c in cases {
+        testing.expectf(t,micro_box_seen(view,c.low,c.high,c.reach)==c.seen,"%v",c)
+    }
 }

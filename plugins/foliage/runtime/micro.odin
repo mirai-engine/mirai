@@ -1,6 +1,7 @@
 package foliage
 
 import "core:math"
+import "core:math/linalg"
 import "core:slice"
 import "mirai:core"
 import render "mirai:engine/render"
@@ -20,11 +21,13 @@ import pcg "plugins:pcg/runtime"
 // tile (pcg.Pcg_Ground) and how much of the density of the layer stands on a
 // grid over it (pcg.micro_samples), and the Simulate stage scatters it once
 // into its slot of the buffer of the world (foliage_micro_gen.comp). Each
-// view culls what the slots hold against its frustum and the depth of the
-// scene (foliage_micro_cull.comp) and draws them, a draw a look and Surface
-// program, into the G-buffer with the mesh of the layer, bent by the wind as
-// the batches are (foliage_micro.vert). A stable frame generates nothing;
-// without a renderer, nothing at all is done.
+// look draws through a batch the GPU fills (render.batch_reserve): in the
+// Instances stage of each view, before the cull of the scene, the tiles the
+// view sees write into it the instances within the distance of the look, in
+// the frustum and kept by the thinning by distance (foliage_micro_fill.comp);
+// the scene draws them like any other batch, bent by the wind and the
+// trampled field through the vertex hook (foliage_vertex.slang). A stable
+// frame generates nothing; without a renderer, nothing at all is done.
 
 MICRO_SLOTS :: 1024          // tiles a world holds at once
 MICRO_LOOKS :: 64            // Micro layers a world draws
@@ -34,9 +37,23 @@ MICRO_REACH_MAX :: f32(256)  // m from a source a Micro layer never culled shows
 MICRO_INSTANCES_MIN :: 1 << 16
 MICRO_INSTANCES :: "foliage micro instances"
 MICRO_COUNTS :: "foliage micro counts"
-MICRO_VISIBLE :: "foliage micro visible"
-MICRO_DRAWS :: "foliage micro draws"
-MICRO_PROGRAMS :: 8          // Surface programs of the mesh of a look it draws
+// Of a frame: instances given to a batch, those of them past its room,
+// thinned away by distance, and growing from the ground at the edge of the thinning.
+MICRO_COUNTERS :: "foliage micro"
+MICRO_ROOM_MIN :: 1 << 12    // instances the batch of a look holds at least
+
+// The thinning by distance (micro_thin of foliage_micro.slang), with nothing
+// to choose: past the distance where a clump spans MICRO_THIN_PIXELS pixels of
+// the view (micro_thin_onset), an instance is kept with the chance
+// (onset/distance)^2, as many on the screen as nearer, at least
+// MICRO_THIN_KEPT, by a hash of its place; those within MICRO_THIN_BAND of
+// that chance of being dropped grow from the ground across it, and those
+// kept widen along the ground by up to MICRO_THIN_WIDEN, so the ground they
+// cover stays.
+MICRO_THIN_PIXELS :: 32.0
+MICRO_THIN_KEPT :: 0.25
+MICRO_THIN_BAND :: 0.2
+MICRO_THIN_WIDEN :: 1.6
 
 // What the shaders read (foliage_micro.slang).
 Micro_Instance :: struct {
@@ -54,18 +71,18 @@ Micro_Slot :: struct {
 Micro_Look_Row :: struct {
     sphere:[4]f32,
     scale:[4]f32,
-    turn:[4]f32,
+    turn:[4]f32,     // w: the scale of the frame of its graph
     offset:[4]f32,
-    distance:[4]f32,
-    mesh:[4]u32, // mesh, clusters, first among those visible, how many fit there
+    distance:[4]f32, // fade, cull, and where it starts to thin out in a view (micro_thin_onset)
+    frame:[4]f32,    // the rotation of the frame of its graph
+    target:[4]u32,   // of its batch in a view: first word, word of its count, room
+    anchor:[4]f32,   // of its batch, relative to the origin
 }
 Micro_Gen :: struct {
     a:[4]u32, // slot, first instance, candidates a side, samples a side of the heights
     b:[4]u32, // seed, candidates the detail keeps of 2^32, samples a side of the densities
     c:[4]f32, // metres across the cell
 }
-Micro_Cull :: struct {count:[4]u32}
-Micro_Draw :: struct {look,program,mesh,pad:u32}
 
 @(storage,host,by_world,free="foliage_micro_free")
 Foliage_Micro :: struct {
@@ -76,7 +93,8 @@ Foliage_Micro :: struct {
     blocks:[dynamic]Micro_Block, // of the buffer of instances
     end:u32,                     // instances the blocks span
     capacity:u32,                // instances the buffer holds
-    visible:u32,                 // instances the visible lists of the looks hold together
+    batches:[dynamic]Micro_Batch, // of the looks, by entity and layer
+    epoch:u64,                   // of the batches of the renderer they were reserved in
     inputs:u64,                  // the hash of what the tiles were chosen from
     detail:[2]f32,
     jobs:[dynamic]Micro_Job,     // of this frame
@@ -89,9 +107,19 @@ Foliage_Micro :: struct {
     scratched:bool,
     slot_rows:[dynamic]Micro_Slot,
     look_rows:[dynamic]Micro_Look_Row,
+    seen:[dynamic]u32,           // the slots of the tiles a view sees
     stats:Micro_Stats,
 }
 Micro_Stats :: struct {generated,refreshes:u64}
+
+// The batch a look draws through: its room changes when what its tiles hold
+// outgrows it or falls under a quarter of it.
+Micro_Batch :: struct {
+    entity:core.Entity,
+    layer:u32,
+    handle:render.Batch_Handle,
+    room:u32,
+}
 
 // A Micro layer of a Foliage, as drawn.
 Micro_Look :: struct {
@@ -99,6 +127,10 @@ Micro_Look :: struct {
     layer:u32,  // its id
     index:int,  // in its source
     mesh:render.Mesh_Handle,
+    desc:render.Batch_Desc, // of its batch
+    batch:render.Batch_Handle,
+    needed:u32, // instances its tiles hold at most
+    low,high:[3]f32, // the box of the world its tiles draw in
     row:Micro_Look_Row,
     reach:f32,  // m from a source within which its tiles are resident
     side:u32,   // candidates a side of a tile
@@ -120,6 +152,7 @@ Micro_Tile :: struct {
     block:u32, // of Foliage_Micro.blocks, plus one
     key:u64,   // what its instances were generated from; 0: none are
     want:u64,  // what they are to be generated from
+    low,high:[3]f32, // the box of the world it draws in
 }
 Micro_Want :: struct {
     entity:core.Entity,
@@ -129,6 +162,7 @@ Micro_Want :: struct {
     near:f32,
     key:u64,
     slot:i32,
+    low,high:[3]f32,
 }
 Micro_Block :: struct {first,capacity:u32,used:bool}
 Micro_Job :: struct {
@@ -140,11 +174,14 @@ Micro_Job :: struct {
 
 foliage_micro_free :: proc(m:^Foliage_Micro) {
     if m.app!=nil {
-        for name in ([]string{MICRO_INSTANCES,MICRO_COUNTS,MICRO_VISIBLE,MICRO_DRAWS}) {render.buffer_release(m.app.renderer,m.world,name)}
+        for name in ([]string{MICRO_INSTANCES,MICRO_COUNTS}) {render.buffer_release(m.app.renderer,m.world,name)}
+        if render.batches_epoch(m.app.renderer)==m.epoch {
+            for b in m.batches {render.batch_remove(m.app.renderer,b.handle)}
+        }
     }
     if m.scratched {pcg.scratch_destroy(&m.scratch)}
     delete(m.looks);delete(m.tiles);delete(m.blocks);delete(m.jobs);delete(m.packets);delete(m.wants);delete(m.held)
-    delete(m.dirty);delete(m.samples);delete(m.slot_rows);delete(m.look_rows)
+    delete(m.dirty);delete(m.samples);delete(m.slot_rows);delete(m.look_rows);delete(m.batches);delete(m.seen)
     m^={}
 }
 
@@ -221,12 +258,17 @@ micro_look_make :: proc(l:^pcg.Pcg_Layer,f:Foliage,cell_size:f32,detail:[2]f32,a
     look.mesh=desc.mesh
     look.row.sphere={center.x,center.y,center.z,0.5*math.sqrt((high.x-low.x)*(high.x-low.x)+(high.y-low.y)*(high.y-low.y)+(high.z-low.z)*(high.z-low.z))}
     look.row.scale={l.scale[0],l.scale[1],l.height[0],l.height[1]}
-    look.row.turn={l.yaw,l.tilt,l.align,0}
-    sway:=Look{wind=f.wind,flutter=f.flutter}
-    look.row.offset={l.offset[0],l.offset[1],sway_amount(sway),flutter_amount(sway)}
+    look.row.turn={l.yaw,l.tilt,l.align,1}
+    look.row.offset={l.offset[0],l.offset[1],0,0}
     fade,cull:=l.fade_distance*detail[1],l.cull_distance*detail[1]
     look.row.distance={min(fade,cull>0?cull:fade),cull,0,0}
-    look.row.mesh={u32(desc.mesh),primitives/CLUSTER_PRIMITIVES,0,0}
+    look.row.frame={0,0,0,1}
+    // Swayed by the hook as the batches of the mesh layers are; the shrinking
+    // with distance and the thinning are its own (foliage_micro_fill.comp).
+    sway:=Look{wind=f.wind,flutter=f.flutter}
+    look.desc=desc
+    look.desc.vertex=hook_vertex(sway)
+    look.desc.reach=hook_reach(sway,max(high.y,0)*l.scale[1]*max(l.height[1],1))
     look.reach=cull>0?min(cull,MICRO_REACH_MAX):MICRO_REACH_MAX
     count:=f64(l.density)*f64(cell_size)*f64(cell_size)
     look.side=u32(clamp(math.round(math.sqrt(max(count,0))),0,MICRO_SIDE_MAX))
@@ -235,9 +277,6 @@ micro_look_make :: proc(l:^pcg.Pcg_Layer,f:Foliage,cell_size:f32,detail:[2]f32,a
     look.cell_size=cell_size
     return look,look.side>0
 }
-
-// Triangles of a cluster (render.mesh_primitive_count counts them).
-CLUSTER_PRIMITIVES :: 128
 
 // What a tile is generated from: what its graph places from (its source,
 // seed, frame, zones and Volume: pcg.Generated_Graph.key), its ground tile,
@@ -274,12 +313,8 @@ foliage_micro :: proc(
     used:=false
     for t in m.tiles {used||=t.used}
     if !used {return}
-    for look in m.looks {
-        render.frame_gbuffer_mesh(app.renderer,look.mesh,0)
-        render.frame_mesh_whole(app.renderer,look.mesh)
-    }
     if len(m.jobs)>0 {render.frame_pass(app.renderer,.Simulate,foliage_micro_generate,m)}
-    render.frame_pass(app.renderer,.Gbuffer,foliage_micro_draw,m)
+    render.frame_pass(app.renderer,.Instances,foliage_micro_fill,m)
 }
 
 // The hash of what the tiles are chosen from: the sources, the detail, the
@@ -354,6 +389,11 @@ micro_refresh :: proc(m:^Foliage_Micro,data:^pcg.Pcg_Data,grounds:^pcg.Pcg_Groun
             }
             look.entity,look.layer,look.index,look.pose,look.frame=e,l.id,i,pose,frame
             look.seed=pcg.graph_seed(s.info.seed,graph.seed)
+            look.desc.object_id=u64(e)
+            q:=pose.rotation
+            look.row.frame={q.x,q.y,q.z,q.w}
+            look.row.turn.w=max(abs(pose.scale.x),abs(pose.scale.y),abs(pose.scale.z))
+            look.low,look.high={max(f32),max(f32),max(f32)},{-max(f32),-max(f32),-max(f32)}
             append(&m.looks,look)
             index:=u32(len(m.looks)-1)
             near:=scene.sources_near(sources,frame,look.reach)
@@ -368,7 +408,8 @@ micro_refresh :: proc(m:^Foliage_Micro,data:^pcg.Pcg_Data,grounds:^pcg.Pcg_Groun
                 ground,revision:=pcg.ground_cell(owner,want.coord)
                 if ground.absent {continue}
                 key:=micro_tile_key(gen.key,revision,cell.occupied_hash,l.id,look.side,look.thin)
-                append(&m.wants,Micro_Want{entity=e,layer=l.id,coord=want.coord,look=index,near=n,key=key,slot=-1})
+                tile_low,tile_high:=micro_tile_box(&m.looks[index],want.coord,ground.heights)
+                append(&m.wants,Micro_Want{entity=e,layer=l.id,coord=want.coord,look=index,near=n,key=key,slot=-1,low=tile_low,high=tile_high})
             }
         }
     }
@@ -389,7 +430,7 @@ micro_refresh :: proc(m:^Foliage_Micro,data:^pcg.Pcg_Data,grounds:^pcg.Pcg_Groun
             micro_block_free(m,&t.block)
             t.key=0
         }
-        t.look,t.near,t.want=w.look,w.near,w.key
+        t.look,t.near,t.want,t.low,t.high=w.look,w.near,w.key,w.low,w.high
     }
     free_slot:=0
     for &w in m.wants {
@@ -399,7 +440,7 @@ micro_refresh :: proc(m:^Foliage_Micro,data:^pcg.Pcg_Data,grounds:^pcg.Pcg_Groun
             if _,error:=append(&m.tiles,Micro_Tile{});error!=nil {break}
         }
         w.slot=i32(free_slot)
-        m.tiles[free_slot]={used=true,entity=w.entity,layer=w.layer,coord=w.coord,look=w.look,near=w.near,want=w.key}
+        m.tiles[free_slot]={used=true,entity=w.entity,layer=w.layer,coord=w.coord,look=w.look,near=w.near,want=w.key,low=w.low,high=w.high}
     }
     for len(m.tiles)>0 && !m.tiles[len(m.tiles)-1].used {pop(&m.tiles)}
     // Room in the buffer for each, and of the visible lists for each look.
@@ -410,12 +451,76 @@ micro_refresh :: proc(m:^Foliage_Micro,data:^pcg.Pcg_Data,grounds:^pcg.Pcg_Groun
         if !ok {t.used=false;continue}
         t.block,t.key=block,0
     }
-    for &look in m.looks {look.row.mesh.w=0}
-    for t in m.tiles {if t.used && t.block>0 {m.looks[t.look].row.mesh.w+=m.blocks[t.block-1].capacity}}
-    m.visible=0
+    for &look in m.looks {look.needed=0}
+    for t in m.tiles {
+        if !t.used || t.block==0 {continue}
+        look:=&m.looks[t.look]
+        look.needed+=m.blocks[t.block-1].capacity
+        look.low,look.high=linalg.min(look.low,t.low),linalg.max(look.high,t.high)
+    }
+    micro_batches(m,app.renderer,problems)
+}
+
+// The box of the world a tile of a look draws in: its cell over the heights
+// of its ground tile (NaN where there is none), grown by how far its
+// instances reach from where they stand, widened by the thinning.
+micro_tile_box :: proc(look:^Micro_Look,coord:[2]i32,heights:[]f32) -> (low,high:[3]f32) {
+    bottom,top:=max(f32),-max(f32)
+    for h in heights {
+        if h==h {bottom,top=min(bottom,h),max(top,h)}
+    }
+    if bottom>top {bottom,top=0,0}
+    r:=look.row
+    largest:=max(r.scale[1],r.scale[1]*r.scale[3])
+    reach:=((linalg.length(r.sphere.xyz)+r.sphere.w)*largest*MICRO_THIN_WIDEN+max(abs(r.offset[0]),abs(r.offset[1])))*1.25
+    corner:=pcg.cell_corner(look.cell_size,coord)
+    a:=[3]f32{corner.x-reach,bottom-reach,corner.z-reach}
+    b:=[3]f32{corner.x+look.cell_size+reach,top+reach,corner.z+look.cell_size+reach}
+    low,high={max(f32),max(f32),max(f32)},{-max(f32),-max(f32),-max(f32)}
+    for k in 0..<8 {
+        p:=[3]f32{k&1!=0?b.x:a.x,k&2!=0?b.y:a.y,k&4!=0?b.z:a.z}
+        w:=(look.frame*[4]f32{p.x,p.y,p.z,1}).xyz
+        low,high=linalg.min(low,w),linalg.max(high,w)
+    }
+    return
+}
+
+// The batch of each look, reserved for what its tiles hold; those of looks
+// that went are taken out. The room grows by half when outgrown, and comes
+// down when under a quarter of what is needed: a batch whose room stays only
+// takes its new box.
+micro_batches :: proc(m:^Foliage_Micro,renderer:^render.Renderer,problems:^core.Problems) {
+    epoch:=render.batches_epoch(renderer)
+    if epoch!=m.epoch {
+        // The renderer forgot them, along with every mesh.
+        clear(&m.batches)
+        m.epoch=epoch
+    }
+    kept:=0
+    for b in m.batches {
+        found:=false
+        for look in m.looks {found||=look.entity==b.entity && look.layer==b.layer && look.needed>0}
+        if found {m.batches[kept]=b;kept+=1} else {render.batch_remove(renderer,b.handle)}
+    }
+    base.truncate(&m.batches,kept)
     for &look in m.looks {
-        look.row.mesh.z=m.visible
-        m.visible+=look.row.mesh.w
+        look.batch=0
+        if look.needed==0 {continue}
+        at:=-1
+        for b,i in m.batches {if b.entity==look.entity && b.layer==look.layer {at=i}}
+        if at<0 {
+            if _,error:=append(&m.batches,Micro_Batch{entity=look.entity,layer=look.layer});error!=nil {continue}
+            at=len(m.batches)-1
+        }
+        b:=&m.batches[at]
+        room:=b.room
+        if look.needed>room || look.needed<room/4 {room=max(look.needed+look.needed/2,MICRO_ROOM_MIN)}
+        handle,problem:=render.batch_reserve(renderer,m.world,b.handle,look.desc,room,look.low,look.high)
+        if problem!="" {
+            core.report(problems,look.entity,"foliage.micro","Micro layer %d is not drawn: %s",look.layer,problem)
+            continue
+        }
+        b.handle,b.room,look.batch=handle,room,handle
     }
 }
 
@@ -531,19 +636,61 @@ micro_buffers :: proc(pass:^render.Pass,m:^Foliage_Micro) -> bool {
     return true
 }
 
-// The Gbuffer stage of a view: the instances of the slots it sees into the
-// list of each look, then a draw a look and Surface program of its mesh.
+// Where a look starts to thin out in a view: the distance at which its mesh
+// at its mean size spans MICRO_THIN_PIXELS pixels of the height of the view.
+// 0, never, for a view without a perspective.
+micro_thin_onset :: proc "contextless" (row:Micro_Look_Row,fov_y:f32,height:u32) -> f32 {
+    if !(fov_y>0) || height==0 {return 0}
+    per:=2*math.tan(0.5*fov_y*math.RAD_PER_DEG)/f32(height) // metres a pixel spans a metre away
+    size:=2*row.sphere.w*0.5*(row.scale[0]+row.scale[1])*row.turn.w
+    return size/(MICRO_THIN_PIXELS*per)
+}
+
+// Whether a view sees something of a box of the world (relative to the eye)
+// within reach of the eye (0: any): the box against the planes of the clip
+// space of view_projection, the near and far ones whichever way its depth goes.
+micro_box_seen :: proc "contextless" (view_projection:mm.Mat4,low,high:[3]f32,reach:f32) -> bool {
+    if reach>0 {
+        nearest:=linalg.clamp([3]f32{},low,high)
+        if linalg.length(nearest)>reach {return false}
+    }
+    m:=view_projection
+    rows:=[4][4]f32{{m[0,0],m[0,1],m[0,2],m[0,3]},{m[1,0],m[1,1],m[1,2],m[1,3]},{m[2,0],m[2,1],m[2,2],m[2,3]},{m[3,0],m[3,1],m[3,2],m[3,3]}}
+    planes:=[6][4]f32{rows[3]+rows[0],rows[3]-rows[0],rows[3]+rows[1],rows[3]-rows[1],rows[2],rows[3]-rows[2]}
+    for plane in planes {
+        // The corner of the box farthest along the plane.
+        p:=[3]f32{plane.x>=0?high.x:low.x,plane.y>=0?high.y:low.y,plane.z>=0?high.z:low.z}
+        if plane.x*p.x+plane.y*p.y+plane.z*p.z+plane.w<0 {return false}
+    }
+    return true
+}
+
+// The Instances stage of a view: the tiles it sees, within the distance of
+// their look and in its frustum, write what it draws of them into the batch
+// of their look (foliage_micro_fill.comp), before the cull of the scene.
 @(private)
-foliage_micro_draw :: proc(pass:^render.Pass,user:rawptr) {
+foliage_micro_fill :: proc(pass:^render.Pass,user:rawptr) {
     m:=cast(^Foliage_Micro)user
-    if pass.world!=render.world_key(m.world) || len(m.looks)==0 || m.end==0 || m.visible==0 {return}
+    if pass.world!=render.world_key(m.world) || len(m.looks)==0 || m.end==0 {return}
     instances,counts:=micro_instances_desc(m),micro_counts_desc()
     if !render.pass_buffer_held(pass,instances) || !render.pass_buffer_held(pass,counts) {return}
-    cull:=render.pass_stage_pipeline(pass,{stage=.Simulate,shader="foliage_micro_cull",name="foliage micro cull"})
-    if cull==0 {return}
-    clear(&m.slot_rows);clear(&m.look_rows)
-    generated:=false
-    for t in m.tiles {
+    pipeline:=render.pass_stage_pipeline(pass,{stage=.Instances,shader="foliage_micro_fill",name="foliage micro fill"})
+    if pipeline==0 {return}
+    clear(&m.look_rows);clear(&m.slot_rows);clear(&m.seen)
+    targets:=false
+    for look in m.looks {
+        row:=look.row
+        row.distance.z=micro_thin_onset(row,pass.camera.fov_y,pass.height)
+        if target,ok:=render.pass_batch_target(pass,3,look.batch);ok && look.batch!=0 {
+            row.target={target.first,target.count,target.capacity,0}
+            row.anchor={target.anchor.x,target.anchor.y,target.anchor.z,0}
+            targets=true
+        }
+        append(&m.look_rows,row)
+    }
+    if !targets {return}
+    widest:=u32(0)
+    for t,slot in m.tiles {
         row:Micro_Slot
         if t.used && t.block>0 && t.key!=0 {
             look:=m.looks[t.look]
@@ -554,52 +701,27 @@ foliage_micro_draw :: proc(pass:^render.Pass,user:rawptr) {
             b:=m.blocks[t.block-1]
             row.info={b.first,b.capacity,t.look,1}
             row.cell={look.cell_size,transmute(f32)look.seed,0,0}
-            generated=true
+            eye:=pass.camera.position
+            low,high:=render.origin_point(t.low,pass.origin)-eye,render.origin_point(t.high,pass.origin)-eye
+            if m.look_rows[t.look].target.z>0 && micro_box_seen(pass.view_projection,low,high,look.row.distance.y) {
+                append(&m.seen,u32(slot))
+                widest=max(widest,b.capacity)
+            }
         }
         append(&m.slot_rows,row)
     }
-    if !generated {return}
-    for look in m.looks {append(&m.look_rows,look.row)}
-    visible:=render.Buffer_Desc{name=MICRO_VISIBLE,size=u64(m.visible)*4}
-    draws:=render.Buffer_Desc{name=MICRO_DRAWS,size=MICRO_LOOKS*16}
-    seen,_:=render.pass_buffer(pass,2,visible)
-    counted,_:=render.pass_buffer(pass,3,draws)
-    if !seen || !counted || !render.pass_buffer_fill(pass,draws,0,draws.size) {return}
+    if len(m.seen)==0 {return}
     slots,slots_ok:=render.pass_rows_upload(pass,raw_data(m.slot_rows),len(m.slot_rows)*size_of(Micro_Slot))
     looks,looks_ok:=render.pass_rows_upload(pass,raw_data(m.look_rows),len(m.look_rows)*size_of(Micro_Look_Row))
-    if !slots_ok || !looks_ok {return}
-    render.pass_timestamp(pass,"foliage micro cull")
-    render.pass_pipeline(pass,cull)
+    seen,seen_ok:=render.pass_rows_upload(pass,raw_data(m.seen),len(m.seen)*size_of(u32))
+    if !slots_ok || !looks_ok || !seen_ok {return}
+    render.pass_timestamp(pass,"foliage micro")
+    render.pass_pipeline(pass,pipeline)
     render.pass_buffer(pass,0,instances)
     render.pass_buffer(pass,1,counts)
-    render.pass_buffer(pass,2,visible)
-    render.pass_buffer(pass,3,draws)
     render.pass_rows(pass,4,slots)
     render.pass_rows(pass,5,looks)
-    levels,now:=render.pass_depth_pyramid(pass,6)
-    params:=Micro_Cull{count={m.end,u32(len(m.slot_rows)),u32(len(m.look_rows)),now?levels:0}}
-    if !render.pass_params(pass,&params,size_of(params)) {return}
-    render.pass_dispatch(pass,(max(m.end,u32(len(m.look_rows)))+63)/64)
-    render.pass_gbuffer_begin(pass,"foliage micro")
-    bound:=render.Pipeline(0)
-    for look,i in m.looks {
-        if look.row.mesh.w==0 {continue}
-        programs:[MICRO_PROGRAMS]u32
-        count:=render.pass_mesh_programs(pass,look.mesh,0,programs[:])
-        for program in programs[:min(count,len(programs))] {
-            pipeline:=render.pass_gbuffer_pipeline(pass,"foliage_micro","foliage micro",program=program)
-            if pipeline==0 {continue}
-            if pipeline!=bound {
-                render.pass_pipeline(pass,pipeline)
-                bound=pipeline
-            }
-            render.pass_buffer(pass,0,instances)
-            render.pass_buffer(pass,2,visible)
-            render.pass_rows(pass,4,slots)
-            render.pass_rows(pass,5,looks)
-            d:=Micro_Draw{look=u32(i),program=program if count>1 else max(u32),mesh=u32(look.mesh)}
-            if render.pass_params(pass,&d,size_of(d)) {render.pass_draw_indirect(pass,draws,u64(i)*16)}
-        }
-    }
-    render.pass_end(pass)
+    render.pass_rows(pass,6,seen)
+    if !render.pass_counters(pass,7,MICRO_COUNTERS) {return}
+    render.pass_dispatch(pass,(widest+63)/64,u32(len(m.seen)))
 }
