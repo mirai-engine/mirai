@@ -7,6 +7,7 @@
 // of the group and of the groups around to meet; the other three, nothing.
 #define GBUFFER_NORMAL SLOT_PASS0
 #define SHADOW_DATA_SLOT SLOT_PASS9
+#define DIRECT_TILES_SLOT SLOT_PASS4
 #include "lighting.slang"
 #include "gbuffer.slang"
 #include "pixel.slang"
@@ -29,9 +30,11 @@ struct Params_Block { uint pad0; uint samples; float sun_radius; uint scale; uin
 
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
-void main(uint3 dispatch_id : SV_DispatchThreadID) {
+void main(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID) {
     int scale = int(max(params.scale, 1u));
-    int2 p = int2(dispatch_id.xy * 2u);
+    // The squares of a tile of 16x16 points; while the view draws maps, of one
+    // whose rays direct_samples.comp reads.
+    int2 p = int2((direct_tile(DIRECT_TILES_RAYS_LIST, group.x, group.xy, scale) * 8u + local.xy) * 2u);
     int2 source = p * scale;
     int2 size = direct_points(scale);
     if (any(p >= size)) return;

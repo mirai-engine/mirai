@@ -56,6 +56,8 @@ SLOT_LIGHT_LISTS      :: 36
 SLOT_REST             :: 37
 // The aerial perspective of the view (render/air.odin): what the air between the eye and each place does to its light.
 SLOT_AERIAL           :: 38
+// What stopped the ray of each point of the direct light of the view, as direct_samples.comp reads it (direct_rays.comp).
+SLOT_DIRECT_BLOCKERS  :: 39
 SLOT_DRAW             :: SLOT_PASS9
 
 // The finest level the passes that shade surfaces sample of each texture
@@ -213,6 +215,28 @@ LIGHT_LIST_WORDS           :: 128
 TRANSLUCENT_LIST_COLUMNS   :: 128
 TRANSLUCENT_CELL_SPLIT     :: 4
 TRANSLUCENT_CELLS          :: 4096
+
+// The tiles of the direct light of a view (render/frame.odin pass_direct)
+// while it draws maps: direct_maps.comp lists the tiles of DIRECT_TILE points
+// a side that take samples, the tiles of twice that whose rays those read
+// (direct_rays.comp) and the blocks of DIRECT_SPREAD_RUN points a side whose
+// penumbrae spread (direct_spread.comp), and the passes after take only those.
+// Its buffer: the dispatches of the three, three words each, from
+// DIRECT_TILES_SAMPLES, _RAYS and _SPREAD; then DIRECT_TILES_REGIONS regions
+// of a word for each tile of the view: whether each tile of the rays and each
+// block is listed, and the three lists, a tile x | y << 16 a word.
+DIRECT_TILE                :: 8
+DIRECT_SPREAD_RUN          :: 64
+DIRECT_TILES_SAMPLES       :: 0
+DIRECT_TILES_RAYS          :: 3
+DIRECT_TILES_SPREAD        :: 6
+DIRECT_TILES_HEADER        :: 9
+DIRECT_TILES_RAYS_LISTED   :: 0
+DIRECT_TILES_SPREAD_LISTED :: 1
+DIRECT_TILES_SAMPLES_LIST  :: 2
+DIRECT_TILES_RAYS_LIST     :: 3
+DIRECT_TILES_SPREAD_LIST   :: 4
+DIRECT_TILES_REGIONS       :: 5
 
 // The maps of the shadows of a view. The buffer of the maps (uint4 rows): a
 // word for each light, four to a row, 0 for a light without maps, else its

@@ -8,6 +8,7 @@
 // direct_spread.comp spreads those parts over their penumbrae, and
 // direct_filter.comp takes them to the pixels.
 #define GBUFFER_NORMAL SLOT_PASS0
+#define DIRECT_TILES_SLOT SLOT_PASS2
 #include "lighting.slang"
 #include "gbuffer.slang"
 #include "pixel.slang"
@@ -16,8 +17,9 @@
 #define MIRAI_GROUP_Y 8
 #define MIRAI_GROUP_Z 1
 
-// scale: the pixels across a point; samples: those of a point.
-struct Params_Block { uint scale; uint samples; uint pad0; uint pad1; };
+// scale: the pixels across a point; samples: those of a point; back: the
+// points of the tiles take what the window gave them, from the inputs.
+struct Params_Block { uint scale; uint samples; uint back; uint pad1; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS1, 0)]] Texture2D<float4> g_depth : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 // What direct_samples.comp left at each point: the light of the local lights
@@ -99,7 +101,18 @@ float filter_window(int2 at, int center, bool sun, float own, float n) {
 void main(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID, uint index : SV_GroupIndex) {
     int scale = int(max(params.scale, 1u));
     int2 size = direct_points(scale);
-    int2 corner = int2(group.xy) * int2(MIRAI_GROUP_X, MIRAI_GROUP_Y) - FILTER_APRON;
+    // While the view draws maps, the tiles with a point that takes samples:
+    // the others keep what direct_maps.comp gave them.
+    int2 tile = int2(direct_tile(DIRECT_TILES_SAMPLES_LIST, group.x, group.xy, scale));
+    if (params.back != 0u) {
+        int2 q = tile * int2(MIRAI_GROUP_X, MIRAI_GROUP_Y) + int2(local.xy);
+        if (all(q < size)) {
+            out_points[q] = samples_in.Load(int3(q, 0));
+            out_sun[q] = sun_in.Load(int3(q, 0));
+        }
+        return;
+    }
+    int2 corner = tile * int2(MIRAI_GROUP_X, MIRAI_GROUP_Y) - FILTER_APRON;
     for (uint i = index; i < uint(FILTER_TILE * FILTER_TILE); i += uint(MIRAI_GROUP_X * MIRAI_GROUP_Y)) {
         int2 q = corner + int2(int(i % uint(FILTER_TILE)), int(i / uint(FILTER_TILE)));
         float4 point = float4(0.0), normal = float4(0.0), texel = float4(0.0, 0.0, 0.0, 1.0);
@@ -121,12 +134,13 @@ void main(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID, uint index :
         filter_suns[i] = sun;
     }
     GroupMemoryBarrierWithGroupSync();
-    int2 p = int2(group.xy) * int2(MIRAI_GROUP_X, MIRAI_GROUP_Y) + int2(local.xy);
+    int2 p = tile * int2(MIRAI_GROUP_X, MIRAI_GROUP_Y) + int2(local.xy);
     if (any(p >= size)) return;
     int2 at = int2(local.xy) + FILTER_APRON;
     int center = at.x + at.y * FILTER_TILE;
+    // As direct_spread.comp leaves a point without a surface.
     if (filter_points[center].w < 0.5) {
-        out_points[p] = float4(0.0, 0.0, 0.0, 1.0);
+        out_points[p] = float4(0.0, 0.0, 0.0, -1.0);
         out_sun[p] = -1.0;
         return;
     }

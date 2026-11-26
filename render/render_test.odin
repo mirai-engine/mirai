@@ -325,6 +325,117 @@ render_soft_shadow_leaves_with_its_caster :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// The passes of the direct light after direct_maps.comp take only the tiles it
+// lists: in each case the image, the points and the light of the pixels are
+// those of every tile of rays and block listed, bit for bit, the same frame after frame, with
+// the tiles the case asks for listed; the frame of a view without maps, of
+// two views side by side and of a view made again at another size too.
+@(test)
+render_direct_tiles_give_what_every_tile_gives :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 256, 160, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	instances := []Instance_Desc{
+		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {16, 0.2, 16}), tint = {0.8, 0.8, 0.8}},
+		{object_id = 2, mesh = f.cube, transform = trs({0, 1.5, 0}, {2, 0.2, 2}), tint = {0.5, 0.5, 0.5}},
+		{object_id = 3, mesh = f.cube, transform = trs({-3, 1.5, -1}, {0.3, 3, 0.3}), tint = {0.5, 0.5, 0.5}},
+		{object_id = 4, mesh = f.cube, transform = trs({3, 0.15, 2}, {0.2, 0.3, 0.2}), tint = {0.5, 0.5, 0.5}},
+	}
+	sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true, indirect = 1, scattering = 1}
+	// Too small in the view for a map: its samples trace.
+	small := Light_Desc{position = {3.3, 0.5, 2.2}, color = {1, 0.8, 0.6}, intensity = 4 * math.PI, range = 0.8, radius = 0.05, indirect = 1, scattering = 1}
+	wide := Light_Desc{position = {2, 3, 1}, color = {0.6, 0.8, 1}, intensity = 30 * math.PI, range = 10, radius = 0.4, indirect = 1, scattering = 1}
+	camera := Camera{position = {0, 8, 7}, forward = {0, -8, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	above := Camera{position = {0, 10, 0.001}, forward = {0, -10, -0.001}, up = {0, 0, -1}, near = 0.05, far = 100, projection = .Orthographic, height = 12, exposure = UNIT_EXPOSURE}
+	// What a frame gives: its image, and of each view the light of its pixels,
+	// its points and their sun, and the tiles of samples, of rays and the
+	// blocks of the spread it lists, of the tiles and blocks it has.
+	Taken :: struct {image, direct, points, sun: [dynamic]u8, listed: [3]u32, tiles, blocks: u32}
+	take :: proc(t: ^testing.T, f: ^Cube_Fixture, frame: Frame_Desc, every: bool, loc := #caller_location) -> (taken: Taken) {
+		r := f.renderer
+		r.direct_every = every
+		testing.expect(t, renderer_frame(r, frame), r.error, loc = loc)
+		rhi.device_wait_idle(f.device)
+		image, _, _, ok := golden_capture(r, context.temp_allocator)
+		testing.expect(t, ok, r.error, loc = loc)
+		taken.image = slice.into_dynamic(image)
+		taken.direct.allocator, taken.points.allocator, taken.sun.allocator = context.temp_allocator, context.temp_allocator, context.temp_allocator
+		views := []View_State{r.main} if len(frame.views) == 0 else r.views[:r.view_count]
+		for &view in views {
+			v := &view.targets
+			across := [2]u32{groups(v.width, v.direct_scale), groups(v.height, v.direct_scale)}
+			at := [3]int{len(taken.direct), len(taken.points), len(taken.sun)}
+			resize(&taken.direct, at[0] + int(v.width * v.height) * 8)
+			resize(&taken.points, at[1] + int(across.x * across.y) * 8)
+			resize(&taken.sun, at[2] + int(across.x * across.y) * 2)
+			testing.expect(t, rhi.texture_read(f.device, v.direct, taken.direct[at[0]:]), loc = loc)
+			testing.expect(t, rhi.texture_read(f.device, v.direct_points, taken.points[at[1]:]), loc = loc)
+			testing.expect(t, rhi.texture_read(f.device, v.direct_sun_points, taken.sun[at[2]:]), loc = loc)
+			header: [DIRECT_TILES_HEADER]u32
+			testing.expect(t, rhi.buffer_read_slice(f.device, v.direct_tiles, 0, header[:]), loc = loc)
+			taken.listed += {header[DIRECT_TILES_SAMPLES], header[DIRECT_TILES_RAYS], header[DIRECT_TILES_SPREAD]}
+			tiles := [2]u32{groups(across.x, DIRECT_TILE), groups(across.y, DIRECT_TILE)}
+			run := u32(DIRECT_SPREAD_RUN / DIRECT_TILE)
+			taken.tiles += tiles.x * tiles.y
+			taken.blocks += groups(tiles.x, run) * groups(tiles.y, run)
+		}
+		return
+	}
+	// None: no tile listed; Some: some but not all.
+	Listed :: enum {Any, None, Some}
+	Case :: struct {what: string, lights: []Light_Desc, sun: Sun_Desc, frame: Frame_Desc, sun_radius: f32, samples, spread: Listed}
+	views := []Frame_View{{camera = camera, rect = {0, 0, 160, 160}}, {camera = camera, rect = {160, 0, 96, 160}}}
+	cases := []Case{
+		// Points at the borders of the view and of the floor that no map holds take samples.
+		{what = "the sun alone", sun = sun, frame = {camera = camera}, spread = .Some},
+		{what = "a light its maps hold", lights = {wide}, frame = {camera = camera}, samples = .None, spread = .Some},
+		{what = "a light without a map", lights = {small}, sun = sun, frame = {camera = camera}, samples = .Some},
+		{what = "wide penumbrae", lights = {small, wide}, sun = sun, frame = {camera = camera}, sun_radius = 0.1, spread = .Some},
+		{what = "a view without maps", lights = {small}, sun = sun, frame = {camera = above}},
+		{what = "two views", lights = {small}, sun = sun, frame = {views = views}, samples = .Some},
+	}
+	expect_listed :: proc(t: ^testing.T, listed: Listed, count, all: u32, what, of: string, loc := #caller_location) {
+		switch listed {
+		case .Any:
+		case .None: testing.expectf(t, count == 0, "%s lists %d %s", what, count, of, loc = loc)
+		case .Some: testing.expectf(t, count > 0 && count < all, "%s lists %d %s of %d", what, count, of, all, loc = loc)
+		}
+	}
+	// A view that slides by a block of the spread over wide penumbrae, so that
+	// their borders cross those of the blocks; the frames of a case.
+	slid := make([dynamic]Case, context.temp_allocator)
+	append(&slid, ..cases)
+	for k in 0 ..< 16 {
+		at := Vec3{0.25 * f32(k) - 2, 9, 0.25 * f32(k) - 2}
+		append(&slid, Case{what = "penumbrae across the blocks", lights = {wide}, sun = sun, frame = {camera = {position = at, forward = {0, -9, -0.001}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}}, sun_radius = 0.1})
+	}
+	cases = slid[:]
+	for size, round in ([2][2]u32{{256, 160}, {200, 120}}) {
+		renderer_resize(r, size.x, size.y)
+		for c in cases {
+			// The second round makes the targets of a view again at another size.
+			if round == 1 && (c.samples != .Some || len(c.frame.views) > 0) {continue}
+			r.settings.sun_radius = c.sun_radius if c.sun_radius != 0 else SUN_RADIUS
+			testing.expect(t, scene_given(r, instances, c.lights, c.sun, {sky = {0, 0, 0}}))
+			for _ in 0 ..< 12 {testing.expect(t, renderer_frame(r, c.frame), r.error)}
+			every, again, own := take(t, &f, c.frame, true), take(t, &f, c.frame, true), take(t, &f, c.frame, false)
+			for pair in ([2][2]Taken{{every, again}, {every, own}}) {
+				a, b := pair[0], pair[1]
+				same := [4]bool{slice.equal(a.image[:], b.image[:]), slice.equal(a.direct[:], b.direct[:]), slice.equal(a.points[:], b.points[:]), slice.equal(a.sun[:], b.sun[:])}
+				testing.expectf(t, same == {true, true, true, true}, "%s at %v: the image, the light, the points and their sun %v as with every tile listed", c.what, size, same)
+			}
+			expect_listed(t, c.samples, own.listed[0], own.tiles, c.what, "tiles of samples")
+			if c.samples == .None {expect_listed(t, .None, own.listed[1], own.tiles, c.what, "tiles of rays")}
+			expect_listed(t, c.spread, own.listed[2], own.blocks, c.what, "blocks of the spread")
+		}
+	}
+	expect_clean(t, f.device)
+}
+
 // The maps of the shadows keep what does not move: a caster that moves once,
 // one that keeps moving, one that stops and a light that moves each change the
 // shadow in the frame they change it.
