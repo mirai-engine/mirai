@@ -47,8 +47,10 @@
 //
 //   uint births(Mirai_Vfx_Context ctx, Parameters p)
 //                      once a frame, how many particles the emitter starts
-//                      in it (at most its capacity), spread over the frame;
-//                      born counts those it started before
+//                      in it, spread over the seconds of the frame it emits
+//                      in (ctx.delta_time; none while it does not emit);
+//                      born counts those it started before. Its effect says
+//                      in max_particles how many live at once
 //
 // A line `//! prepare` says the program prepares, once a frame for each
 // emitter and before its births and steps, words its other functions read:

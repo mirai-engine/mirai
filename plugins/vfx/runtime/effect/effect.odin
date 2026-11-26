@@ -99,7 +99,7 @@ Particle_Info :: struct {
     duration:f32 `mirai:"section=Spawn,min=0,unit=s"`, // of a cycle
     prewarm:bool,                             // a looping instance starts as if it had run a whole life
     max_instances:u16,                        // of the primary layer: emitters of the effect that run at once, those nearest a simulation source (scene.Simulation_Sources); the others pause and are not drawn; 0: all
-    max_particles:u32,                        // alive at once; 0: what the rate, the bursts and the lifetime need
+    max_particles:u32,                        // alive at once; 0: what the rate, the bursts and the lifetime need (an effect whose program gives its births says it)
     cull_distance:f32 `mirai:"min=0,unit=m"`, // of the primary layer: its emitters farther than this from every simulation source pause and are not drawn; 0: at any distance
     rate:f32 `mirai:"min=0,unit=1/s"`,
     rate_over_distance:f32 `mirai:"min=0,unit=1/m"`, // per metre the entity travels

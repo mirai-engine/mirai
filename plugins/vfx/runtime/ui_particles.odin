@@ -93,7 +93,7 @@ ui_effect_tell :: proc(entry:^UI_Effect,assets:^host.Assets,renderer:^erender.Re
     dt:f32,shaders:u64,sync:^Particle_Sync,info:^effect.Particle_Info,
 ) {
     shown,clock:=&entry.shown,&entry.clock
-    key:=base.hash_combine(emission_key(entry.effect,0,assets.revision),shaders)|1
+    key:=emission_key(entry.effect,0,assets.revision,shaders=shaders)
     if shown.resolved!=key {
         id:=base.hash_combine(entry.key,u64(entry.layer)+0x75695f7061727469)
         sub:=shown.sub_desc.id

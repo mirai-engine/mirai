@@ -291,7 +291,8 @@ clocks_resolve :: proc(clocks:^Particle_Clocks,sync:^Particle_Sync,overrides:^co
     clock:=clock_of(clocks,e)
     if clock==nil {return nil}
     inputs:=effect_stamp(sync,assets,emitter.particle)
-    key:=emission_key(emitter.particle,row_stamp(overrides,e),inputs,emitter.preset)
+    // The shaders too: the program of the effect says whether it gives the births.
+    key:=emission_key(emitter.particle,row_stamp(overrides,e),inputs,emitter.preset,sync.shaders)
     if clock.resolved==key {return clock}
     override,_:=core.get(overrides,e)
     info:=particle_resolve(assets,emitter.particle,&override,emitter.preset)
@@ -556,8 +557,7 @@ emitter_tell :: proc(f:^Sync_Frame,e:core.Entity) -> (again:bool) {
         shown.particle=emitter.particle
     }
     shown.inputs=inputs
-    key:=emission_key(emitter.particle,row_stamp(f.overrides,e),inputs,emitter.preset)
-    key=base.hash_combine(key,f.shaders)|1
+    key:=emission_key(emitter.particle,row_stamp(f.overrides,e),inputs,emitter.preset,f.shaders)
     count:=int(shown.layer_count)
     load:=shown.resolved!=key
     for i in 0..<min(count,len(sync.layers)) {
@@ -616,7 +616,7 @@ layer_tell :: proc(f:^Sync_Frame,e:core.Entity,emitter:Particle_Emitter,world:^c
     spawns:[SPAWNS]Particle_Spawn
     age:f32
     born:u64
-    birth_limit:=max(f32)
+    birth_limit:f32 // a program starts nothing before the clock of its emitter emits
     if clock:=clock_find(f.clocks,e,layer);clock!=nil {
         if clock.generation!=shown.generation {
             shown.generation=clock.generation
@@ -631,6 +631,7 @@ layer_tell :: proc(f:^Sync_Frame,e:core.Entity,emitter:Particle_Emitter,world:^c
         age=f32(clock.time)
         if clock.emission.program_births {birth_limit=f32(clock.program_until)}
     }
+    shown.desc.age,shown.desc.born,shown.desc.birth_limit=age,u32(born),birth_limit
     previous:=shown.placed?shown.transform:transform
     shown.transform,shown.placed=transform,true
     listener,listens:=core.get(f.listeners,e)
@@ -646,7 +647,6 @@ layer_tell :: proc(f:^Sync_Frame,e:core.Entity,emitter:Particle_Emitter,world:^c
     desc.transform,desc.previous=transform,previous
     desc.spawns=spawns
     desc.resources,desc.stages,desc.births=0,0,{}
-    desc.age,desc.born,desc.birth_limit=age,u32(born),birth_limit
     if shown.desc.info.shape==.Surface || shown.needs.resources[0].kind!=.None || shown.needs.stages[0].kind!=.None {
         bound,_:=core.get(f.bindings,e)
         rows:=emitter_resources(sync,shown,&bound,f.sources,e,host.extras_instances(&f.app.extras),f.drawn,f.meshes,f.worlds,f.id,a,r)

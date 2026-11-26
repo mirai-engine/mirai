@@ -2436,3 +2436,44 @@ unlit_particles_show_their_emission_in_their_own_units_in_daylight :: proc(t: ^t
 	testing.expectf(t, min(white[0], white[1], white[2]) > 200, "an emission past what the image holds saturates to white: %v", white)
 	expect_clean(t, f.device)
 }
+
+// A program that gives the births of its emitter starts none while the clock
+// of the emitter never emitted, whatever the frame covers of it (a frame
+// longer than the ticks of its clock, the first of its range), and starts
+// them once it emits (testdata/sprinkle.slang).
+@(test)
+program_births_wait_for_their_emitter_to_emit :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 96, 64, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	program := erender.program_find(&f.assets, "Sprinkle", .Vfx)
+	if !testing.expect(t, program != nil && program.births, "testdata has the Vfx program Sprinkle, which gives its births") {return}
+	waiting := test_emitter(1, {0, 0, 0})
+	waiting.info.lifetime = {30, 30}
+	waiting.owner = core.Entity(1)
+	waiting.program = {id = program.id, attributes = u32(program.attributes), births = true}
+	waiting.program.parameters[0][0] = 600
+	base.text_set(waiting.info.program[:], program.name)
+	TICK :: f32(1.0 / 60)
+	// Two ticks of the clock to each frame, the first of them one tick old.
+	frames :: proc(t: ^testing.T, f: ^Gpu_Fixture, e: ^Emitter_Desc, age: ^f32, count: int, emits: bool) {
+		for _ in 0 ..< count {
+			age^ += TICK if age^ == 0 else 2 * TICK
+			e.age = age^
+			if emits {e.birth_limit = age^}
+			testing.expect(t, frame_emitters(f, &f.sync, {e^}, 2 * TICK))
+			testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = FRONT, time = age^}), f.renderer.error)
+		}
+		rhi.device_wait_idle(f.device)
+	}
+	age: f32
+	frames(t, f, &waiting, &age, 6, false)
+	testing.expect_value(t, particles_alive(f), u32(0))
+	frames(t, f, &waiting, &age, 6, true)
+	testing.expect(t, particles_alive(f) > 0, "once its emitter emits, its program starts particles")
+	expect_clean(t, f.device)
+}

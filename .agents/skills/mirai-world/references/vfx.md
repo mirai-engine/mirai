@@ -273,7 +273,9 @@ fade), and drops unrequested effects.
 - Contract: `shaders/include/mirai_vfx.slang` ([Vfx domain][vfx-domain]); built-in `Orbit`
   (`plugins/vfx/shaders/orbit.slang`). `initialize` runs after effect defaults; `update` before
   effect forces; `render` writes draw records (`visual.data`/`given`/`random` -> sprite Surface
-  program); `//! births` replaces effect births (emit mode 3).
+  program); `//! births` replaces effect births (emit mode 3) over the seconds of the frame its
+  clock emitted in (`Emitter_Clock.program_until` -> `Gpu_Emitter.birth_limit`; none before it
+  starts), and its effect says `max_particles` (`particle_program_check` refuses it otherwise).
 - Each active program supplies emit, simulate, and stage pipelines (`_hw` when tracing); sprite and
   mesh vertex pipelines are shared. Editor [debugging](vfx-editor.md#debugging) reads
   `emitter_ranges`.
@@ -323,8 +325,9 @@ does not reach G-buffer meshes. Local-space meshes take motion vectors from the 
   (`two_ribbons.slang`), `Surface` on a posed skin (`testdata/stick.slang`), `World`
   hits/friction, sprite Surface programs (`hand_over.slang`, `particle_data.slang`), grid
   stages/splats (`tally.slang`, `spread.slang`), weighted velocity-facing meshes, stage rays
-  (`probe.slang`), volumes (`puff.slang`), world textures (`count_ground.slang`), channel rollback
-  (`testdata/gather.slang`), fog/glass sorting, zero-alloc frames, debugger (`glitch.slang`),
+  (`probe.slang`), program births (`sprinkle.slang`), volumes (`puff.slang`), world textures
+  (`count_ground.slang`), channel rollback (`testdata/gather.slang`), fog/glass sorting,
+  zero-alloc frames, debugger (`glitch.slang`),
   additive meshes, `Multiply`, ribbon segments, `Emitter_Up` and tiles (`trail_stripes.slang`),
   `Emitter` facing with `scale`, local-space motion vectors and inheritance.
 - `mirai test plugins/vfx/editor -collection:plugins=<root>/plugins`: `document_test.odin`.

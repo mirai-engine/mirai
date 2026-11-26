@@ -179,8 +179,8 @@ struct Particle_Event {
 #endif
 #endif
 [[vk::binding(SLOT_PASS1, 0)]] StructuredBuffer<Particle_Emitter> particle_emitters : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
-// What the frame gives the emitters besides their rows: the bones they read, the grids of
-// the world, their resources and stages, then the births of channels.
+// What the frame gives the emitters besides their rows: the grids of the world, their
+// resources and stages, then the births of channels.
 [[vk::binding(SLOT_PASS4, 0)]] ByteAddressBuffer particle_frame : register(MIRAI_REGISTER(t, SLOT_PASS4), space0);
 // The world buffer: for each surface of the world, the area of its triangles added up in
 // their order, as floats; then the grids (vfx.Gpu_Grid says where).
