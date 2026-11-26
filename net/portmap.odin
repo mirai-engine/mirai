@@ -82,6 +82,10 @@ portmap_publish :: proc(m:^Port_Mapping,status:Port_Mapping_Status) {sync.mutex_
 portmap_seconds :: proc(start:time.Tick) -> f64 {return time.duration_seconds(time.tick_since(start))}
 @(private)
 portmap_pause :: proc() {time.sleep(10*time.Millisecond)}
+// Seconds PCP and NAT-PMP each wait for the router, sending at 0, 0.1 and 0.3:
+// a router that speaks them answers on its LAN within milliseconds.
+@(private)
+PORTMAP_ANSWER_SECONDS :: 0.4
 
 @(private)
 portmap_worker :: proc(m:^Port_Mapping) {
@@ -103,14 +107,18 @@ portmap_worker :: proc(m:^Port_Mapping) {
         return
     }
     local.port=0
-    udp:Udp
+    udp,ssdp:Udp
     if !udp_open(&udp,local) {portmap_publish(m,{phase=.Unavailable});return}
     defer udp_close(&udp)
+    // SSDP asks from the start on a socket of its own: the router's answer
+    // waits there while PCP and NAT-PMP are tried.
+    if udp_open(&ssdp,local) {portmap_upnp_discover(m,&ssdp,gateway)}
+    defer udp_close(&ssdp)
     lease:Portmap_Lease
     crypto.rand_bytes(lease.nonce[:])
     if !portmap_stopped(m) && portmap_pcp(m,&udp,gateway,local,&lease,3600) {lease.method=.PCP}
     if lease.method==.None && !portmap_stopped(m) && portmap_natpmp(m,&udp,gateway,&lease,3600) {lease.method=.NAT_PMP}
-    if lease.method==.None && !portmap_stopped(m) && portmap_upnp_acquire(m,&udp,gateway,local,&lease) {lease.method=.UPnP}
+    if lease.method==.None && ssdp.open && !portmap_stopped(m) && portmap_upnp_acquire(m,&ssdp,gateway,local,&lease) {lease.method=.UPnP}
     if lease.method==.None {
         portmap_publish(m,{phase=portmap_stopped(m)?.Closed:.Unavailable})
         return
@@ -220,9 +228,9 @@ portmap_pcp :: proc(m:^Port_Mapping,u:^Udp,gateway,local:Address,lease:^Portmap_
             udp_send(u,gateway,deletion[:])
         }
     }
-    start:=time.tick_now();next:=0.0;interval:=0.25
+    start:=time.tick_now();next:=0.0;interval:=0.1
     buffer:[1200]u8
-    for portmap_seconds(start)<2.0 && !portmap_stopped(m) {
+    for portmap_seconds(start)<PORTMAP_ANSWER_SECONDS && !portmap_stopped(m) {
         now:=portmap_seconds(start)
         if now>=next {udp_send(u,gateway,request[:]);next=now+interval;interval*=2}
         for _ in 0..<16 {
@@ -264,10 +272,10 @@ portmap_natpmp :: proc(m:^Port_Mapping,u:^Udp,gateway:Address,lease:^Portmap_Lea
         }
     }
     external_request:[2]u8
-    start:=time.tick_now();next:=0.0;interval:=0.25
+    start:=time.tick_now();next:=0.0;interval:=0.1
     ip:Address;external:u16;lifetime:u32
     buffer:[1200]u8
-    for portmap_seconds(start)<2.0 && !portmap_stopped(m) {
+    for portmap_seconds(start)<PORTMAP_ANSWER_SECONDS && !portmap_stopped(m) {
         now:=portmap_seconds(start)
         if now>=next {
             udp_send(u,gateway,external_request[:]);udp_send(u,gateway,request[:])
