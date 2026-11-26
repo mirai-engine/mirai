@@ -123,12 +123,13 @@ Gpu_Particle :: struct {
     color:u32,          // rgba8 of the mix it started with
     light:u32,          // rgb with a shared exponent: the light it receives
     emitter:u32,        // slot
-    flags:u32,          // 1: light holds a value; from MESH_CHOICE_SHIFT, the mesh of a Mesh particle; from RIBBON_PIECES_SHIFT, the pieces of the segment of a ribbon it starts; above RIBBON_SHIFT, the ribbon it joins (0: that of its emitter)
+    flags:u32,          // 1: light holds a value; from MESH_CHOICE_SHIFT, the mesh of a Mesh particle; from RIBBON_PIECES_SHIFT, the pieces of the segment of a ribbon it starts; at SUN_SHIFT, whether the sun reaches a lit Mesh particle; above RIBBON_SHIFT, the ribbon it joins (0: that of its emitter)
 }
 #assert(size_of(Gpu_Particle)==64)
 RIBBON_SHIFT :: 11
 RIBBON_PIECES_SHIFT :: 3 // 4 bits
 MESH_CHOICE_SHIFT :: 1 // 2 bits: which of the meshes of its emitter a Mesh particle shows (PARTICLE_MESHES of them)
+SUN_SHIFT :: 7 // 1 bit: the sun reaches a lit Mesh particle, which shades it by its normal; its light is the rest
 
 Gpu_Emitter :: struct {
     world,previous:[3][4]f32,

@@ -1265,11 +1265,8 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
         float reach = 0.0;
         float mapped = -1.0;
         if (item == 0u) {
-            if (frame.sun_direction.w < 0.5 || !(sun_share > 0.0)) continue;
-            float cosine = dot(s.normal, s.normal) > 0.5 ? dot(s.normal, frame.sun_direction.xyz) : 1.0;
-            if (cosine <= 0.0) continue;
-            radiance = sun_light(s.position) * (cosine * sun_share) * shading_response(s, frame.sun_direction.xyz);
-            if (luminance(radiance) <= light_cutoff()) continue;
+            radiance = sun_radiance(s, sun_share);
+            if (!(luminance(radiance) > light_cutoff())) continue;
             direction = frame.sun_direction.xyz;
             reach = sun_reach(origin, direction);
 #ifndef MIRAI_NO_SHADOW_RAYS

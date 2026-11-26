@@ -20,7 +20,7 @@ Particle_File :: struct {
     info:effect.Particle_Info,
     layers:[effect.PARTICLE_LAYERS-1]effect.Particle_Info,
     layer_count:int,
-    parameters:[effect.PARTICLE_MAX_PARAMETERS*effect.PARTICLE_LAYERS]effect.Particle_Parameter,
+    parameters:[effect.PARTICLE_EFFECT_PARAMETERS]effect.Particle_Parameter,
     parameter_count:int,
     hidden:[PARTICLE_FIELDS]effect.Particle_Field,
     hidden_count:int,

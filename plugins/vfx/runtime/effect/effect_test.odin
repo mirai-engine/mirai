@@ -52,6 +52,34 @@ particle_effects_keep_their_values_parameters_hidden_fields_and_assets :: proc(t
     bad:=info
     bad.rate=math.nan_f32()
     testing.expect_value(t,particle_save(path,&types,{id={7,8},info=bad}),asset.Error.Invalid)
+
+    // As many layers as an effect holds, each with its parameters, and not one more.
+    many:[PARTICLE_LAYERS]Particle_Info
+    each:[PARTICLE_LAYERS]Particle_Parameter
+    for &layer,i in many {
+        layer=particle_preset(.Smoke)
+        layer.rate=f32(i)
+        each[i]=parameters[0]
+        each[i].layer=u8(i)
+    }
+    testing.expect_value(t,particle_save(path,&types,{id={7,8},info=many[0],layers=many[1:],parameters=each[:]}),asset.Error.None)
+    full:asset.Asset
+    testing.expect_value(t,asset.asset_load(&full,path),asset.Error.None)
+    defer asset.asset_close(&full)
+    read,read_error:=particle_view(&full,&types)
+    testing.expect_value(t,read_error,asset.Error.None)
+    testing.expect(t,len(read.layers)==PARTICLE_LAYERS-1 && read.layers[PARTICLE_LAYERS-2]==many[PARTICLE_LAYERS-1])
+    testing.expect_value(t,len(read.parameters),PARTICLE_LAYERS)
+    testing.expect_value(t,particle_save(path,&types,{id={7,8},info=info,layers=many[:]}),asset.Error.Invalid)
+    // The parameters of all the layers have a room of their own.
+    crowd:[PARTICLE_EFFECT_PARAMETERS+PARTICLE_LAYERS]Particle_Parameter
+    for &parameter,i in crowd {
+        parameter=parameters[0]
+        base.text_set(parameter.name[:],fmt.tprintf("p%d",i/PARTICLE_LAYERS))
+        parameter.layer=u8(i%PARTICLE_LAYERS)
+    }
+    testing.expect(t,particle_parameters_validate(crowd[:PARTICLE_EFFECT_PARAMETERS],PARTICLE_LAYERS).message=="")
+    testing.expect(t,particle_parameters_validate(crowd[:],PARTICLE_LAYERS).message!="")
 }
 
 @(test)

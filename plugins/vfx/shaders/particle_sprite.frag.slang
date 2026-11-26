@@ -34,7 +34,7 @@ struct Params_Block { uint emitter; uint pass; uint pad0; uint pad1; Media_Grid 
 
 struct Stage_Input {
     [[vk::location(0)]] float4 in_color : TEXCOORD0;
-    [[vk::location(1)]] float3 in_light : TEXCOORD1;
+    [[vk::location(1)]] float4 in_light : TEXCOORD1;
     [[vk::location(2)]] float4 in_uv : TEXCOORD2;
     [[vk::location(3)]] float3 in_blend_depth_life : TEXCOORD3;
     [[vk::location(4)]] nointerpolation float in_seed : TEXCOORD4;
@@ -87,7 +87,7 @@ Stage_Output main(Stage_Input input, float4 pixel_position : SV_Position) {
     bool multiply = !mesh && (flags & FLAG_MULTIPLY) != 0u;
     float scene = g_depth.Load(int3(pixel, 0)).r;
     float3 base_color, emission;
-    float alpha;
+    float alpha, metallic = m.metallic, roughness = m.roughness;
     // The color of a mesh tints it as it tints the mesh in the G-buffer.
     float4 tint = input.in_color * float4(material_vertex_tint(m, input.in_vertex_color.rgb), 1.0);
     Material_Sample values;
@@ -101,6 +101,8 @@ Stage_Output main(Stage_Input input, float4 pixel_position : SV_Position) {
         base_color = (values.layers.bits & MATERIAL_LAYER_UNLIT) != 0u ? float3(0.0) : values.base_color;
         emission = values.emission;
         alpha = values.alpha;
+        metallic = values.metallic;
+        roughness = values.roughness;
         tint = float4(1.0);
     } else {
         // Without a texture a sprite is a puff, a ribbon fades to its edges and a mesh is whole.
@@ -134,7 +136,12 @@ Stage_Output main(Stage_Input input, float4 pixel_position : SV_Position) {
     // An unlit particle shows its emission in the units of its emitter, as it
     // shows its color (particle_sprite.vert); a lit one, in those of its material.
     bool relative = (flags & PARTICLE_FLAG_LIT) != 0u ? m.emission_mode == EMISSION_RELATIVE : (flags & PARTICLE_FLAG_RELATIVE) != 0u;
-    float3 radiance = finite_or_zero(surface * input.in_light + emission_render_units(emission * tint.rgb, relative));
+    float3 radiance = surface * input.in_light.rgb + emission_render_units(emission * tint.rgb, relative);
+    // A lit mesh shades the sun by its normal and its material, as the scene shades it.
+    if (input.in_light.w > 0.0) {
+        radiance += sun_radiance(shading_surface(input.in_world, facing, to_eye(input.in_world), surface, metallic, roughness), input.in_light.w);
+    }
+    radiance = finite_or_zero(radiance);
     float4 medium = media_over(media, params.media, input.in_world);
     radiance = radiance * medium.a + (additive ? float3(0.0) : medium.rgb);
     output.out_color = float4(radiance * alpha, additive ? 0.0 : alpha);

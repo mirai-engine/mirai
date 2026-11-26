@@ -70,9 +70,9 @@ mirai import assets/player/step.wav assets/player/land.wav   # .sound each; many
 
 ## Inspect
 
-- `mirai asset ls <folder>`, `info`, `verify <file>...`, `deps <file> --users`, `dump`, `get <file>
-  <path>`, `set <file> <path>=<value>`; rows are added by `unpack`, editing `asset.json`, `pack`; a
-  scene or a `.ui`, by the document `dump` prints ([text](assets/text-sources.md)).
+- `mirai asset ls <folder>` (a folder in `assets` resolves against all of it), `info`, `verify
+  <file>...`, `deps <file> --users`, `dump`, `get`/`set <file> <path>[=<value>]`; rows: `unpack`,
+  edit `asset.json`, `pack`; a scene or `.ui`: the `dump` document ([text](assets/text-sources.md)).
 
 ## Pitfalls that fail silently
 - A hard-coded id of an imported asset matches nothing in another checkout: ids are random.

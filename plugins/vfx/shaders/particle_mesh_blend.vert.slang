@@ -10,7 +10,7 @@ struct Params_Block { uint emitter; uint pass; uint mesh; uint pad1; };
 struct Stage_Output {
     float4 position : SV_Position;
     [[vk::location(0)]] float4 out_color : TEXCOORD0;
-    [[vk::location(1)]] float3 out_light : TEXCOORD1;
+    [[vk::location(1)]] float4 out_light : TEXCOORD1;
     [[vk::location(2)]] float4 out_uv : TEXCOORD2;
     [[vk::location(3)]] float3 out_blend_depth_life : TEXCOORD3;
     [[vk::location(4)]] nointerpolation float out_seed : TEXCOORD4;
@@ -59,7 +59,9 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
     // program tints by both, as the G-buffer does; a program reads each.
     output.out_color = look.color;
     output.out_vertex_color = v.color;
-    output.out_light = (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_LIT) != 0u ? particle_light(p) : emission_render_units(float3(1.0), (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_RELATIVE) != 0u);
+    // Lit, the light around it, and the sun the fragment shades by its normal where it reaches it.
+    bool lit = (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_LIT) != 0u;
+    output.out_light = lit ? float4(particle_light(p), float((p.flags >> SUN_SHIFT) & 1u)) : float4(emission_render_units(float3(1.0), (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_RELATIVE) != 0u), 0.0);
     output.out_uv = float4(v.uv, v.uv1);
     output.out_blend_depth_life = float3(0.0, dot(world - frame.camera_position.xyz, frame.camera_forward.xyz), particle_life(p));
     output.out_seed = float(p.seed & 1023u) * 0.37;
