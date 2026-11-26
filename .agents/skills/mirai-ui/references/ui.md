@@ -103,8 +103,9 @@ focus). `escape(ctx)` fires once if no field/popup consumed Escape/`Pad.Cancel`.
 ### Text fields
 
 `text_edit.odin`: editor first-click selects all (game field places caret); Enter/Tab/blur commit,
-Escape discards; `multiline` draws visible lines only; `password` masks display; single active
-`ctx.edit` (`TEXT_EDIT_CAPACITY`) with per-edit undo/redo (`Primary+Z`/`Y`/`Shift+Z`) and word nav.
+Escape discards; `multiline` draws visible lines only; `password` masks display; `read_only`
+selects and copies but no key changes the text; single active `ctx.edit` (`TEXT_EDIT_CAPACITY`)
+with per-edit undo/redo (`Primary+Z`/`Y`/`Shift+Z`) and word nav.
 
 ### Number fields
 

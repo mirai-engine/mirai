@@ -43,6 +43,7 @@ Text_Edit :: struct {
     scroll:f32,         // units the text is shifted left
     filter:Text_Filter,
     multiline:bool,     // line breaks are part of the text and the lines wrap
+    read_only:bool,     // the text is selected and copied, never changed
     newline:bool,       // Enter adds a line break instead of applying the text
     wrap:f32,           // units the lines wrap at; the field sets it each frame
     scroll_y:f32,       // units the text is shifted up
@@ -236,7 +237,7 @@ text_edit_splice :: proc(e:^Text_Edit,lo,hi:int,text:string) {
 @(private)
 text_edit_replace :: proc(e:^Text_Edit,lo,hi:int,text:string,kind:Edit_Kind) {
     text:=text[:clamp(e.capacity-e.length+hi-lo,0,len(text))]
-    if lo==hi && text=="" {return}
+    if e.read_only || lo==hi && text=="" {return}
     text_edit_record(e,lo,hi,text,kind)
     text_edit_splice(e,lo,hi,text)
 }
@@ -588,6 +589,7 @@ Text_Field :: struct {
     bare:bool,           // the text alone, without the box of a field
     inline:bool,         // the text on its panel: the outline shows under the pointer, and the field while it is typed
     password:bool,
+    read_only:bool,      // its text is selected and copied, never typed
     font:u8,
     // A field of a game: its fill, stroke, corners and text are those of the
     // style, its selection the mark (or its text at a quarter) and its
@@ -645,7 +647,7 @@ text_field :: proc(ctx:^Context,id:Id,buffer:[]u8,length:^int,field:Text_Field={
         }
     } else if !field.disabled && id!=0 && (it.pressed || ctx.activate==id || ctx.edit_request==id) {
         field_edit_begin(ctx,id,string(buffer[:length^]),field.filter,capacity,!field.keep_caret && look==nil,field.multiline)
-        e.font=font
+        e.font,e.read_only=font,field.read_only
         // The press that starts a field of a game places its caret.
         if look!=nil && it.pressed {
             if area,found:=widget_rect(ctx,field_area(ctx,id));found {text_edit_press(ctx,e,size,area)}
