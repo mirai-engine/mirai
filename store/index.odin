@@ -78,12 +78,6 @@ Tomb_Key :: struct {
     offset:u64,
 }
 
-@(private)
-Recent :: struct {
-    kind:Frame_Kind,
-    address:Hash,
-}
-
 // Open addressing by the address's first bytes; a zero address is empty.
 @(private)
 Table :: struct {
@@ -164,7 +158,6 @@ state_init :: proc(s:^Store) {
     state.touched=make(map[Hash]i64,s.state.allocator)
     state.stages=make([dynamic]^Stage,0,0,s.state.allocator)
     state.builders=make([dynamic]^Object_Writer,0,0,s.state.allocator)
-    state.recent=make([dynamic]Recent,0,0,s.state.allocator)
     state.coders=make([dynamic]^Coder,0,0,s.state.allocator)
     w:=&state.writer
     w.deduped=make([dynamic]Deduped,0,0,s.state.allocator)
@@ -176,7 +169,8 @@ state_init :: proc(s:^Store) {
 state_destroy :: proc(s:^Store) {
     state:=s.state
     generation_close(s,&state.generation)
-    for &p in state.packs {pack_close(&p)}
+    for &p in state.packs {pack_close_locked(s,&p)}
+    if state.root_lock!=nil {os.close(state.root_lock)}
     delete(state.packs)
     delete(state.pack_index)
     refs_clear(s)
@@ -184,7 +178,6 @@ state_destroy :: proc(s:^Store) {
     delete(state.tombs)
     delete(state.touched)
     table_destroy(&state.table,state.allocator)
-    table_destroy(&state.retired,state.allocator)
     for st in state.stages {stage_free(s,st)}
     delete(state.stages)
     for b in state.builders {
@@ -192,7 +185,6 @@ state_destroy :: proc(s:^Store) {
         free(b,state.allocator)
     }
     delete(state.builders)
-    delete(state.recent)
     for c in state.coders {coder_free(s,c)}
     delete(state.coders)
     w:=&state.writer
@@ -204,10 +196,54 @@ state_destroy :: proc(s:^Store) {
 }
 
 @(private)
-pack_close :: proc(p:^Pack) {
+pack_close_locked :: proc(s:^Store,p:^Pack) {
     if p.view!=nil {file_unmap(p.view)}
-    if p.file!=nil {os.close(p.file)}
-    p.view,p.file=nil,nil
+    pack_file_close_locked(s,p)
+    p.view=nil
+}
+
+// Pack files a value keeps open: a store of many packs never takes the
+// process's descriptors, and a pack whose file was closed opens again when it
+// is read. A mapping outlives its file.
+@(private) FILES_MAX :: 64
+
+// The open file of a pack, opened when needed; the file used longest ago is
+// closed first when FILES_MAX are open.
+@(private)
+pack_file_locked :: proc(s:^Store,index:int) -> (file:^os.File,error:Error) {
+    state:=s.state
+    state.clock+=1
+    state.packs[index].used=state.clock
+    if f:=state.packs[index].file;f!=nil {return f,.None}
+    files_make_room_locked(s)
+    buffer:[PATH_BYTES]u8
+    file=io_open(s,pack_file_path(s,&state.packs[index],&buffer) or_return) or_return
+    state.packs[index].file=file
+    state.files+=1
+    return file,.None
+}
+
+// Closes the file used longest ago, but its writer's own, when FILES_MAX are open.
+@(private)
+files_make_room_locked :: proc(s:^Store) {
+    state:=s.state
+    for state.files>=FILES_MAX {
+        oldest:=-1
+        for &p,i in state.packs {
+            if p.file==nil || p.own {continue}
+            if oldest<0 || p.used<state.packs[oldest].used {oldest=i}
+        }
+        if oldest<0 {return}
+        pack_file_close_locked(s,&state.packs[oldest])
+    }
+}
+
+@(private)
+pack_file_close_locked :: proc(s:^Store,p:^Pack) {
+    if p.file==nil {return}
+    os.close(p.file)
+    p.file=nil
+    s.state.files-=1
 }
 
 @(private)
@@ -426,25 +462,31 @@ refresh_locked :: proc(s:^Store) -> Error {
     number:=state.generation.number
     if newest>number {
         g:=generation_load(s,newest) or_return
+        // Every pack is mapped before the generation is taken: a failure keeps
+        // the one read before whole.
+        for gp,i in g.packs {
+            index,error:=pack_add_locked(s,{writer=gp.writer,seq=gp.seq})
+            if error!=.None {
+                generation_close(s,&g)
+                return error
+            }
+            g.map_pack[i]=index
+        }
         generation_close(s,&state.generation)
         state.generation=g
         for &p in state.packs {p.indexed=false}
         for gp,i in g.packs {
-            index:=pack_add_locked(s,{writer=gp.writer,seq=gp.seq}) or_return
-            p:=&state.packs[index]
+            p:=&state.packs[g.map_pack[i]]
             p.indexed,p.sealed,p.size,p.created=true,true,i64(gp.size),gp.created
             p.gone=false
-            state.generation.map_pack[i]=index
         }
         state_rebuild_locked(s)
-        writer_ack_locked(s)
     }
     packs_read_locked(s) or_return
-    // Outside a sweep, a pack that is gone is read again only by its path, from retired/.
-    if newest>number && !state.recording {
-        for &p in state.packs {
-            if p.gone && !p.lent && !p.own {pack_close(&p)}
-        }
+    // A pack that is gone is closed, but a mapping lent to a caller.
+    for &p in state.packs {
+        if !p.gone || p.own {continue}
+        if p.lent {pack_file_close_locked(s,&p)} else {pack_close_locked(s,&p)}
     }
     return .None
 }
@@ -465,14 +507,14 @@ packs_read_locked :: proc(s:^Store) -> Error {
         index:=pack_add_locked(s,id) or_return
         if index<len(listed) {listed[index]=true}
         p:=&state.packs[index]
-        if p.indexed || p.own || p.damaged || p.retired>0 || (p.sealed && p.file!=nil) {continue}
-        if !p.sealed && p.file!=nil && e.size<=p.size {continue}
+        if p.indexed || p.own || p.damaged || p.gone || (p.sealed && p.view!=nil) {continue}
+        if !p.sealed && p.size>0 && e.size<=p.size {continue}
         pack_load_locked(s,index) or_return
     }
-    // A pack a sweep retired is no longer read, though this value may hold it open.
+    // A pack a sweep removed is no longer read, though this value may hold it mapped.
     w:=&state.writer
     for &p,i in state.packs {
-        if i<len(listed) && !listed[i] && !p.indexed && p.retired==0 && !(w.open && i==w.pack) {p.gone=true}
+        if i<len(listed) && !listed[i] && !p.indexed && !(w.open && i==w.pack) {p.gone=true}
     }
     return .None
 }
@@ -483,21 +525,18 @@ packs_read_locked :: proc(s:^Store) -> Error {
 @(private)
 pack_load_locked :: proc(s:^Store,index:int) -> Error {
     state:=s.state
+    file,error:=pack_file_locked(s,index)
+    if error==.Missing {
+        state.packs[index].gone=true
+        return .None
+    }
+    if error!=.None {return error}
+    size,size_error:=os.file_size(file)
+    if size_error!=nil {return os_error(size_error)}
     p:=&state.packs[index]
-    if p.file==nil {
-        buffer:[PATH_BYTES]u8
-        file,error:=io_open(s,pack_file_path(s,p,&buffer) or_return)
-        if error==.Missing {
-            if p.retired==0 {p.gone=true}
-            return .None
-        }
-        if error!=.None {return error}
+    if p.size==0 {
         // A pack its writer has made but not yet given its head is read again on the next miss.
-        if size,size_error:=os.file_size(file);size_error!=nil || size<size_of(Pack_Head) {
-            os.close(file)
-            return .None
-        }
-        p.file=file
+        if size<size_of(Pack_Head) {return .None}
         head:Pack_Head
         if read_exact(file,mem.ptr_to_bytes(&head),0)!=.None || string(head.magic[:])!=PACK_MAGIC || head.writer!=p.id.writer {
             p.damaged=true
@@ -505,8 +544,6 @@ pack_load_locked :: proc(s:^Store,index:int) -> Error {
         }
         p.created,p.size=head.created,size_of(Pack_Head)
     }
-    size,size_error:=os.file_size(p.file)
-    if size_error!=nil {return os_error(size_error)}
     if trailer_load_locked(s,index,size) {return .None}
     p=&state.packs[index]
     if p.damaged {return .None}
@@ -519,17 +556,9 @@ pack_load_locked :: proc(s:^Store,index:int) -> Error {
         delete(scan.frames)
         delete(scan.payloads)
     }
-    pack_scan(p.file,p.size,size,&scan,proc(data:rawptr,scan:^Scan,time:i64) -> Error {
+    pack_scan(file,p.size,size,&scan,proc(data:rawptr,scan:^Scan,time:i64) -> Error {
         a:=(^Apply)(data)
-        state:=a.s.state
-        retired:=state.packs[a.pack].retired>0
         for f in scan.frames {
-            if retired {
-                if f.head.kind!=.Chunk {continue}
-                l:=Location{pack=u32(a.pack),offset=u64(head_data_at(f.at,f.head)),stored=f.head.stored,raw=f.head.raw,codec=f.head.codec,align=f.head.align,time=time}
-                table_put(&state.retired,f.head.address,l,state.allocator) or_return
-                continue
-            }
             payload:=scan.payloads[f.payload[0]:f.payload[1]]
             frame_apply(a.s,a.pack,f.head,f.at,payload,time) or_return
         }
@@ -544,10 +573,12 @@ pack_load_locked :: proc(s:^Store,index:int) -> Error {
 @(private)
 trailer_load_locked :: proc(s:^Store,index:int,size:i64) -> bool {
     state:=s.state
-    p:=&state.packs[index]
     if size<size_of(Pack_Head)+size_of(Footer) {return false}
+    file,error:=pack_file_locked(s,index)
+    if error!=.None {return false}
+    p:=&state.packs[index]
     footer:Footer
-    if read_exact(p.file,mem.ptr_to_bytes(&footer),size-size_of(Footer))!=.None || string(footer.magic[:])!=SEAL_MAGIC {return false}
+    if read_exact(file,mem.ptr_to_bytes(&footer),size-size_of(Footer))!=.None || string(footer.magic[:])!=SEAL_MAGIC {return false}
     trailer:=i64(footer.trailer)
     if footer.trailer>u64(size) || trailer!=align_up(i64(min(footer.frames_end,u64(size))),8) || footer.frames_end<size_of(Pack_Head) {return false}
     body:=u64(size)-size_of(Footer)-footer.trailer
@@ -555,8 +586,7 @@ trailer_load_locked :: proc(s:^Store,index:int,size:i64) -> bool {
     if u64(footer.chunks)*(size_of(Hash)+size_of(Location))+256*4+u64(footer.extras)*size_of(Extra)!=body {return false}
     view:=p.view
     if view==nil {
-        error:Error
-        view,error=file_map(p.file,size)
+        view,error=file_map(file,size)
         if error!=.None {return false}
     }
     mapped:=p.view==nil
@@ -569,7 +599,9 @@ trailer_load_locked :: proc(s:^Store,index:int,size:i64) -> bool {
     chunks:=int(footer.chunks)
     addresses:=([^]Hash)(raw_data(trailer_bytes))[:chunks]
     locations:=([^]Location)(raw_data(trailer_bytes[chunks*size_of(Hash):]))[:chunks]
-    fanout:=([^]u32)(raw_data(trailer_bytes[chunks*(size_of(Hash)+size_of(Location)):]))[:256]
+    // The fanout is at 2 mod 4 when chunks is odd: it is read through an aligned copy.
+    fanout:[256]u32
+    copy(mem.slice_to_bytes(fanout[:]),trailer_bytes[chunks*(size_of(Hash)+size_of(Location)):][:size_of(fanout)])
     extras:=([^]Extra)(raw_data(trailer_bytes[chunks*(size_of(Hash)+size_of(Location))+256*4:]))[:footer.extras]
     valid:=fanout[255]==footer.chunks
     for b in 1..<256 {valid&&=fanout[b]>=fanout[b-1]}
@@ -590,13 +622,11 @@ trailer_load_locked :: proc(s:^Store,index:int,size:i64) -> bool {
     }
     p.view,p.sealed,p.size,p.last=view,true,size,footer.last
     if p.indexed {return true}
-    table:=&state.retired if p.retired>0 else &state.table
     for a,i in addresses {
         l:=locations[i]
         l.pack=u32(index)
-        if table_put(table,a,l,state.allocator)!=.None {return true}
+        if table_put(&state.table,a,l,state.allocator)!=.None {return true}
     }
-    if p.retired>0 {return true}
     for x in extras {
         head:=intrinsics.unaligned_load((^Frame_Head)(raw_data(view[x.offset:])))
         if !head_valid(&head) || head.kind==.Chunk || head.kind==.Commit || u64(head_end(i64(x.offset),head))>footer.frames_end {continue}
@@ -617,12 +647,10 @@ frame_apply :: proc(s:^Store,pack:int,head:Frame_Head,at:i64,payload:[]u8,time:i
     case .Touch:
         if old,found:=state.touched[head.address];found && old>=time {return .None}
         if _,e:=map_insert(&state.touched,head.address,time);e!=nil {return .Out_Of_Memory}
-        recent_add(s,.Touch,head.address) or_return
     case .Ref:
         namespace,name,ref_time,ok:=ref_payload(payload)
         if !ok {return .None}
         ref_fold(s,namespace,name,{address=head.address,time=ref_time,pack=pack,offset=at}) or_return
-        recent_add(s,.Ref,head.address) or_return
     case .Tombstone:
         if len(payload)!=size_of(Tomb_Payload) {return .None}
         t:=intrinsics.unaligned_load((^Tomb_Payload)(raw_data(payload)))
@@ -630,13 +658,6 @@ frame_apply :: proc(s:^Store,pack:int,head:Frame_Head,at:i64,payload:[]u8,time:i
         if _,e:=map_insert(&state.tombs,Tomb_Key{index,t.offset},struct{}{});e!=nil {return .Out_Of_Memory}
     case .Pad,.Commit:
     }
-    return .None
-}
-
-@(private)
-recent_add :: proc(s:^Store,kind:Frame_Kind,address:Hash) -> Error {
-    if !s.state.recording {return .None}
-    if _,e:=append(&s.state.recent,Recent{kind,address});e!=nil {return .Out_Of_Memory}
     return .None
 }
 
@@ -717,7 +738,7 @@ state_rebuild_locked :: proc(s:^Store) {
     clear(&state.touched)
     w:=&state.writer
     for &p,i in state.packs {
-        if p.indexed || p.gone || p.damaged || p.retired>0 {continue}
+        if p.indexed || p.gone || p.damaged {continue}
         if p.own && w.open && i==w.pack {
             for f in w.own {
                 at:=i64(f.location.offset)
@@ -743,7 +764,7 @@ state_rebuild_locked :: proc(s:^Store) {
             continue
         }
         p.sealed=false
-        if p.file!=nil {p.size=size_of(Pack_Head)}
+        if p.size>0 {p.size=size_of(Pack_Head)}
         pack_load_locked(s,i)
     }
 }
@@ -779,85 +800,13 @@ location_dead :: proc(s:^Store,pack:int,location:Location) -> bool {
 @(private)
 find_locked :: proc(s:^Store,address:Hash,use_index:=false) -> (pack:int,location:Location,found:bool) {
     pack,location,found=lookup_locked(s,address)
-    if found {return}
-    if !use_index {
-        if refresh_locked(s)!=.None {return}
-        pack,location,found=lookup_locked(s,address)
-        if found {return}
-    }
-    // A chunk a sweep retired that a commit still names is read where it went.
-    if !use_index || !s.retired_scanned {
-        if use_index {s.retired_scanned=true}
-        if retired_load_locked(s)!=.None {return}
-    }
-    return retired_lookup_locked(s,address)
+    if found || use_index {return}
+    if refresh_locked(s)!=.None {return}
+    return lookup_locked(s,address)
 }
 
-// Where a chunk is in a pack a sweep retired.
-@(private)
-retired_lookup_locked :: proc(s:^Store,address:Hash) -> (pack:int,location:Location,found:bool) {
-    state:=s.state
-    slot,in_table:=table_slot(&state.retired,address)
-    if !in_table {return -1,{},false}
-    location=state.retired.values[slot]
-    pack=int(location.pack)
-    if pack>=len(state.packs) || state.packs[pack].damaged || state.packs[pack].pruned {return -1,{},false}
-    return pack,location,true
-}
-
-// Loads the packs of retired/ not loaded yet: retired/<generation>-<pack>,
-// the generation that dropped them.
-@(private)
-retired_load_locked :: proc(s:^Store) -> Error {
-    state:=s.state
-    buffer:[PATH_BYTES]u8
-    entries:=io_list(s,join(&buffer,s.root,"retired") or_return) or_return
-    defer os.file_info_slice_delete(entries,state.allocator)
-    for e in entries {
-        generation,id,ok:=retired_name_parse(e.name)
-        if !ok {continue}
-        index:=pack_add_locked(s,id) or_return
-        p:=&state.packs[index]
-        if p.retired==generation && p.file!=nil && (p.sealed || e.size<=p.size) {continue}
-        if p.retired!=generation {
-            // This value read it in packs/: its open file is the same one.
-            p.retired=generation
-            p.gone,p.indexed=true,false
-            if p.view==nil {p.sealed=false}
-            if p.file!=nil && !p.sealed {p.size=size_of(Pack_Head)}
-        }
-        pack_load_locked(s,index) or_return
-    }
-    return .None
-}
-
-@(private) RETIRED_NAME :: 17+PACK_NAME
-
-@(private)
-retired_name :: proc(generation:u64,id:Pack_Id,buffer:^[RETIRED_NAME]u8) -> string {
-    digits:="0123456789abcdef"
-    for i in 0..<16 {buffer[i]=digits[(generation>>(4*uint(15-i)))&15]}
-    buffer[16]='-'
-    name:[PACK_NAME]u8
-    copy(buffer[17:],pack_name(id,&name))
-    return string(buffer[:])
-}
-
-@(private)
-retired_name_parse :: proc(name:string) -> (generation:u64,id:Pack_Id,ok:bool) {
-    if len(name)!=RETIRED_NAME || name[16]!='-' {return}
-    for i in 0..<16 {
-        d:=hex_digit(name[i]) or_return
-        generation=generation<<4|u64(d)
-    }
-    id=pack_name_parse(name[17:]) or_return
-    return generation,id,generation>0
-}
-
-// The file of a pack: in packs/, or in retired/ under the generation that dropped it.
+// The file of a pack.
 @(private)
 pack_file_path :: proc(s:^Store,p:^Pack,buffer:^[PATH_BYTES]u8) -> (string,Error) {
-    if p.retired==0 {return pack_path(s,"packs",p.id,buffer)}
-    name:[RETIRED_NAME]u8
-    return join(buffer,s.root,"retired",retired_name(p.retired,p.id,&name))
+    return pack_path(s,"packs",p.id,buffer)
 }

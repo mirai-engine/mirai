@@ -34,6 +34,19 @@ port_mapping_pcp_and_natpmp_codecs_reject_mismatched_or_truncated_replies :: pro
     for size in 0..<16 {_,_,ok=portmap_natpmp_response(nat[:size],7950);testing.expect(t,!ok)}
     _,_,ok=portmap_natpmp_response(nat[:],7951);testing.expect(t,!ok)
     nat[3]=1;_,_,ok=portmap_natpmp_response(nat[:],7950);testing.expect(t,!ok)
+    // A TCP port (Kai's): PCP names protocol 6, NAT-PMP takes opcode 2 and answers 130, and a
+    // reply for the other protocol is not taken.
+    tcp:=portmap_pcp_request(local,7350,external,nonce,3600,.TCP)
+    testing.expect_value(t,tcp[36],u8(6))
+    tcp[1]=0x81
+    _,_,ok=portmap_pcp_response(tcp[:],7350,nonce,.TCP);testing.expect(t,ok)
+    _,_,ok=portmap_pcp_response(tcp[:],7350,nonce,.UDP);testing.expect(t,!ok)
+    nat_tcp:=portmap_natpmp_request(7350,7350,3600,.TCP)
+    testing.expect_value(t,nat_tcp[1],u8(2))
+    nat={};nat[1]=130
+    portmap_put16(nat[8:10],7350);portmap_put16(nat[10:12],7350);portmap_put32(nat[12:16],3600)
+    _,_,ok=portmap_natpmp_response(nat[:],7350,.TCP);testing.expect(t,ok)
+    _,_,ok=portmap_natpmp_response(nat[:],7350,.UDP);testing.expect(t,!ok)
 }
 
 @(test)
@@ -160,6 +173,49 @@ port_mapping_worker_falls_back_to_natpmp_and_cancels_pending_work :: proc(t:^tes
     if !testing.expect(t,mapping_start(&m,7950,context.allocator,router.address)) {return}
     start=time.tick_now();mapping_close(&m)
     testing.expect(t,portmap_seconds(start)<1 && mapping_poll(&m).phase==.Closed)
+}
+
+// A NAT-PMP error to the mapping request ends NAT-PMP at once for either
+// protocol: the worker turns to UPnP without waiting out the NAT-PMP time.
+@(test)
+port_mapping_worker_leaves_natpmp_on_its_error_reply :: proc(t:^testing.T) {
+    for protocol in Port_Protocol {
+        router,discovery:Udp
+        if !testing.expect(t,udp_open(&router,address_loopback(0))) {return}
+        defer udp_close(&router)
+        if !testing.expect(t,udp_open(&discovery,address_loopback(0))) {return}
+        defer udp_close(&discovery)
+        m:Port_Mapping
+        if !testing.expect(t,mapping_start(&m,7950,context.allocator,router.address,discovery.address.port,protocol)) {return}
+        defer mapping_close(&m)
+        opcodes:=NATPMP_OPCODE
+        packet:[1200]u8
+        refused:=false
+        refused_at:time.Tick
+        discovered:=-1.0
+        start:=time.tick_now()
+        for portmap_seconds(start)<4 && discovered<0 {
+            if size,from,got:=udp_receive(&router,packet[:]);got {
+                if size==60 && packet[0]==2 {
+                    failure:[24]u8;failure[0]=2;failure[1]=0x81;failure[3]=1
+                    udp_send(&router,from,failure[:])
+                } else if size==2 && packet[0]==0 && packet[1]==0 {
+                    reply:[12]u8;reply[1]=128;reply[8],reply[9],reply[10],reply[11]=8,8,4,4
+                    udp_send(&router,from,reply[:])
+                } else if size==12 && packet[0]==0 && packet[1]==opcodes[protocol] && portmap_get32(packet[8:12])!=0 {
+                    failure:[16]u8;failure[1]=128+opcodes[protocol];failure[3]=2
+                    copy(failure[8:10],packet[4:6])
+                    udp_send(&router,from,failure[:])
+                    if !refused {refused,refused_at=true,time.tick_now()}
+                }
+            }
+            if _,_,got:=udp_receive(&discovery,packet[:]);got && refused {
+                discovered=time.duration_seconds(time.tick_since(refused_at))
+            }
+            time.sleep(time.Millisecond)
+        }
+        testing.expectf(t,refused && discovered>=0 && discovered<1,"%v: UPnP is asked %.2f s after the NAT-PMP error",protocol,discovered)
+    }
 }
 
 @(test)

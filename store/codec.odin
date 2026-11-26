@@ -91,19 +91,6 @@ chunk_decode :: proc(s:^Store,codec:u8,stored,dst:[]u8) -> Error {
     return frame_decode(c,codec,stored,dst)
 }
 
-// The bytes of a stored copy at location, decoded when its frame encodes them, into raw of at
-// least its size. With the lock held.
-@(private)
-location_raw_locked :: proc(s:^Store,pack:int,location:Location,stored_buffer,raw:[]u8) -> (bytes:[]u8,error:Error) {
-    stored:=location_bytes_locked(s,pack,location,stored_buffer) or_return
-    if location.codec==CODEC_NONE {return stored,.None}
-    if len(raw)<int(location.raw) {return nil,.Invalid_Argument}
-    c:=coder_locked(s) or_return
-    defer coder_give_locked(s,c)
-    frame_decode(c,location.codec,stored,raw[:location.raw]) or_return
-    return raw[:location.raw],.None
-}
-
 // Whether a stored copy holds the bytes of its address: decoded first when its frame encodes
 // them. With the lock held.
 @(private)

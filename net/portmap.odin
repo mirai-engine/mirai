@@ -16,6 +16,14 @@ Port_Mapping_Status :: struct {
     lease_seconds:u32,
 }
 
+// What the router forwards: a UDP port (a game's, a session's) or a TCP one (Kai's).
+Port_Protocol :: enum u8 {UDP,TCP}
+
+// The protocol numbers PCP names (IANA) and the opcodes of NAT-PMP.
+@(private) PCP_PROTOCOL :: [Port_Protocol]u8{.UDP=17,.TCP=6}
+@(private) NATPMP_OPCODE :: [Port_Protocol]u8{.UDP=1,.TCP=2}
+@(private) UPNP_PROTOCOL :: [Port_Protocol]string{.UDP="UDP",.TCP="TCP"}
+
 Port_Mapping :: struct {
     worker:^thread.Thread,
     allocator:runtime.Allocator,
@@ -23,14 +31,15 @@ Port_Mapping :: struct {
     status:Port_Mapping_Status,
     stop:bool,
     port:u16,
+    protocol:Port_Protocol,
     gateway:Address,
     discovery_port:u16,
 }
 
 // gateway is optional; a literal override also lets a local router fixture exercise the protocols.
-mapping_start :: proc(m:^Port_Mapping,port:u16,allocator:=context.allocator,gateway:=Address{},discovery_port:u16=1900) -> bool {
+mapping_start :: proc(m:^Port_Mapping,port:u16,allocator:=context.allocator,gateway:=Address{},discovery_port:u16=1900,protocol:=Port_Protocol.UDP) -> bool {
     if m.worker!=nil || port==0 {return false}
-    m^={allocator=allocator,port=port,gateway=gateway,discovery_port=discovery_port,status={phase=.Pending}}
+    m^={allocator=allocator,port=port,protocol=protocol,gateway=gateway,discovery_port=discovery_port,status={phase=.Pending}}
     context.allocator=allocator
     m.worker=thread.create(proc(t:^thread.Thread) {portmap_worker((^Port_Mapping)(t.data))})
     if m.worker==nil {m.status.phase=.Unavailable;return false}
@@ -150,10 +159,10 @@ portmap_worker :: proc(m:^Port_Mapping) {
 portmap_release :: proc(m:^Port_Mapping,u:^Udp,gateway,local:Address,lease:^Portmap_Lease) {
     #partial switch lease.method {
     case .PCP:
-        bytes:=portmap_pcp_request(local,m.port,lease.external,lease.nonce,0)
+        bytes:=portmap_pcp_request(local,m.port,lease.external,lease.nonce,0,m.protocol)
         for _ in 0..<3 {udp_send(u,gateway,bytes[:]);time.sleep(20*time.Millisecond)}
     case .NAT_PMP:
-        bytes:=portmap_natpmp_request(m.port,lease.external.port,0)
+        bytes:=portmap_natpmp_request(m.port,lease.external.port,0,m.protocol)
         for _ in 0..<3 {udp_send(u,gateway,bytes[:]);time.sleep(20*time.Millisecond)}
     case .UPnP: portmap_upnp_release(m,local,lease)
     case: break
@@ -175,11 +184,12 @@ portmap_ip16 :: proc(a:Address) -> (bytes:[16]u8) {
 }
 
 @(private)
-portmap_pcp_request :: proc(local:Address,port:u16,external:Address,nonce:[12]u8,seconds:u32) -> (b:[60]u8) {
+portmap_pcp_request :: proc(local:Address,port:u16,external:Address,nonce:[12]u8,seconds:u32,protocol:=Port_Protocol.UDP) -> (b:[60]u8) {
     b[0]=2;b[1]=1
     portmap_put32(b[4:8],seconds)
     ip:=portmap_ip16(local);copy(b[8:24],ip[:])
-    for byte,i in nonce {b[24+i]=byte};b[36]=17
+    numbers:=PCP_PROTOCOL
+    for byte,i in nonce {b[24+i]=byte};b[36]=numbers[protocol]
     portmap_put16(b[40:42],port);portmap_put16(b[42:44],external.port)
     suggested:=external
     if suggested.kind==.None {suggested.kind=local.kind}
@@ -188,8 +198,9 @@ portmap_pcp_request :: proc(local:Address,port:u16,external:Address,nonce:[12]u8
 }
 
 @(private)
-portmap_pcp_response :: proc(b:[]u8,port:u16,nonce:[12]u8) -> (external:Address,seconds:u32,ok:bool) {
-    if len(b)<60 || len(b)%4!=0 || b[0]!=2 || b[1]!=0x81 || b[3]!=0 || b[36]!=17 || portmap_get16(b[40:42])!=port {return}
+portmap_pcp_response :: proc(b:[]u8,port:u16,nonce:[12]u8,protocol:=Port_Protocol.UDP) -> (external:Address,seconds:u32,ok:bool) {
+    numbers:=PCP_PROTOCOL
+    if len(b)<60 || len(b)%4!=0 || b[0]!=2 || b[1]!=0x81 || b[3]!=0 || b[36]!=numbers[protocol] || portmap_get16(b[40:42])!=port {return}
     for byte,i in nonce {if b[24+i]!=byte {return}}
     seconds=portmap_get32(b[4:8])
     if seconds==0 {return}
@@ -201,11 +212,11 @@ portmap_pcp_response :: proc(b:[]u8,port:u16,nonce:[12]u8) -> (external:Address,
 
 @(private)
 portmap_pcp :: proc(m:^Port_Mapping,u:^Udp,gateway,local:Address,lease:^Portmap_Lease,seconds:u32) -> bool {
-    request:=portmap_pcp_request(local,m.port,lease.external,lease.nonce,seconds)
+    request:=portmap_pcp_request(local,m.port,lease.external,lease.nonce,seconds,m.protocol)
     granted:=false
     defer {
         if !granted && lease.method==.None {
-            deletion:=portmap_pcp_request(local,m.port,lease.external,lease.nonce,0)
+            deletion:=portmap_pcp_request(local,m.port,lease.external,lease.nonce,0,m.protocol)
             udp_send(u,gateway,deletion[:])
         }
     }
@@ -217,7 +228,7 @@ portmap_pcp :: proc(m:^Port_Mapping,u:^Udp,gateway,local:Address,lease:^Portmap_
         for _ in 0..<16 {
             size,from,received:=udp_receive(u,buffer[:]);if !received {break}
             if from!=gateway {continue}
-            ext,lifetime,valid:=portmap_pcp_response(buffer[:size],m.port,lease.nonce)
+            ext,lifetime,valid:=portmap_pcp_response(buffer[:size],m.port,lease.nonce,m.protocol)
             if valid {granted=true;lease.external,lease.seconds=ext,lifetime;return true}
             if size>=24 && buffer[0]==2 && buffer[1]==0x81 && buffer[3]!=0 {return false}
             if size>=8 && buffer[0]==0 && buffer[1]==0x81 {return false}
@@ -228,24 +239,27 @@ portmap_pcp :: proc(m:^Port_Mapping,u:^Udp,gateway,local:Address,lease:^Portmap_
 }
 
 @(private)
-portmap_natpmp_request :: proc(port,external:u16,seconds:u32) -> (b:[12]u8) {
-    b[1]=1;portmap_put16(b[4:6],port);portmap_put16(b[6:8],external);portmap_put32(b[8:12],seconds)
+portmap_natpmp_request :: proc(port,external:u16,seconds:u32,protocol:=Port_Protocol.UDP) -> (b:[12]u8) {
+    opcodes:=NATPMP_OPCODE
+    b[1]=opcodes[protocol];portmap_put16(b[4:6],port);portmap_put16(b[6:8],external);portmap_put32(b[8:12],seconds)
     return
 }
 @(private)
-portmap_natpmp_response :: proc(b:[]u8,port:u16) -> (external:u16,seconds:u32,ok:bool) {
-    if len(b)!=16 || b[0]!=0 || b[1]!=129 || portmap_get16(b[2:4])!=0 || portmap_get16(b[8:10])!=port {return}
+portmap_natpmp_response :: proc(b:[]u8,port:u16,protocol:=Port_Protocol.UDP) -> (external:u16,seconds:u32,ok:bool) {
+    opcodes:=NATPMP_OPCODE
+    if len(b)!=16 || b[0]!=0 || b[1]!=128+opcodes[protocol] || portmap_get16(b[2:4])!=0 || portmap_get16(b[8:10])!=port {return}
     external,seconds=portmap_get16(b[10:12]),portmap_get32(b[12:16])
     ok=external!=0 && seconds!=0
     return
 }
 @(private)
 portmap_natpmp :: proc(m:^Port_Mapping,u:^Udp,gateway:Address,lease:^Portmap_Lease,seconds:u32) -> bool {
-    request:=portmap_natpmp_request(m.port,lease.external.port==0?m.port:lease.external.port,seconds)
+    request:=portmap_natpmp_request(m.port,lease.external.port==0?m.port:lease.external.port,seconds,m.protocol)
+    opcodes:=NATPMP_OPCODE
     granted:=false
     defer {
         if !granted && lease.method==.None {
-            deletion:=portmap_natpmp_request(m.port,0,0)
+            deletion:=portmap_natpmp_request(m.port,0,0,m.protocol)
             udp_send(u,gateway,deletion[:])
         }
     }
@@ -264,8 +278,9 @@ portmap_natpmp :: proc(m:^Port_Mapping,u:^Udp,gateway:Address,lease:^Portmap_Lea
             if from!=gateway {continue}
             b:=buffer[:size]
             if len(b)==12 && b[0]==0 && b[1]==128 && portmap_get16(b[2:4])==0 {ip=address_ip4(b[8],b[9],b[10],b[11],0)}
-            if ep,sec,ok:=portmap_natpmp_response(b,m.port);ok {external,lifetime=ep,sec}
-            if len(b)>=4 && b[0]==0 && (b[1]==128 || b[1]==129) && portmap_get16(b[2:4])!=0 {return false}
+            if ep,sec,ok:=portmap_natpmp_response(b,m.port,m.protocol);ok {external,lifetime=ep,sec}
+            // An error answer to the address request (128) or to the mapping's.
+            if len(b)>=4 && b[0]==0 && (b[1]==128 || b[1]==128+opcodes[m.protocol]) && portmap_get16(b[2:4])!=0 {return false}
             if ip.kind!=.None && external!=0 {granted=true;ip.port=external;lease.external,lease.seconds=ip,lifetime;return true}
         }
         portmap_pause()

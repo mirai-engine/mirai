@@ -12,7 +12,7 @@ import "core:strings"
 // header lines and bare line breaks. A refused request ends its connection.
 
 HEAD_MAX :: 8<<10      // the request line and the headers
-BODY_MAX :: 64<<10     // the body of a request
+BODY_MAX :: 8<<10      // the body of a request: a form
 HEADERS_MAX :: 32
 TARGET_MAX :: 2048
 REQUESTS_PER_CONNECTION :: 1000
@@ -175,7 +175,7 @@ request_parse :: proc(input:[]u8) -> (p:Parse) {
 }
 
 REASONS :: [?]struct{status:int,text:string}{
-    {100,"Continue"},{200,"OK"},{201,"Created"},{204,"No Content"},{304,"Not Modified"},
+    {100,"Continue"},{200,"OK"},{201,"Created"},{204,"No Content"},{303,"See Other"},{304,"Not Modified"},
     {400,"Bad Request"},{401,"Unauthorized"},{403,"Forbidden"},{404,"Not Found"},{405,"Method Not Allowed"},
     {408,"Request Timeout"},{409,"Conflict"},{411,"Length Required"},{413,"Content Too Large"},{414,"URI Too Long"},
     {415,"Unsupported Media Type"},{417,"Expectation Failed"},{422,"Unprocessable Content"},{429,"Too Many Requests"},
@@ -190,15 +190,12 @@ reason :: proc(status:int) -> string {
     return "Status"
 }
 
-// The headers every answer carries: no third party, no framing, no sniffing,
-// no referrer, and a policy that lets a page load only what this origin serves.
-SECURITY_HEADERS :: "Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'\r\n" +
+// The headers every answer carries: no script, no third party, no framing, no
+// sniffing, no referrer.
+SECURITY_HEADERS :: "Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'\r\n" +
     "X-Content-Type-Options: nosniff\r\n" +
     "X-Frame-Options: DENY\r\n" +
     "Referrer-Policy: no-referrer\r\n" +
     "Cross-Origin-Opener-Policy: same-origin\r\n" +
     "Cross-Origin-Resource-Policy: same-origin\r\n" +
     "Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()\r\n"
-
-// A file of a repository is shown, never run: it gets a sandbox of its own.
-SANDBOX_HEADER :: "Content-Security-Policy: sandbox; default-src 'none'\r\n"

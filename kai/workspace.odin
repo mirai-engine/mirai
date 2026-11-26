@@ -237,14 +237,12 @@ workspace_init :: proc(w:^Workspace,root:string,options:Workspace_Options,alloca
 }
 
 // A new repository whose first workspace is root, with its files as they are
-// snapshot into its first change; overlay routes its private paths (nil
-// applies only the deny set).
-workspace_create :: proc(w:^Workspace,root:string,s:^store.Store,identity:Identity,options:=Workspace_Options{},overlay:^Overlay_Routing=nil,allocator:=context.allocator) -> (error:Error) {
+// snapshot into its first change.
+workspace_create :: proc(w:^Workspace,root:string,s:^store.Store,identity:Identity,options:=Workspace_Options{},allocator:=context.allocator) -> (error:Error) {
     workspace_init(w,root,options,allocator) or_return
     defer if error!=.None {workspace_close(w)}
     if os.exists(path_join(w.root,STATE_FOLDER+"/workspace")) {return .Invalid_Argument}
     repo_create(&w.repo,s,identity,random_id(Workspace_Id),options.drivers,allocator) or_return
-    w.repo.overlay=overlay
     working:=change_get(s,repo_working(&w.repo),context.temp_allocator) or_return
     w.state.repo,w.state.id,w.state.op,w.state.tree=w.repo.id,w.repo.workspace,w.repo.op,working.tree
     state_save(w,&w.state) or_return
@@ -409,9 +407,6 @@ workspace_snapshot :: proc(w:^Workspace) -> (report:Snapshot_Report,error:Error)
     clear(&w.touched)
     w.touched_all=false
     slice.sort_by(found[:],proc(a,b:Found) -> bool {return a.path<b.path})
-    plan:Overlay_Plan
-    defer overlay_plan_end(&plan)
-    overlay_route(w.repo.overlay,w.repo.s,w.root,overlay_previous(&w.repo),&found,&plan) or_return
     // Reuse what the index knows; hash the rest, in parallel when a worker is given.
     changed:=make([dynamic]^Found,context.temp_allocator)
     for &f in found {
@@ -449,7 +444,7 @@ workspace_snapshot :: proc(w:^Workspace) -> (report:Snapshot_Report,error:Error)
     append(&st.conflicts,..w.state.conflicts[:])
     conflicts_apply(&st,&files) or_return
     root:=tree_build(w.repo.s,files[:]) or_return
-    report.revision=change_snapshot(&w.repo,root,&plan) or_return
+    report.revision=change_snapshot(&w.repo,root) or_return
     index_save(w,&next) or_return
     st.op,st.tree=w.repo.op,root
     state_save(w,&st) or_return

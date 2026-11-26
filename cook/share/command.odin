@@ -194,7 +194,7 @@ share_command :: proc(args:[]string,output,errors:io.Writer) -> int {
         fmt.wprintfln(errors,"mirai share: %s",offer_error)
         return 1
     }
-    fmt.wprintfln(output,"snapshot of %s: %d files, %s (%d read into the store at %s, %s)",root,o.taken.files,vcs.bytes_text(o.taken.bytes),o.taken.put,s.root,seconds_text(time.duration_seconds(time.tick_since(started))))
+    fmt.wprintfln(output,"snapshot of %s: %d files, %s (%d read into the store at %s, %s)",root,o.taken.files,base.bytes_text(o.taken.bytes),o.taken.put,s.root,seconds_text(time.duration_seconds(time.tick_since(started))))
     if o.taken.sources>0 {fmt.wprintfln(output,"%d sources of built packages left out: joiners take the builds",o.taken.sources)}
     for problem in o.problems {fmt.wprintfln(errors,"warning: a joiner will not get it: %s",problem)}
     h:=new(Udp_Host,context.temp_allocator)
@@ -211,23 +211,17 @@ share_command :: proc(args:[]string,output,errors:io.Writer) -> int {
     if !mapped {fmt.wprintfln(output,"The router mapped no port, so only machines on this network can join; from another network, the joiner's router must map one, or this one must allow UPnP, NAT-PMP or PCP.")}
     fmt.wprintln(output,"Stop with Ctrl+C.")
     events:[EVENTS]Event
-    status_at,lease_at:=0.0,0.0
+    status_at:=0.0
     last:Node_Totals
     for {
         now:=wire.host_time(&h.host)
         node_pump(n,now)
-        if now-lease_at>=LEASE_SECONDS {
-            lease_at=now
-            if error:=offer_refresh(n);error!=.None {
-                fmt.wprintfln(errors,"mirai share: the project lease could not be refreshed:",error)
-            }
-        }
         for e in node_events(n,events[:]) {event_print(output,e,node_totals(n).connected)}
         if now-status_at>=STATUS_SECONDS {
             status_at=now
             t:=node_totals(n)
             if t.sent!=last.sent || t.connected!=last.connected {
-                fmt.wprintfln(output,"%d connected, %s sent, %s/s",t.connected,vcs.bytes_text(i64(t.sent)),vcs.bytes_text(i64(t.send_rate)))
+                fmt.wprintfln(output,"%d connected, %s sent, %s/s",t.connected,base.bytes_text(i64(t.sent)),base.bytes_text(i64(t.send_rate)))
             }
             last=t
         }
@@ -250,7 +244,7 @@ Offer :: struct {
 // its folders, files and what the packages it pins need held by the lease of
 // the node. Taking it again after a change offers the new snapshot, and a
 // joined peer that joins again gets only what differs. Jobs of
-// worker, when given, read the files. In allocator. No concurrent offer or offer_refresh of n.
+// worker, when given, read the files. In allocator. No concurrent offer of n.
 // Keep s open through node_destroy.
 offer :: proc(
     n:^Node,s:^store.Store,root:string,secret:u64,worker:=jobs.Worker_Ref{},
@@ -276,7 +270,7 @@ offer :: proc(
     packages,_:=asset.root_packages_in(s,root,allocator)
     o.problems=packages.problems
     for e in o.snapshot.entries {append(&served,e.address)}
-    lease,lease_error:=node_lease_open(s,served[:])
+    lease,lease_error:=store.lease_open(s,served[:])
     if lease_error!=.None {
         return {},fmt.aprintf("the project lease could not be kept (%v)",
             lease_error,allocator=allocator)
@@ -291,12 +285,6 @@ offer :: proc(
     n.offer_lease=lease
     lease={}
     return
-}
-
-// Refresh the published offer on the thread that owns it, while it is still offered.
-offer_refresh :: proc(n:^Node) -> store.Error {
-    if n==nil || n.offer_lease.store==nil {return .Invalid_Argument}
-    return store.lease_update(&n.offer_lease,n.offer_lease.live)
 }
 
 // What the packages the project at root pins need: their manifests and the
@@ -348,7 +336,7 @@ source_relative :: proc(path:string) -> string {
 event_print :: proc(output:io.Writer,e:Event,connected:int) {
     switch e.kind {
     case .Joined: fmt.wprintfln(output,"peer %d joined (%d connected)",e.peer,connected)
-    case .Left: fmt.wprintfln(output,"peer %d left (%v): %s sent to it, %s received (%d connected)",e.peer,e.reason,vcs.bytes_text(i64(e.sent)),vcs.bytes_text(i64(e.received)),connected)
+    case .Left: fmt.wprintfln(output,"peer %d left (%v): %s sent to it, %s received (%d connected)",e.peer,e.reason,base.bytes_text(i64(e.sent)),base.bytes_text(i64(e.received)),connected)
     }
 }
 
@@ -456,7 +444,7 @@ join_command :: proc(args:[]string,output,errors:io.Writer,library:sources.Libra
     for failure in report.packages.failures {fmt.wprintfln(errors,"mirai join: %s",failure);code=1}
     for missing in report.packages.missing {fmt.wprintfln(errors,"mirai join: %s",missing);code=1}
     fmt.wprintfln(output,"Joined into %s: %d files, %d written, %d removed, %d kept as you left them; %d packages, %d builds fetched; %s received.",
-        report.folder,report.files,report.written,report.removed,len(report.kept),report.packages.packages,report.packages.fetched,vcs.bytes_text(i64(t_received)))
+        report.folder,report.files,report.written,report.removed,len(report.kept),report.packages.packages,report.packages.fetched,base.bytes_text(i64(t_received)))
     if len(report.failed)>0 {
         fmt.wprintfln(errors,"mirai join: incomplete, %d files were not written or removed; fix what each says and run the same join again, which does only those",len(report.failed))
         return 3

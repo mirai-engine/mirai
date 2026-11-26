@@ -598,11 +598,11 @@ join_room :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,folder:string,allocator
     store_info,_:=os.stat(s.root,context.temp_allocator)
     folder_info,_:=os.stat(existing,context.temp_allocator)
     if store_known && folder_known && store_info.device==folder_info.device && store_info.device!=0 {
-        if fetch+write>store_free {return fmt.aprintf("the disk of %s and %s has %s free and the join needs %s: free space, or give another folder or --store",s.root,folder,vcs.bytes_text(store_free),vcs.bytes_text(fetch+write),allocator=allocator)}
+        if fetch+write>store_free {return fmt.aprintf("the disk of %s and %s has %s free and the join needs %s: free space, or give another folder or --store",s.root,folder,base.bytes_text(store_free),base.bytes_text(fetch+write),allocator=allocator)}
         return ""
     }
-    if store_known && fetch>store_free {return fmt.aprintf("the disk of the store at %s has %s free and the join needs %s there: free space, or give another --store",s.root,vcs.bytes_text(store_free),vcs.bytes_text(fetch),allocator=allocator)}
-    if folder_known && write>folder_free {return fmt.aprintf("the disk of %s has %s free and the join needs %s there: free space, or give another folder",folder,vcs.bytes_text(folder_free),vcs.bytes_text(write),allocator=allocator)}
+    if store_known && fetch>store_free {return fmt.aprintf("the disk of the store at %s has %s free and the join needs %s there: free space, or give another --store",s.root,base.bytes_text(store_free),base.bytes_text(fetch),allocator=allocator)}
+    if folder_known && write>folder_free {return fmt.aprintf("the disk of %s has %s free and the join needs %s there: free space, or give another folder",folder,base.bytes_text(folder_free),base.bytes_text(write),allocator=allocator)}
     return ""
 }
 
@@ -648,7 +648,7 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
         return a.size<b.size || a.size==b.size && a.k<b.k
     })
     for one,at in sized {order[at]=one.k}
-    say(d,"fetching %d files, %s",len(order),vcs.bytes_text(total))
+    say(d,"fetching %d files, %s",len(order),base.bytes_text(total))
     progress_set(d,{phase=.Files,files=len(order),bytes=total,left=-1,kept=len(report.kept)})
     Active :: struct {k:int,missing:f64}
     active:=make([dynamic]Active,context.temp_allocator)
@@ -710,7 +710,7 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
             received_at,printed=t.received,now
             left:=total-done-here
             eta:=rate>0?f64(left)/rate:-1
-            say(d,"%d of %d files, %s of %s, %s/s, %s left",next-len(active),len(order),vcs.bytes_text(done+here),vcs.bytes_text(total),vcs.bytes_text(i64(rate)),eta<0?"time":seconds_text(max(eta,0)))
+            say(d,"%d of %d files, %s of %s, %s/s, %s left",next-len(active),len(order),base.bytes_text(done+here),base.bytes_text(total),base.bytes_text(i64(rate)),eta<0?"time":seconds_text(max(eta,0)))
         }
         if d.progress!=nil {
             left:=total-done-here
@@ -731,7 +731,7 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
         if error:=join_alive(d,allocator);error!="" {return error}
     }
     elapsed:=node_now(n)-started
-    say(d,"fetched %d files, %s in %s (%s/s)",len(order),vcs.bytes_text(total),seconds_text(elapsed),vcs.bytes_text(i64(f64(total)/max(elapsed,1e-3))))
+    say(d,"fetched %d files, %s in %s (%s/s)",len(order),base.bytes_text(total),seconds_text(elapsed),base.bytes_text(i64(f64(total)/max(elapsed,1e-3))))
     return ""
 }
 
@@ -1067,7 +1067,7 @@ join_packages :: proc(d:^Join_Desc,folder:string,allocator:runtime.Allocator) ->
         if now-printed<d.pace {continue}
         t:=node_totals(n)
         rate:=f64(t.received-last)/(now-printed)
-        if t.received!=last {say(d,"builds: %s received, %s/s",vcs.bytes_text(i64(t.received-from)),vcs.bytes_text(i64(rate)))}
+        if t.received!=last {say(d,"builds: %s received, %s/s",base.bytes_text(i64(t.received-from)),base.bytes_text(i64(rate)))}
         last,printed=t.received,now
         if d.progress!=nil {
             sync.mutex_guard(&d.progress.lock)

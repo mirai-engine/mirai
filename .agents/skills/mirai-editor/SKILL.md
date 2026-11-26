@@ -87,11 +87,11 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   [change sets](references/ai-review.md#change-sets),
   [finish, revert and retry](references/ai-review.md#finish-revert-and-retry) and
   [the record](references/ai-review.md#the-record-and-its-capacity).
-- **Kai in the editor** (Kai tab, what the editor pushes to the workspace, `kai.*` methods,
-  dialogs, conflicts by field, coauthors): [working copy](references/kai.md#working-copy),
-  [team](references/kai.md#team), [conflicts](references/kai.md#conflicts) and
-  [authors](references/kai.md#authors). What Kai is (changes, operations, orgs, pairing,
-  proposals, private files, the node) is [mirai-kai](../mirai-kai/SKILL.md).
+- **Kai in the editor** (Kai tab, Publish to main, the org repositories of All projects, what the
+  editor pushes to the workspace, `kai.*` methods, conflicts by field, coauthors):
+  [working copy](references/kai.md#working-copy), [team](references/kai.md#team),
+  [conflicts](references/kai.md#conflicts) and [authors](references/kai.md#authors). What Kai is
+  (changes, operations, orgs, invites, the agent, the server) is [mirai-kai](../mirai-kai/SKILL.md).
 - **Tools, panels, cards, inspection modes, API methods, inspector, asset types and thumbnails of
   a plugin**: [package rules](references/extensions.md#package-rules),
   [viewport tool](references/extensions.md#a-viewport-tool),

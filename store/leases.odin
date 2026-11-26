@@ -1,235 +1,122 @@
 package store
 
+import "core:crypto"
 import "core:mem"
 import "core:os"
-import "core:time"
 
-LEASE_MAX_AGE :: 5*time.Minute // of a lease whose holder cannot be asked: one of another machine on a shared root
 LEASE_MAX_HASHES :: 1<<20 // an editor with a large map open holds tens of thousands
 
 @(private)
-LEASE_MAGIC :: "mirai lease 3\n"
+LEASE_MAGIC :: "mirai lease 4\n"
 
-@(private)
-HOST_BYTES :: 64
-
-// The process that holds a lease: its machine, its pid and when it started,
-// which tells a pid the system gave again apart.
-@(private)
-Holder :: struct #packed {
-    host:[HOST_BYTES]u8,
-    pid:u64le,
-    start:u64le,
-}
-
-@(private)
-LEASE_HEADER :: len(LEASE_MAGIC)+size_of(Holder)+8+size_of(Hash)
-
-// A lease keeps its addresses from a sweep while its holder runs on this
-// machine, whatever the clock says and however long the machine slept, and
-// stops at once when the holder ends. A lease of another machine on a shared
-// root keeps them while it is younger than LEASE_MAX_AGE. It carries the
-// generation its holder last checked what it names against: a pack a sweep
-// retired is deleted only once every lease carries that generation or later.
+// A lease keeps what it names, at every level, from a sweep while the process
+// that opened it runs: leases/<id> holds its addresses, and its holder keeps
+// the file locked, which the system lets go when the process ends, however it
+// ends. A sweep removes a lease whose lock it can take. What a lease names
+// that is stored when lease_open or lease_update returns stays stored.
 Lease :: struct {
     store:^Store,
-    name:[NAME_MAX]u8,
-    name_len:int,
-    live:[]Hash,
-    holder:Holder,
-    generation:u64,
+    live:[]Hash, // of the store's allocator
+    id:[16]u8,
+    file:^os.File, // locked while the lease holds
 }
 
-// What a sweep reads of a lease that holds.
-@(private)
-Lease_Info :: struct {
-    name:[NAME_MAX]u8,
-    name_len:int,
-    generation:u64,
-    checksum:Hash,
-}
-
-// The holder supplies a unique name and keeps the store open through release.
-lease_open :: proc(s:^Store,name:string,live:[]Hash,now:Maybe(time.Time)=nil) ->
-    (lease:Lease,error:Error) {
-    if s==nil || s.state==nil || !name_valid(name) {return {},.Invalid_Argument}
+// The holder keeps the store open through lease_release.
+lease_open :: proc(s:^Store,live:[]Hash) -> (lease:Lease,error:Error) {
+    if s==nil || s.state==nil {return {},.Invalid_Argument}
     lease.store=s
-    lease.name_len=copy(lease.name[:],name)
-    lease.holder=holder_self()
-    error=lease_update(&lease,live,now)
-    if error!=.None {return {},error}
+    crypto.rand_bytes(lease.id[:])
+    lease_update(&lease,live) or_return
     return lease,.None
 }
 
-// What live names that the lease did not is looked up first against the
-// newest generation, and what of it a sweep retired is copied back, so the
-// lease protects all it names from the moment it returns.
-lease_update :: proc(lease:^Lease,live:[]Hash,now:Maybe(time.Time)=nil) -> Error {
+// Replaces what the lease names. A new file, locked, takes the place of the
+// old one at once, so a sweep reads one or the other whole, and never runs
+// meanwhile.
+lease_update :: proc(lease:^Lease,live:[]Hash) -> Error {
     if lease==nil || lease.store==nil || len(live)>LEASE_MAX_HASHES {return .Invalid_Argument}
-    buffer:[PATH_BYTES]u8
-    path:=lease_path(lease,&buffer) or_return
-    allocator:=lease.store.allocator
-    held,make_error:=make([]Hash,len(live),allocator)
+    s:=lease.store
+    held,make_error:=make([]Hash,len(live),s.allocator)
     if make_error!=nil {return .Out_Of_Memory}
     copy(held,live)
-    generation,settled:=roots_settle(lease.store,held,lease.live)
-    if settled!=.None {
-        delete(held,allocator)
-        return settled
-    }
-    if error:=lease_write(lease.store,path,lease.holder,generation,held,now.? or_else time.now());error!=.None {
-        delete(held,allocator)
+    batch_enter(s) or_return
+    defer batch_leave(s)
+    temp_buffer,path_buffer:[PATH_BYTES]u8
+    temp,file,error:=temp_create(s,s.root,&temp_buffer)
+    path:string
+    if error==.None {_,error=file_lock(file,.Exclusive,false)}
+    if error==.None {error=io_write_at(s,file,transmute([]u8)string(LEASE_MAGIC),0)}
+    if error==.None {error=io_write_at(s,file,mem.slice_to_bytes(held),len(LEASE_MAGIC))}
+    if error==.None {path,error=lease_path(lease,&path_buffer)}
+    if error==.None {error=io_rename(s,temp,path)}
+    if error!=.None {
+        if file!=nil {
+            os.close(file)
+            file_remove(temp)
+        }
+        delete(held,s.allocator)
         return error
     }
-    delete(lease.live,allocator)
-    lease.live=held
-    lease.generation=generation
+    if lease.file!=nil {os.close(lease.file)}
+    delete(lease.live,s.allocator)
+    lease.file,lease.live=file,held
     return .None
 }
 
-lease_refresh :: proc(lease:^Lease,now:Maybe(time.Time)=nil) -> Error {
-    buffer:[PATH_BYTES]u8
-    path:=lease_path(lease,&buffer) or_return
-    return lease_write(lease.store,path,lease.holder,lease.generation,lease.live,now.? or_else time.now())
-}
-
 lease_release :: proc(lease:^Lease) -> Error {
+    if lease==nil || lease.store==nil {return .Invalid_Argument}
     buffer:[PATH_BYTES]u8
-    path:=lease_path(lease,&buffer) or_return
-    error:=os_error(file_remove(path))
+    error:Error
+    if path,path_error:=lease_path(lease,&buffer);path_error==.None {error=os_error(file_remove(path))}
+    if lease.file!=nil {os.close(lease.file)}
     delete(lease.live,lease.store.allocator)
     lease^={}
     return .None if error==.Missing else error
 }
 
 @(private)
-holder_self :: proc() -> (h:Holder) {
-    host_name(&h.host)
-    pid:=u64(os.get_pid())
-    start,_:=process_start(pid)
-    h.pid,h.start=u64le(pid),u64le(start)
-    return
-}
-
-@(private)
-Holder_State :: enum u8 {Unknown,Running,Ended}
-
-// Whether the holder runs, asked of this machine; Unknown for another one.
-@(private)
-holder_state :: proc(h:Holder,self:Holder) -> Holder_State {
-    if h.host!=self.host || h.host==({}) {return .Unknown}
-    start,alive:=process_start(u64(h.pid))
-    return .Running if alive && start==u64(h.start) else .Ended
-}
-
-@(private)
 lease_path :: proc(lease:^Lease,buffer:^[PATH_BYTES]u8) -> (string,Error) {
-    if lease==nil || lease.store==nil || lease.store.root=="" ||
-        lease.name_len<1 || lease.name_len>len(lease.name) {
-        return "",.Invalid_Argument
-    }
-    name:=string(lease.name[:lease.name_len])
-    if !name_valid(name) {return "",.Invalid_Argument}
-    return join(buffer,lease.store.root,"leases",name)
+    text:[64]u8
+    return join(buffer,lease.store.root,"leases",writer_text(lease.id,&text))
 }
 
+// Adds the addresses of every lease whose holder runs; removes the others.
 @(private)
-lease_write :: proc(s:^Store,path:string,holder:Holder,generation:u64,live:[]Hash,now:time.Time) -> Error {
-    if len(live)>LEASE_MAX_HASHES {return .Invalid_Argument}
-    holder:=holder
-    generation:=u64le(generation)
-    who:=mem.ptr_to_bytes(&holder)
-    seen:=mem.ptr_to_bytes(&generation)
-    payload:=mem.slice_to_bytes(live)
-    checksum:=address_of_parts({who,seen,payload})
-    return file_write(s,s.root,path,{transmute([]u8)string(LEASE_MAGIC),who,seen,checksum[:],payload},now)
-}
-
-// Adds the addresses of every lease that holds: its holder runs here, or
-// it is of another machine and fresh. The others are removed.
-@(private)
-leases_collect :: proc(s:^Store,live:^Live_Set,now:time.Time,infos:^[dynamic]Lease_Info=nil) -> Error {
+leases_collect :: proc(s:^Store,live:^Live_Set) -> Error {
     buffer:[PATH_BYTES]u8
-    folder:=join(&buffer,s.root,"leases") or_return
-    entries,read_error:=os.read_all_directory_by_path(folder,s.state.allocator)
-    if read_error==.Not_Exist {return .None}
-    if read_error!=nil {return os_error(read_error)}
+    entries:=io_list(s,join(&buffer,s.root,"leases") or_return) or_return
     defer os.file_info_slice_delete(entries,s.state.allocator)
-    self:=holder_self()
     for entry in entries {
-        if entry.type!=.Regular || !name_valid(entry.name) {continue}
-        info:Lease_Info
-        holds,error:=lease_collect(s,live,entry.fullpath,now,self,&info)
-        if error!=.None {return error}
-        if !holds {
-            lease_drop(s,entry.fullpath,entry.name,now,self) or_return
-            continue
-        }
-        if infos!=nil && info.name_len>0 {
-            if _,e:=append(infos,info);e!=nil {return .Out_Of_Memory}
-        }
+        if entry.type==.Regular {lease_collect(s,live,entry.fullpath) or_return}
     }
     return .None
 }
 
-// Claims a lease that does not hold and removes it, unless what it holds
-// changed meanwhile: then it goes back.
+// Adds what the lease at path holds while its holder keeps it locked; one
+// whose lock is free is removed. A file that is not a lease adds nothing.
 @(private)
-lease_drop :: proc(s:^Store,path,name:string,now:time.Time,self:Holder) -> Error {
-    buffer:[PATH_BYTES]u8
-    claimed,claim_error:=sweep_claim(s,path,.Lease,name,&buffer)
-    if claim_error!=.None {return .None}
-    scratch:Live_Set
-    defer delete(scratch)
-    scratch.allocator=s.state.allocator
-    holds,error:=lease_collect(s,&scratch,claimed,now,self)
-    if error==.None && !holds && file_remove(claimed)==nil {return .None}
-    restored:=sweep_restore(path,claimed)
-    return error if error!=.None else restored
-}
-
-// Adds what the lease at path holds; holds is false for a lease that no
-// longer protects: its holder ended, it is of another machine and stale, or
-// it is not a lease. Only the addresses of one that holds are added.
-@(private)
-lease_collect :: proc(s:^Store,live:^Live_Set,path:string,now:time.Time,self:Holder,read:^Lease_Info=nil) -> (holds:bool,error:Error) {
-    file,open_error:=file_open(path)
-    if open_error==.Not_Exist {return true,.None}
-    if open_error!=nil {return true,os_error(open_error)}
+lease_collect :: proc(s:^Store,live:^Live_Set,path:string) -> Error {
+    // Opened to write: an exclusive lock on a handle only read can be denied
+    // on Windows.
+    file,open_error:=io_open(s,path,{.Read,.Write})
+    if open_error==.Missing {return .None}
+    open_error or_return
     defer os.close(file)
-    info,stat_error:=os.fstat(file,s.state.allocator)
-    if stat_error!=nil {return true,os_error(stat_error)}
-    defer os.file_info_delete(info,s.state.allocator)
-    if info.type!=.Regular || info.size<LEASE_HEADER || info.size>LEASE_HEADER+LEASE_MAX_HASHES*size_of(Hash) {
-        return false,.None
+    ended:=file_lock(file,.Exclusive,false) or_return
+    if ended {
+        file_unlock(file)
+        io_remove(s,path)
+        return .None
     }
-    bytes:=info.size-LEASE_HEADER
-    if bytes%size_of(Hash)!=0 {return false,.None}
-    header:[LEASE_HEADER]u8
-    if read_exact(file,header[:],0)!=.None || string(header[:len(LEASE_MAGIC)])!=LEASE_MAGIC {
-        return false,.None
-    }
-    holder:=(^Holder)(&header[len(LEASE_MAGIC)])^
-    switch holder_state(holder,self) {
-    case .Running:
-    case .Ended: return false,.None
-    case .Unknown: if older_than(info.modification_time,now,LEASE_MAX_AGE) {return false,.None}
-    }
+    size,size_error:=os.file_size(file)
+    if size_error!=nil {return os_error(size_error)}
+    bytes:=size-len(LEASE_MAGIC)
+    if bytes<0 || bytes>LEASE_MAX_HASHES*size_of(Hash) || bytes%size_of(Hash)!=0 {return .None}
+    magic:[len(LEASE_MAGIC)]u8
+    if read_exact(file,magic[:],0)!=.None || string(magic[:])!=LEASE_MAGIC {return .None}
     hashes,make_error:=make([]Hash,int(bytes/size_of(Hash)),s.state.allocator)
-    if make_error!=nil {return true,.Out_Of_Memory}
+    if make_error!=nil {return .Out_Of_Memory}
     defer delete(hashes,s.state.allocator)
-    payload:=mem.slice_to_bytes(hashes)
-    if read_exact(file,payload,LEASE_HEADER)!=.None {return false,.None}
-    who:=header[len(LEASE_MAGIC):][:size_of(Holder)]
-    seen:=header[len(LEASE_MAGIC)+size_of(Holder):][:8]
-    checksum:=address_of_parts({who,seen,payload})
-    if mem.compare(checksum[:],header[len(LEASE_MAGIC)+size_of(Holder)+8:][:size_of(Hash)])!=0 {return false,.None}
-    if read!=nil {
-        // A listing joins the name with the separator of the system: a backslash on Windows.
-        _,name:=os.split_path(path)
-        read.name_len=copy(read.name[:],name)
-        read.generation=u64((^u64le)(raw_data(seen))^)
-        read.checksum=checksum
-    }
-    return true,live_add(live,hashes)
+    if read_exact(file,mem.slice_to_bytes(hashes),len(LEASE_MAGIC))!=.None {return .None}
+    return live_add(live,hashes)
 }

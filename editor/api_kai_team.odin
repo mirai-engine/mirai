@@ -1,920 +1,544 @@
 package editor
 
-import "core:crypto"
-import "core:fmt"
-import "core:strconv"
 import "core:strings"
 import ka "mirai:cook/kai"
 import "mirai:editor/api"
 import vcs "mirai:kai"
-import net "mirai:net"
 
-// The kai.* methods of the team: the user of this device, the orgs, pairing
-// another machine, the peers of the mesh, the proposals of the project and
-// its private files, through the procedures of cook/kai and kai that `mirai
-// kai` runs. Each one writes what it is asked and gives its result whole, as
-// the Kai tab shows it; a failure says what failed and how to fix it.
+// The kai.* methods of the team: this machine's profile, its orgs, one-step
+// invites, publishing the project to main, pulling an org's repository into a
+// folder, the agent's peers and pulls, and a server's web sign-in, through
+// the procedures of cook/kai and kai that `mirai kai` runs. Each one writes
+// what it is asked and gives its result whole, as the Kai tab shows it; a
+// failure says what failed and how to fix it.
 
-Api_Kai_Device :: struct {
-    name:string,
-    key:string `mirai:"label=The first hex digits of its key"`,
-    revoked:bool,
-    this:bool `mirai:"label=This device"`,
-}
-
-Api_Kai_Identity_Params :: struct {
-    name:string `mirai:"optional,label=Makes the user of this device with this handle, when it has none; its recovery key shows to the person in the editor's window, never in a result"`,
-    device:string `mirai:"optional,label=With name: this device's name; none: the machine's host name"`,
-    revoke:string `mirai:"optional,label=A device of the user to revoke, by its name or a prefix of its key"`,
-    recovery:string `mirai:"optional,label=The recovery key the user has now, as it was shown: rotates it, and the new one shows to the person in the editor's window; with recover, the key that recovers"`,
-    recover:string `mirai:"optional,label=With recovery: the id of a user whose devices were lost, recovered onto this device, which has none; its log must be here (a recovery pairing brings it), and its other devices are revoked"`,
-    first_recovery:bool `mirai:"optional,label=Sets the first recovery key of a user born of a passkey; it shows to the person in the editor's window"`,
-}
-Api_Kai_Identity :: struct {
-    user:string `mirai:"label=The id of the user; empty: this device has none yet"`,
-    handle:string,
-    device:string `mirai:"label=This device's name"`,
-    subject:string `mirai:"label=What a grant is issued to: the device key and X25519 key"`,
-    devices:[]Api_Kai_Device,
-    orgs:[]string `mirai:"label=The orgs this machine serves"`,
-}
-
-Api_Kai_Org_Params :: struct {
-    org:string `mirai:"optional,label=The org, by its name or a prefix of its id; none: the only one this machine serves"`,
-    new:string `mirai:"optional,label=Makes an org of this name, which this device's user owns"`,
-    add:string `mirai:"optional,label=public or org: puts the open project in the org, read by anyone or by the org alone"`,
-    link:string `mirai:"optional,label=A project of the org, by its name or a prefix of its id: the open project's workspace works on it"`,
-    member:string `mirai:"optional,label=A member, by its handle or a prefix of its id, given role"`,
-    role:string `mirai:"optional,label=With member: reader, writer or admin"`,
-    remove:string `mirai:"optional,label=A member to remove"`,
-    transfer:string `mirai:"optional,label=A member to give the org to"`,
-    leave:bool `mirai:"optional,label=This machine leaves the org and serves it no more"`,
+Api_Kai_Profile_Params :: struct {
+    name:string `mirai:"label=Your name, which every org you make or join shows"`,
+    device:string `mirai:"label=This machine's name, as Mac or Studio PC"`,
 }
 Api_Kai_Member :: struct {
-    handle:string `mirai:"label=Empty while its log is not here"`,
-    user:string,
-    role:string,
-    devices:[]Api_Kai_Device,
+    key:string `mirai:"label=The first hex digits of its device key"`,
+    name,device,role:string,
+    you:bool `mirai:"label=This machine"`,
 }
-Api_Kai_Policy :: struct {bookmark,text:string}
-Api_Kai_Project :: struct {
-    id:string,
-    name:string,
+Api_Kai_Repository :: struct {
+    id,name:string,
     public:bool,
-    open:bool `mirai:"label=The project open in the editor"`,
-    policies:[]Api_Kai_Policy,
+    main:string `mirai:"label=The change main names; empty while nobody published it"`,
+    here:bool `mirai:"label=Every object main reaches is in this store"`,
+    linked:bool `mirai:"label=A workspace of this machine is one of it"`,
 }
-Api_Kai_Node :: struct {key,modes:string}
 Api_Kai_Org :: struct {
-    id:string,
-    name:string,
-    owner:string,
-    role:string `mirai:"label=Of this device's user"`,
+    id,name,role:string,
+    version:int,
     members:[]Api_Kai_Member,
-    nodes:[]Api_Kai_Node,
-    projects:[]Api_Kai_Project,
+    repositories:[]Api_Kai_Repository,
 }
-Api_Kai_Orgs :: struct {orgs:[]Api_Kai_Org}
-
-Api_Kai_Pair_Params :: struct {
-    offer:string `mirai:"optional,label=member, device, node or recover: a ticket another machine joins with; recover lets a machine with no user reach the org to fetch the user it recovers"`,
-    org:string `mirai:"optional,label=With offer member or node: the org; none: the only one"`,
-    role:string `mirai:"optional,label=With offer member: reader, writer or admin; writer when none"`,
-    modes:string `mirai:"optional,label=With offer node: relay, seed and ddc apart by commas; relay,seed when none"`,
-    at:string `mirai:"optional,label=With offer: where the other machine listens, as address:port, when it cannot reach this one (a node in the cloud)"`,
-    join:string `mirai:"optional,label=A ticket another machine offered"`,
-    name:string `mirai:"optional,label=With join, on a device with no user: the name its user will know it by; none: the machine's host name"`,
-    answer:string `mirai:"optional,label=approve or deny: the pairing request that waits"`,
-    code:string `mirai:"optional,label=With approve: the code the other machine shows, dddd-dddd"`,
+Api_Kai_Orgs :: struct {
+    name:string `mirai:"label=Of this machine's person; empty until kai.profile"`,
+    device:string,
+    orgs:[]Api_Kai_Org,
 }
-Api_Kai_Pair :: struct {
-    ticket:string `mirai:"optional,label=The ticket offered now: valid ten minutes"`,
-    asking:bool `mirai:"label=A pairing request waits for an answer here"`,
-    mode:string `mirai:"optional,label=Of the request: member, device, node or recover"`,
-    who:string `mirai:"optional,label=Of the request: <handle>/<device>"`,
-    code:string `mirai:"optional,label=Of the request: compare it with the one the other machine shows"`,
-    joining:string `mirai:"label=How the pairing this machine joins goes: none, asking, waiting, approved, denied or failed"`,
-    joined_code:string `mirai:"optional,label=Of the pairing joined, once both ends have it"`,
-    why:string `mirai:"optional,label=Of a pairing joined that failed"`,
+Api_Kai_Org_Params :: struct {
+    new:string `mirai:"optional,label=Makes an org of this name with this machine its admin"`,
+    org:string `mirai:"optional,label=With member: the org, by its name or a prefix of its id"`,
+    member:string `mirai:"optional,label=A member of org, by its device name or a prefix of its key"`,
+    role:string `mirai:"optional,label=With member: reader, writer, admin or node"`,
+    remove:bool `mirai:"optional,label=With member: removes it from the org"`,
 }
-
-Api_Kai_Peer :: struct {who,org,rung:string}
-Api_Kai_Behind :: struct {org:string,behind,unfound:int}
-Api_Kai_Peers :: struct {
-    mesh:string `mirai:"label=Who runs the machine's mesh"`,
-    peers:[]Api_Kai_Peer `mirai:"label=Connected now, and by which rung of the ladder"`,
-    behind:[]Api_Kai_Behind `mirai:"label=Orgs whose logs peers named entries of that are not here yet (behind: writes wait until a peer gives them), or that never came (unfound: let go)"`,
+Api_Kai_Invite_Params :: struct {
+    org:string `mirai:"label=The org, by its name or a prefix of its id"`,
+    role:string `mirai:"optional,label=reader, writer (the default), admin or node (a server)"`,
+    mine:bool `mirai:"optional,label=For another machine of this person: it joins under this machine's name"`,
+    at:string `mirai:"optional,label=host:port where the other machine reaches this one when it is on another network: what the router forwards; none: this machine's addresses on its LAN"`,
+    revoke:bool `mirai:"optional,label=Removes every open invite of org instead: one that leaked admits nobody"`,
 }
-
-Api_Kai_Proposals_Params :: struct {
-    open:string `mirai:"optional,label=A shared bookmark of the project: opens a proposal to land on it"`,
-    changes:[]string `mirai:"optional,label=With open: its stack, bottom first; none: the changes from the target to the working copy's parent"`,
-    title:string `mirai:"optional,label=With open; none: the description of the working copy's parent"`,
-    text:string `mirai:"optional,label=With open"`,
+Api_Kai_Invite :: struct {
+    invite:string `mirai:"label=What the other machine joins with, once, within 72 hours"`,
+    addresses:[]string `mirai:"label=Where it reaches this machine"`,
 }
-Api_Kai_Proposal_Row :: struct {
-    id:string,
-    title:string,
-    target:string,
-    opener:string,
-    status:string,
-    approvals:int,
-    comments:int,
+Api_Kai_Join_Params :: struct {
+    invite:string `mirai:"optional,label=Starts joining with it; none: says how the last join went"`,
 }
-Api_Kai_Proposals :: struct {
-    proposals:[]Api_Kai_Proposal_Row,
-    opened:string `mirai:"optional,label=The id of the proposal opened"`,
+Api_Kai_Joined :: struct {
+    stage:string `mirai:"label=none, waiting (it reaches the inviting machine and waits for the org's record), done or failed"`,
+    why:string,
+    org:string,
+    name:string,
 }
-
-Api_Kai_Proposal_Params :: struct {
-    proposal:string `mirai:"label=A proposal by a prefix of its id, as kai.proposals lists it"`,
-    comment:string `mirai:"optional,label=Comments with this text"`,
-    file:string `mirai:"optional,label=A file of the stack, from the folder of the project: a comment hangs on it, or alone, detail says what its change did to it"`,
-    change:string `mirai:"optional,label=With file: the change of the stack whose detail; none: the topmost that changed it"`,
-    lines:string `mirai:"optional,label=With comment and file: lines of a text file, A-B from 1"`,
-    entity:u64 `mirai:"optional,label=With comment and file: the id of an entity of the scene"`,
-    reply:string `mirai:"optional,label=With comment: the comment it answers, by a prefix of its id"`,
-    verdict:string `mirai:"optional,label=approve, changes or withdraw"`,
-    revise:bool `mirai:"optional,label=Revises it to changes, or to those from its target to the working copy's parent"`,
-    changes:[]string `mirai:"optional,label=With revise: the stack, bottom first"`,
-    check:string `mirai:"optional,label=Runs a check of this name with command in the folder of the project, whose working copy must hold the proposal's final revision"`,
-    command:[]string `mirai:"optional,label=With check: the program and its arguments"`,
-    close:bool `mirai:"optional"`,
-    reopen:bool `mirai:"optional"`,
-    land:bool `mirai:"optional,label=Moves its target to its final revision for the whole org"`,
+Api_Kai_Publish_Params :: struct {
+    description:string `mirai:"optional,label=Describes the working change it closes"`,
+    bookmark:string `mirai:"optional,label=The shared bookmark it moves; none: main"`,
+    org:string `mirai:"optional,label=When the project is in no org yet: the org it goes into in the same call"`,
+    visibility:string `mirai:"optional,label=With org: public (shows to anyone on a server's web view) or org (the default)"`,
 }
-Api_Kai_Proposal_Change :: struct {
+Api_Kai_Published :: struct {
     change:string,
-    description:string,
-    files:[]Api_Kai_File,
+    bookmark:string,
+    secrets:[]string `mirai:"label=Files named like secrets that a public repository now shows: remove them and publish again"`,
 }
-Api_Kai_Comment :: struct {
-    id:string `mirai:"label=What a reply names"`,
-    reply_to:string `mirai:"optional"`,
-    author:string `mirai:"label=<handle>/<device>"`,
-    text:string,
-    file:string `mirai:"optional,label=Empty: on the whole proposal"`,
-    change:string `mirai:"optional,label=The change of the stack it hangs on"`,
-    lines:string `mirai:"optional,label=A-B on that change's revision"`,
-    entity:u64 `mirai:"optional"`,
-    outdated:bool `mirai:"label=What it named is gone, or its change left the stack"`,
+Api_Kai_Clone_Params :: struct {
+    org:string `mirai:"optional,label=The org, by its name or a prefix of its id"`,
+    repository:string `mirai:"optional,label=A repository of org, by its name or a prefix of its id"`,
+    folder:string `mirai:"optional,label=Where it goes: empty, not there yet, or a workspace a pull of it left; none: the projects screen's location"`,
+    cancel:bool `mirai:"optional,label=Stops the pull that runs, or dismisses one that failed"`,
 }
-Api_Kai_Verdict :: struct {
-    user:string,
-    verdict:string,
-    current:bool `mirai:"label=Given on the final revision"`,
+Api_Kai_Clone :: struct {
+    stage:string `mirai:"label=none, waiting (the agent pulls it), done or failed"`,
+    why:string,
+    folder:string,
+    chunks:int `mirai:"label=Chunks the agent took for it"`,
+    bytes:i64,
 }
-Api_Kai_Check :: struct {name,state:string}
-Api_Kai_Proposal :: struct {
-    id:string,
-    title:string,
-    text:string,
-    target:string,
-    opener:string,
-    status:string,
-    approvals:int,
-    stack:[]Api_Kai_Proposal_Change `mirai:"label=Bottom first, with what each change did to each file"`,
-    comments:[]Api_Kai_Comment,
-    verdicts:[]Api_Kai_Verdict,
-    checks:[]Api_Kai_Check,
-    blocking:string `mirai:"label=What keeps it from landing; empty: it may land"`,
-    passed:bool `mirai:"optional,label=Of the check run now"`,
-    detail:Api_Kai_Detail `mirai:"optional,label=Of file: what its change did to it"`,
+Api_Kai_Peer :: struct {name,device,address:string}
+Api_Kai_Pull :: struct {
+    repository:string,
+    chunks:int,
+    left:int,
+    bytes:i64,
+    whole:bool,
 }
-
-Api_Kai_Scopes_Params :: struct {
-    add:[]string `mirai:"optional,label=Patterns of private paths, as secrets/** or .env: a scope of them, sealed from the next snapshot on"`,
-    readers:string `mirai:"optional,label=With add: reader, writer, admin or owner; writer when none"`,
-    history:bool `mirai:"optional,label=With add: earlier epochs stay readable"`,
-    remove:string `mirai:"optional,label=A scope by a prefix of its id"`,
-    rotate:string `mirai:"optional,label=A scope by a prefix of its id: a new key wrapped for its readers now"`,
-    public:string `mirai:"optional,label=path, or path:line of a leak the publish scanner found: an admin keeps it public"`,
+Api_Kai_Peers :: struct {
+    running:bool `mirai:"label=The agent of this machine runs in this editor"`,
+    port:int,
+    addresses:[]string `mirai:"label=Where this machine listens on its LAN"`,
+    peers:[]Api_Kai_Peer,
+    pulls:[]Api_Kai_Pull,
 }
-Api_Kai_Scope :: struct {
-    id:string,
-    patterns:[]string,
-    readers:string,
-    history:bool,
+Api_Kai_Web_Login_Params :: struct {
+    server:string `mirai:"optional,label=The host:port of the server's agent, as the org lists it; none: says how the last sign-in went"`,
+    name:string `mirai:"optional,label=a-z, 0-9, . _ and -"`,
+    password:string `mirai:"optional,label=8 to 256 bytes"`,
 }
-Api_Kai_Scopes :: struct {
-    scopes:[]Api_Kai_Scope,
-    public:[]string `mirai:"label=Paths of the deny set kept public"`,
-    refused:string `mirai:"optional,label=What refused the last snapshot or publish, and how to fix it"`,
-    refused_path:string `mirai:"optional"`,
-    refused_line:int `mirai:"optional,label=Of a leak the publish scanner found"`,
-    action:string `mirai:"optional,label=What resolves it here: public (kai.scopes public) or rotate (kai.scopes rotate scope)"`,
-    scope:string `mirai:"optional,label=Of a refusal that a rotation resolves"`,
+Api_Kai_Task :: struct {
+    stage:string `mirai:"label=none, waiting, done or failed"`,
+    why:string,
 }
 
 @(private)
 kai_team_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="kai.identity",summary="The user of this device and its devices; makes the user, revokes a device or rotates the recovery key first when asked.",params=type_info_of(Api_Kai_Identity_Params),result=type_info_of(Api_Kai_Identity),run=api_kai_identity})
-    api_register(s,st,{name="kai.org",summary="The orgs this machine serves with their members, roles, devices, nodes and projects; makes one, puts the open project in one, sets a role, removes a member, gives the org away or leaves first when asked.",params=type_info_of(Api_Kai_Org_Params),result=type_info_of(Api_Kai_Orgs),run=api_kai_org})
-    api_register(s,st,{name="kai.pair",summary="Pairing another machine as a member, a second device or a node: offers a ticket, joins with one, or answers the request that waits with the code both machines show.",params=type_info_of(Api_Kai_Pair_Params),result=type_info_of(Api_Kai_Pair),run=api_kai_pair})
-    api_register(s,st,{name="kai.peers",summary="Who runs the machine's mesh, and the peers connected now with the rung each is reached by.",result=type_info_of(Api_Kai_Peers),flags={.Read_Only},run=api_kai_peers})
-    api_register(s,st,{name="kai.proposals",summary="The proposals of the open project; opens one on a shared bookmark first when asked, by default with the changes from it to the working copy's parent.",params=type_info_of(Api_Kai_Proposals_Params),result=type_info_of(Api_Kai_Proposals),run=api_kai_proposals})
-    api_register(s,st,{name="kai.proposal",summary="One proposal whole: its stack with what each change did, comments placed on the current stack, verdicts, checks and what keeps it from landing; comments, gives a verdict, revises, runs a check, closes, reopens or lands it first when asked.",params=type_info_of(Api_Kai_Proposal_Params),result=type_info_of(Api_Kai_Proposal),flags={.Destructive},run=api_kai_proposal})
-    api_register(s,st,{name="kai.scopes",summary="The private files of the open project: its scopes and the paths kept public, and what refused the last snapshot or publish; adds, removes or rotates a scope, or keeps a path public, first when asked.",params=type_info_of(Api_Kai_Scopes_Params),result=type_info_of(Api_Kai_Scopes),run=api_kai_scopes})
+    api_register(s,st,{name="kai.profile",summary="Names the person of this machine and the machine, which every org it makes or joins shows.",params=type_info_of(Api_Kai_Profile_Params),result=type_info_of(Api_Kai_Orgs),run=api_kai_profile})
+    api_register(s,st,{name="kai.org",summary="This machine's orgs with their members and repositories; makes one, sets a member's role or removes it first when asked.",params=type_info_of(Api_Kai_Org_Params),result=type_info_of(Api_Kai_Orgs),run=api_kai_org})
+    api_register(s,st,{name="kai.invite",summary="A one-time invite to an org for another machine: its address, this device's key and a secret only it carries; the other machine joins with kai.join while this editor runs.",params=type_info_of(Api_Kai_Invite_Params),result=type_info_of(Api_Kai_Invite),run=api_kai_invite})
+    api_register(s,st,{name="kai.join",summary="Joins the org of an invite on a thread of the agent: reaches the machine that made it, proves the invite and waits for the org's record that lists this machine; asked again with no invite, how it went.",params=type_info_of(Api_Kai_Join_Params),result=type_info_of(Api_Kai_Joined),run=api_kai_join})
+    api_register(s,st,{name="kai.publish",summary="Publishes the working copy to main for the whole org: closes the working change when it changed a file, and moves main; a project in no org goes into one first, in the same call.",params=type_info_of(Api_Kai_Publish_Params),result=type_info_of(Api_Kai_Published),run=api_kai_publish})
+    api_register(s,st,{name="kai.clone",summary="Pulls a repository of an org into a folder: it is a workspace at once, and its files are written once the agent has every object of main; asked again, how far it is.",params=type_info_of(Api_Kai_Clone_Params),result=type_info_of(Api_Kai_Clone),run=api_kai_clone})
+    api_register(s,st,{name="kai.peers",summary="The agent of this machine: where it listens, the machines connected now and how far each repository's pull is.",result=type_info_of(Api_Kai_Peers),flags={.Read_Only},run=api_kai_peers})
+    api_register(s,st,{name="kai.web_login",summary="Sets the name and password this machine signs in with on the web view of a Kai server of its org, on a thread of the agent, which proves the server's key first; asked again with no params, how it went.",params=type_info_of(Api_Kai_Web_Login_Params),result=type_info_of(Api_Kai_Task),run=api_kai_web_login})
 }
 
-// The machine, or the call fails with why there is none.
 @(private)
-api_kai_machine :: proc(s:^Session,call:^api.Call) -> ^vcs.Machine {
-    m,message:=kai_team_machine(s)
-    if m==nil {
-        api.call_fail(call,api.SERVER_ERROR,message)
-        return nil
-    }
-    // What failed before this call is not why it fails.
-    m.why=""
-    return m
+api_kai_team :: proc(s:^Session,call:^api.Call) -> ^vcs.Team {
+    t,message:=kai_team_of(s)
+    if t==nil {api.call_fail(call,api.SERVER_ERROR,message)}
+    return t
 }
 
-// Fails the call with what the machine says failed.
+// Fails the call with what the team says failed.
 @(private)
-api_kai_why :: proc(call:^api.Call,m:^vcs.Machine,e:vcs.Error) {
-    why:=m.why!=""?m.why:vcs.error_text(e)
+api_kai_why :: proc(call:^api.Call,t:^vcs.Team,e:vcs.Error) {
+    why:=t.why!=""?t.why:vcs.error_text(e)
     api.call_fail(call,e==.Invalid_Argument?api.INVALID_PARAMS:api.SERVER_ERROR,why)
 }
 
+// The org text names: its name, or a prefix of its id; the call fails otherwise.
 @(private)
-api_kai_hex :: proc(bytes:[]u8,call:^api.Call) -> string {return ka.hex(bytes[:min(len(bytes),6)],call.allocator)}
-
-// The one action of the params that are set, by name: "" for none, and the
-// call failed when several are.
-@(private)
-api_kai_action :: proc(call:^api.Call,names:[]string,set:[]bool) -> (action:string,ok:bool) {
-    for given,i in set {
-        if !given {continue}
-        if action!="" {
-            api.call_failf(call,api.INVALID_PARAMS,"%s and %s are given together: give one of %s per call",action,names[i],strings.join(names,", ",context.temp_allocator))
-            return
+api_kai_org_find :: proc(s:^Session,call:^api.Call,t:^vcs.Team,text:string) -> (org:vcs.Org_Id,ok:bool) {
+    found:=0
+    for id in vcs.team_org_ids(t) {
+        o,_,e:=vcs.team_org(t,id)
+        if e!=.None {continue}
+        if o.name==text || (len(text)>=4 && strings.has_prefix(org_hex(id),strings.to_lower(text,context.temp_allocator))) {
+            org=id
+            found+=1
         }
-        action=names[i]
     }
-    return action,true
+    if found!=1 {
+        api.call_failf(call,api.INVALID_PARAMS,"%q names %s org of this machine: kai.org lists them",text,found==0?"no":"more than one")
+        return {},false
+    }
+    return org,true
 }
 
 @(private)
-api_kai_devices :: proc(devices:[]ka.Device_View,call:^api.Call) -> []Api_Kai_Device {
-    out:=make([]Api_Kai_Device,len(devices),call.allocator)
-    for d,i in devices {
-        key:=d.key
-        out[i]={strings.clone(d.name,call.allocator),api_kai_hex(key[:],call),d.revoked,d.this}
+api_kai_orgs_fill :: proc(s:^Session,call:^api.Call,t:^vcs.Team) {
+    r:=api.call_result(call,Api_Kai_Orgs)
+    r.name=strings.clone(t.name,call.allocator)
+    r.device=strings.clone(t.device,call.allocator)
+    ids:=vcs.team_org_ids(t)
+    orgs:=make([dynamic]Api_Kai_Org,0,len(ids),call.allocator)
+    for id in ids {
+        v:ka.Org_View
+        if ka.org_view(t,id,&v,call.allocator)!=.None {continue}
+        o:=Api_Kai_Org{id=strings.clone(org_hex(id),call.allocator),name=v.name,role=v.role,version=int(v.version)}
+        o.members=make([]Api_Kai_Member,len(v.members),call.allocator)
+        for m,i in v.members {
+            key:=m.key
+            o.members[i]={ka.hex(key[:4],call.allocator),m.name,m.device,m.role,m.you}
+        }
+        o.repositories=make([]Api_Kai_Repository,len(v.repos),call.allocator)
+        for x,i in v.repos {
+            id:=x.id
+            o.repositories[i]={ka.hex(id[:],call.allocator),x.name,x.public,x.main,x.here,x.linked}
+        }
+        append(&orgs,o)
     }
-    return out
+    r.orgs=orgs[:]
 }
 
 @(private)
-api_kai_identity :: proc(s:^Session,call:^api.Call) {
-    p:=api.call_params(call,Api_Kai_Identity_Params)
-    action,ok:=api_kai_action(call,{"name","revoke","recovery","recover","first_recovery"},{p.name!="",p.revoke!="",p.recovery!="" && p.recover=="",p.recover!="",p.first_recovery})
-    if !ok {return}
-    if action=="recover" && p.recovery=="" {
-        api.call_fail(call,api.INVALID_PARAMS,"recover takes recovery: the user's recovery key, as it was shown")
+api_kai_profile :: proc(s:^Session,call:^api.Call) {
+    p:=api.call_params(call,Api_Kai_Profile_Params)
+    t:=api_kai_team(s,call)
+    if t==nil {return}
+    if e:=vcs.team_profile_set(t,strings.trim_space(p.name),strings.trim_space(p.device));e!=.None {
+        api_kai_why(call,t,e)
         return
     }
-    if p.device!="" && action!="name" {
-        api.call_fail(call,api.INVALID_PARAMS,"device goes with name: it names this device when its user is made")
-        return
-    }
-    // A recovery key is a secret for a person: it shows in the editor's window, never in a result.
-    if (action=="name" || action=="recovery" || action=="first_recovery") && (s.headless || s.gui==nil) {
-        api.call_fail(call,api.SERVER_ERROR,"a recovery key is shown to a person, and this editor has no window: make the user or rotate its key in an editor with a window, or with mirai kai identity in a terminal")
-        return
-    }
-    m:=api_kai_machine(s,call)
-    if m==nil {return}
-    t:=&s.kai.state.team
-    r:=api.call_result(call,Api_Kai_Identity)
-    switch action {
-    case "name":
-        buffer:[vcs.RECOVERY_TEXT]u8
-        defer crypto.zero_explicit(&buffer,size_of(buffer))
-        recovery,e:=vcs.machine_user_create(m,p.name,&buffer,p.device)
-        if e!=.None {api_kai_why(call,m,e);return}
-        t.recovery_length=copy(t.recovery[:],recovery)
-        kai_dialog_open(s,.Recovery)
-        kai_team_wrote(s)
-    case "revoke":
-        device,e:=vcs.machine_device_find(m,p.revoke)
-        if e==.None {e=vcs.machine_device_revoke(m,device)}
-        if e!=.None {api_kai_why(call,m,e);return}
-        kai_team_wrote(s)
-    case "recovery":
-        buffer:[vcs.RECOVERY_TEXT]u8
-        defer crypto.zero_explicit(&buffer,size_of(buffer))
-        recovery,e:=vcs.machine_recovery_rotate(m,strings.trim_space(p.recovery),&buffer)
-        if e!=.None {api_kai_why(call,m,e);return}
-        t.recovery_length=copy(t.recovery[:],recovery)
-        kai_dialog_open(s,.Recovery)
-    case "first_recovery":
-        if vcs.machine_user_recovered(m) {
-            api.call_fail(call,api.INVALID_PARAMS,"the user has a recovery key: rotate it with recovery, the key it has now")
-            return
-        }
-        buffer:[vcs.RECOVERY_TEXT]u8
-        defer crypto.zero_explicit(&buffer,size_of(buffer))
-        recovery,e:=vcs.machine_recovery_rotate(m,"",&buffer)
-        if e!=.None {api_kai_why(call,m,e);return}
-        t.recovery_length=copy(t.recovery[:],recovery)
-        kai_dialog_open(s,.Recovery)
-        kai_team_wrote(s)
-    case "recover":
-        user,e:=vcs.machine_user_find(m,p.recover)
-        if e==.None {e=vcs.machine_recover(m,user,p.recovery)}
-        if e!=.None {api_kai_why(call,m,e);return}
-        kai_team_wrote(s)
-    }
-    v:=&t.view.identity
-    if m.user!={} {
-        user:=m.user
-        r.user=api_kai_hex(user[:],call)
-    }
-    r.handle=strings.clone(v.handle,call.allocator)
-    r.device=strings.clone(v.device,call.allocator)
-    r.subject=strings.clone(v.subject,call.allocator)
-    r.devices=api_kai_devices(v.devices,call)
-    r.orgs=make([]string,len(t.view.orgs),call.allocator)
-    for o,i in t.view.orgs {r.orgs[i]=strings.clone(o.name,call.allocator)}
+    kai_team_wrote(s)
+    api_kai_orgs_fill(s,call,t)
 }
 
 @(private)
 api_kai_org :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Kai_Org_Params)
-    action,ok:=api_kai_action(call,{"new","add","link","member","remove","transfer","leave"},{p.new!="",p.add!="",p.link!="",p.member!="",p.remove!="",p.transfer!="",p.leave})
-    if !ok {return}
+    t:=api_kai_team(s,call)
+    if t==nil {return}
     switch {
-    case action=="add" && p.add!="public" && p.add!="org":
-        api.call_failf(call,api.INVALID_PARAMS,"add is public or org, not %q: public lets anyone read the project, org only its members",p.add)
-        return
-    case action=="member" && ka.role_of(p.role)==.None:
-        api.call_failf(call,api.INVALID_PARAMS,"role is reader, writer or admin, not %q: give it with member",p.role)
-        return
-    case action!="member" && p.role!="":
-        api.call_fail(call,api.INVALID_PARAMS,"role goes with member: name the member whose role it sets")
-        return
-    }
-    m:=api_kai_machine(s,call)
-    if m==nil {return}
-    st:=s.kai.state
-    e:vcs.Error
-    switch action {
-    case "new":
-        org:vcs.Log_Id
-        if org,e=vcs.machine_org_create(m,p.new);e!=.None {break}
-    case "":
-    case:
-        org:vcs.Log_Id
-        if org,e=vcs.machine_org_find(m,p.org);e!=.None {break}
-        switch action {
-        case "add": _,e=ka.project_join(&st.project,m,org,p.add=="public")
-        case "link":
-            project,porg:vcs.Log_Id
-            if project,porg,e=vcs.machine_project_find(m,p.link);e!=.None {break}
-            if porg!=org {
-                m.why="that project is of another org: give that org with org"
-                e=.Invalid_Argument
-                break
-            }
-            e=ka.project_link(&st.project,m,project)
-        case "leave": e=vcs.machine_leave(m,org)
-        case "member","remove","transfer":
-            text:=action=="member"?p.member:action=="remove"?p.remove:p.transfer
-            user:vcs.Log_Id
-            if user,e=vcs.machine_member(m,org,text);e!=.None {break}
-            switch action {
-            case "member": e=vcs.machine_role_set(m,org,user,ka.role_of(p.role))
-            case "remove": e=vcs.machine_member_remove(m,org,user)
-            case "transfer": e=vcs.machine_owner_transfer(m,org,user)
-            }
+    case p.new!="":
+        if p.member!="" {
+            api.call_fail(call,api.INVALID_PARAMS,"new and member are given together: give one per call")
+            return
         }
-    }
-    if e!=.None {api_kai_why(call,m,e);return}
-    if action!="" {
+        if _,e:=vcs.team_org_create(t,strings.trim_space(p.new));e!=.None {
+            api_kai_why(call,t,e)
+            return
+        }
         kai_team_wrote(s)
-        kai_publish(s)
+    case p.member!="":
+        org,ok:=api_kai_org_find(s,call,t,p.org)
+        if !ok {return}
+        o,_,_:=vcs.team_org(t,org)
+        found:=-1
+        for m,i in o.members {
+            key:=m.key
+            if m.device==p.member || (len(p.member)>=4 && strings.has_prefix(ka.hex(key[:]),strings.to_lower(p.member,context.temp_allocator))) {
+                if found>=0 {
+                    api.call_failf(call,api.INVALID_PARAMS,"%q names several members: give more of a key",p.member)
+                    return
+                }
+                found=i
+            }
+        }
+        if found<0 {
+            api.call_failf(call,api.INVALID_PARAMS,"%q names no member of the org: kai.org lists them",p.member)
+            return
+        }
+        e:vcs.Error
+        if p.remove {
+            e=vcs.team_member_remove(t,org,o.members[found].key)
+        } else {
+            role,known:=ka.role_of(p.role)
+            if !known {
+                api.call_fail(call,api.INVALID_PARAMS,"role is reader, writer, admin or node")
+                return
+            }
+            m:=o.members[found]
+            m.role=role
+            e=vcs.team_member_set(t,org,m)
+        }
+        if e!=.None {
+            api_kai_why(call,t,e)
+            return
+        }
+        kai_team_wrote(s)
+    case p.remove || p.role!="" || p.org!="":
+        api.call_fail(call,api.INVALID_PARAMS,"org, role and remove go with member")
+        return
     }
-    v:=&st.team.view
-    r:=api.call_result(call,Api_Kai_Orgs)
-    r.orgs=make([]Api_Kai_Org,len(v.orgs),call.allocator)
-    for &o,i in v.orgs {
-        x:=&r.orgs[i]
-        id:=o.id
-        x^={id=api_kai_hex(id[:],call),name=strings.clone(o.name,call.allocator),owner=strings.clone(o.owner,call.allocator),role=ka.role_text(o.role)}
-        x.members=make([]Api_Kai_Member,len(o.members),call.allocator)
-        for member,k in o.members {
-            user:=member.user
-            x.members[k]={handle=strings.clone(member.handle,call.allocator),user=api_kai_hex(user[:],call),role=ka.role_text(member.role),devices=api_kai_devices(member.devices,call)}
-        }
-        x.nodes=make([]Api_Kai_Node,len(o.nodes),call.allocator)
-        for n,k in o.nodes {
-            key:=n.key
-            x.nodes[k]={api_kai_hex(key[:],call),ka.node_modes_text(n.modes,call.allocator)}
-        }
-        x.projects=make([]Api_Kai_Project,len(o.projects),call.allocator)
-        for project,k in o.projects {
-            pid:=project.id
-            policies:=make([]Api_Kai_Policy,len(project.policies),call.allocator)
-            for policy,j in project.policies {policies[j]={strings.clone(policy.bookmark,call.allocator),strings.clone(policy.text,call.allocator)}}
-            x.projects[k]={id=api_kai_hex(pid[:],call),name=strings.clone(project.name,call.allocator),public=project.public,open=pid==v.project,policies=policies}
-        }
-    }
+    api_kai_orgs_fill(s,call,t)
 }
 
 @(private)
-api_kai_pair :: proc(s:^Session,call:^api.Call) {
-    p:=api.call_params(call,Api_Kai_Pair_Params)
-    action,ok:=api_kai_action(call,{"offer","join","answer"},{p.offer!="",p.join!="",p.answer!=""})
+api_kai_invite :: proc(s:^Session,call:^api.Call) {
+    p:=api.call_params(call,Api_Kai_Invite_Params)
+    t:=api_kai_team(s,call)
+    if t==nil {return}
+    org,ok:=api_kai_org_find(s,call,t,p.org)
     if !ok {return}
-    mode:vcs.Pair_Mode
-    modes:vcs.Node_Modes
+    k:=s.kai.team
+    if p.revoke {
+        if _,e:=vcs.team_invites_clear(t,org);e!=.None {
+            api_kai_why(call,t,e)
+            return
+        }
+        if k.invite_org==org {k.invite_length=0}
+        api.call_result(call,Api_Kai_Invite)
+        return
+    }
     role:=vcs.Role.Writer
-    switch action {
-    case "offer":
-        switch p.offer {
-        case "member": mode=.Member
-        case "device": mode=.Device
-        case "node": mode=.Node
-        case "recover": mode=.Recover
-        case:
-            api.call_failf(call,api.INVALID_PARAMS,"offer is member, device, node or recover, not %q: member adds a user to the org, device links a second device of this user, node adds a relay or seed, recover lets a machine with no user fetch the user it recovers",p.offer)
-            return
-        }
-        if p.role!="" {role=ka.role_of(p.role)}
-        if role==.None {
-            api.call_failf(call,api.INVALID_PARAMS,"role is reader, writer or admin, not %q",p.role)
-            return
-        }
-        parsed:bool
-        if modes,parsed=ka.node_modes_of(p.modes);!parsed {
-            api.call_failf(call,api.INVALID_PARAMS,"modes takes relay, seed and ddc apart by commas, not %q",p.modes)
-            return
-        }
-        if mode==.Node && modes=={} {modes={.Relay,.Seed}}
-    case "join":
-        if _,decoded:=vcs.ticket_decode(strings.trim_space(p.join));!decoded {
-            api.call_fail(call,api.INVALID_PARAMS,"join: the ticket does not read: copy it again, whole, from the machine that offered it")
-            return
-        }
-    case "answer":
-        if p.answer!="approve" && p.answer!="deny" {
-            api.call_failf(call,api.INVALID_PARAMS,"answer is approve or deny, not %q",p.answer)
-            return
-        }
-        if p.answer=="approve" && len(p.code)!=vcs.PAIR_CODE_TEXT {
-            api.call_fail(call,api.INVALID_PARAMS,"code: approving takes the code the other machine shows, as 1234-5678")
+    if p.role!="" {
+        known:bool
+        if role,known=ka.role_of(p.role);!known {
+            api.call_fail(call,api.INVALID_PARAMS,"role is reader, writer, admin or node")
             return
         }
     }
-    m:=api_kai_machine(s,call)
-    if m==nil {return}
-    t:=&s.kai.state.team
-    if action!="" {
-        if message:=kai_team_connect(s,true);message!="" {
+    if message:=kai_agent_start(s);message!="" {
+        api.call_fail(call,api.SERVER_ERROR,message)
+        return
+    }
+    addresses:=make([dynamic]string,call.allocator)
+    if at:=strings.trim_space(p.at);at!="" {append(&addresses,strings.clone(at,call.allocator))}
+    append(&addresses,..vcs.agent_addresses(&k.agent,call.allocator))
+    text,e:=vcs.team_invite(t,org,role,p.mine?t.name:"",addresses[:],call.allocator)
+    if e!=.None {
+        api_kai_why(call,t,e)
+        return
+    }
+    k.invite_length=copy(k.invite[:],text)
+    k.invite_org=org
+    r:=api.call_result(call,Api_Kai_Invite)
+    r.invite,r.addresses=text,addresses[:]
+}
+
+@(private)
+api_kai_join :: proc(s:^Session,call:^api.Call) {
+    p:=api.call_params(call,Api_Kai_Join_Params)
+    t:=api_kai_team(s,call)
+    if t==nil {return}
+    k:=s.kai.team
+    if invite:=strings.trim_space(p.invite);invite!="" {
+        if _,e:=vcs.invite_parse(invite,context.temp_allocator);e!=.None {
+            api.call_fail(call,api.INVALID_PARAMS,"that is no Kai invite: copy all of it, it begins with kai2")
+            return
+        }
+        if t.name=="" {
+            api.call_fail(call,api.INVALID_PARAMS,"name yourself and this machine first: kai.profile")
+            return
+        }
+        if message:=kai_task_start(s,.Join,invite);message!="" {
             api.call_fail(call,api.SERVER_ERROR,message)
             return
         }
     }
-    c:=&t.control
-    r:=api.call_result(call,Api_Kai_Pair)
-    switch action {
-    case "offer":
-        org:vcs.Log_Id
-        if mode!=.Device {
-            e:vcs.Error
-            if org,e=vcs.machine_org_find(m,p.org);e!=.None {api_kai_why(call,m,e);return}
-        }
-        buffer:[vcs.TICKET_TEXT]u8
-        at:net.Address
-        if p.at!="" {
-            parsed:bool
-            if at,parsed=net.address_parse(p.at);!parsed || at.port==0 {
-                api.call_failf(call,api.INVALID_PARAMS,"at takes where the other machine listens, as 203.0.113.7:47914 or [2001:db8::7]:47914, not %q",p.at)
-                return
-            }
-        }
-        ticket,e:=vcs.control_pair_offer(c,mode,org,role,modes,&buffer,at)
-        if e!=.None {api.call_fail(call,e==.Invalid_Argument?api.INVALID_PARAMS:api.SERVER_ERROR,c.why);return}
-        t.ticket_length=copy(t.ticket[:],ticket)
-        r.ticket=strings.clone(ticket,call.allocator)
-    case "join":
-        name,ne:=vcs.machine_pair_name(m,p.name)
-        if ne!=.None {api_kai_why(call,m,ne);return}
-        if e:=vcs.control_pair_join(c,p.join,name);e!=.None {api.call_fail(call,e==.Invalid_Argument || e==.Expired || e==.Corrupt?api.INVALID_PARAMS:api.SERVER_ERROR,c.why);return}
-        t.joining,t.progress,t.progress_code,t.progress_why_length=true,.Asking,{},0
-    case "answer":
-        if e:=vcs.control_pair_answer(c,p.answer=="approve",p.code);e!=.None {api.call_fail(call,api.SERVER_ERROR,c.why);return}
-        t.asked=false
-        if t.dialog==.Pair {kai_dialog_close(s)}
+    x:=&k.tasks[.Join]
+    r:=api.call_result(call,Api_Kai_Joined)
+    r.stage,r.why=api_kai_task_state(x,call)
+    if x.stage==.Done {
+        o,_,_:=vcs.team_org(t,x.org)
+        r.org=strings.clone(org_hex(x.org),call.allocator)
+        r.name=strings.clone(o.name,call.allocator)
     }
-    if t.connected {
-        if request,asking,e:=vcs.control_pair_request(c);e==.None {
-            kai_pair_asked(s,request,asking)
-            if asking {
-                modes:=[vcs.Pair_Mode]string{.Device="device",.Member="member",.Node="node",.Recover="recover"}
-                r.asking,r.mode,r.code=true,modes[request.mode],strings.clone(request.code,call.allocator)
-                r.who=vcs.pair_request_who(m,request,call.allocator)
-            }
+}
+
+// A task's stage and why, as its methods say them.
+@(private)
+api_kai_task_state :: proc(x:^Kai_Task,call:^api.Call) -> (stage,why:string) {
+    STAGES :: [Kai_Clone_Stage]string{.None="none",.Waiting="waiting",.Done="done",.Failed="failed"}
+    stages:=STAGES
+    if x.stage==.Failed {why=strings.clone(string(x.why[:x.why_length]),call.allocator)}
+    return stages[x.stage],why
+}
+
+@(private)
+api_kai_publish :: proc(s:^Session,call:^api.Call) {
+    p:=api.call_params(call,Api_Kai_Publish_Params)
+    t:=api_kai_team(s,call)
+    if t==nil {return}
+    st:=s.kai.state
+    if st==nil {
+        api.call_fail(call,api.SERVER_ERROR,kai_missing(s))
+        return
+    }
+    if p.visibility!="" && p.visibility!="public" && p.visibility!="org" {
+        api.call_fail(call,api.INVALID_PARAMS,"visibility is public or org")
+        return
+    }
+    _,linked:=vcs.team_link_of(t,st.project.workspace.repo.id)
+    if !linked {
+        if p.org=="" {
+            api.call_fail(call,api.INVALID_PARAMS,"the project is in no org yet: give org, and visibility public or org")
+            return
         }
-        if t.joining || t.progress!=.None {
-            if progress,e:=vcs.control_pair_progress(c);e==.None {
-                t.progress=progress.phase
-                copy(t.progress_code[:],progress.code)
-                t.progress_why_length=copy(t.progress_why[:],progress.why)
-                if progress.phase!=.Asking && progress.phase!=.Waiting {t.joining=false}
-                if progress.phase==.Approved {kai_team_wrote(s)}
-            }
+    } else if p.org!="" || p.visibility!="" {
+        api.call_fail(call,api.INVALID_PARAMS,"the project is in an org already: org and visibility go with its first publish")
+        return
+    }
+    // Whatever may refuse goes before the org's record lists the repository.
+    bookmark:=p.bookmark!=""?p.bookmark:ka.BOOKMARK_DEFAULT
+    if !vcs.bookmark_name_valid(bookmark) {
+        api.call_failf(call,api.INVALID_PARAMS,"%q is no bookmark name",bookmark)
+        return
+    }
+    org:vcs.Org_Id
+    if !linked {
+        ok:bool
+        if org,ok=api_kai_org_find(s,call,t,p.org);!ok {return}
+        o,_,_:=vcs.team_org(t,org)
+        if role,member:=vcs.org_role(&o,t.identity.key);!member || role<.Writer {
+            api.call_fail(call,api.INVALID_PARAMS,"a reader of that org publishes nothing: an admin makes you a writer")
+            return
         }
     }
-    phases:=[vcs.Pair_Phase]string{.None="none",.Asking="asking",.Waiting="waiting",.Approved="approved",.Denied="denied",.Failed="failed"}
-    r.joining=phases[t.progress]
-    if t.progress_code[0]!=0 {r.joined_code=strings.clone(string(t.progress_code[:]),call.allocator)}
-    r.why=strings.clone(string(t.progress_why[:t.progress_why_length]),call.allocator)
+    if _,message:=kai_prepare(s);message!="" {
+        api.call_fail(call,api.SERVER_ERROR,message)
+        return
+    }
+    if !linked {
+        if _,e:=ka.project_join(&st.project,t,org,p.visibility=="public");e!=.None {
+            api_kai_why(call,t,e)
+            return
+        }
+    }
+    changed:=make([dynamic]string,context.temp_allocator)
+    revision,e:=ka.publish(&st.project,t,bookmark,strings.trim_space(p.description),&changed)
+    kai_wrote(s,changed[:])
+    if e!=.None {
+        kai_team_wrote(s)
+        api_kai_why(call,t,e)
+        return
+    }
+    // The description went into the change: the field is clear only now.
+    st.description_length=0
+    kai_team_wrote(s)
+    r:=api.call_result(call,Api_Kai_Published)
+    r.change=api_kai_text(&st.project.workspace,revision,call)
+    r.bookmark=strings.clone(bookmark,call.allocator)
+    l,_:=vcs.team_link_of(t,st.project.workspace.repo.id)
+    if o,_,oe:=vcs.team_org(t,l.org);oe==.None {
+        if i:=vcs.org_repo(&o,l.repo);i>=0 && o.repos[i].public {
+            secrets:=ka.secret_paths(&st.project,revision)
+            r.secrets=make([]string,len(secrets),call.allocator)
+            for x,k in secrets {r.secrets[k]=strings.clone(x,call.allocator)}
+            if len(secrets)>0 {notify(s,strings.concatenate({"Kai: this public repository shows files named like secrets: ",strings.join(secrets,", ",context.temp_allocator)},context.temp_allocator))}
+        }
+    }
+}
+
+@(private)
+api_kai_clone :: proc(s:^Session,call:^api.Call) {
+    p:=api.call_params(call,Api_Kai_Clone_Params)
+    t:=api_kai_team(s,call)
+    if t==nil {return}
+    k:=s.kai.team
+    if p.cancel {
+        kai_clone_cancel(s)
+    } else if p.org!="" || p.repository!="" {
+        org,ok:=api_kai_org_find(s,call,t,p.org)
+        if !ok {return}
+        o,_,_:=vcs.team_org(t,org)
+        repo:=-1
+        for x,i in o.repos {
+            id:=x.id
+            if x.name==p.repository || (len(p.repository)>=4 && strings.has_prefix(ka.hex(id[:]),strings.to_lower(p.repository,context.temp_allocator))) {repo=i}
+        }
+        if repo<0 {
+            api.call_failf(call,api.INVALID_PARAMS,"%q names no repository of %s: kai.org lists them",p.repository,o.name)
+            return
+        }
+        folder:=p.folder!=""?p.folder:kai_clone_folder(s,o.repos[repo].name)
+        if message:=kai_clone_start(s,org,o.repos[repo].id,o.repos[repo].name,folder);message!="" {
+            api.call_fail(call,api.SERVER_ERROR,message)
+            return
+        }
+    }
+    r:=api.call_result(call,Api_Kai_Clone)
+    c:=&k.clone
+    STAGES :: [Kai_Clone_Stage]string{.None="none",.Waiting="waiting",.Done="done",.Failed="failed"}
+    stages:=STAGES
+    r.stage=stages[c.stage]
+    r.why=strings.clone(string(c.why[:c.why_length]),call.allocator)
+    r.folder=strings.clone(string(c.folder[:c.folder_length]),call.allocator)
+    r.chunks,r.bytes=kai_clone_progress(k)
 }
 
 @(private)
 api_kai_peers :: proc(s:^Session,call:^api.Call) {
-    if api_kai_machine(s,call)==nil {return}
-    t:=&s.kai.state.team
+    if api_kai_team(s,call)==nil {return}
+    k:=s.kai.team
+    kai_team_read(s)
     r:=api.call_result(call,Api_Kai_Peers)
-    r.mesh=kai_runner_text(t)
-    r.peers=make([]Api_Kai_Peer,len(t.view.peers),call.allocator)
-    for p,i in t.view.peers {r.peers[i]={strings.clone(p.who,call.allocator),strings.clone(p.org,call.allocator),strings.clone(p.rung,call.allocator)}}
-    r.behind=make([]Api_Kai_Behind,len(t.view.behind),call.allocator)
-    for b,i in t.view.behind {r.behind[i]={strings.clone(b.org,call.allocator),b.behind,b.unfound}}
-}
-
-// The workspace and the machine of a method of the project.
-@(private)
-api_kai_project :: proc(s:^Session,call:^api.Call) -> (p:^ka.Project,m:^vcs.Machine) {
-    if api_kai_workspace(s,call)==nil {return}
-    if m=api_kai_machine(s,call);m==nil {return}
-    return &s.kai.state.project,m
-}
-
-// The change text names: what the workspace knows, or a shared bookmark.
-@(private)
-api_kai_revision :: proc(s:^Session,call:^api.Call,text:string) -> (revision:vcs.Revision,ok:bool) {
-    w:=kai_workspace(s)
-    if r,e:=ka.revision_find(w,text);e==.None {return r,true}
-    if m,_:=kai_team_machine(s);m!=nil {
-        m.why=""
-        if r,e:=ka.revision_resolve(&s.kai.state.project,m,text);e==.None {return r,true}
-        api.call_failf(call,api.INVALID_PARAMS,"%q: %s",text,m.why)
-        return
-    }
-    api.call_failf(call,api.INVALID_PARAMS,"%q names no single visible change: @, @-, a bookmark, <handle>/<device>:<bookmark> or a prefix of at least %d digits of a change kai.log lists",text,ka.CHANGE_TEXT_MIN)
-    return
-}
-
-@(private)
-api_kai_proposals :: proc(s:^Session,call:^api.Call) {
-    p:=api.call_params(call,Api_Kai_Proposals_Params)
-    if p.open=="" && (len(p.changes)>0 || p.title!="" || p.text!="") {
-        api.call_fail(call,api.INVALID_PARAMS,"changes, title and text go with open: name the shared bookmark the proposal lands on")
-        return
-    }
-    if p.open!="" && !vcs.bookmark_name_valid(p.open) {
-        api.call_failf(call,api.INVALID_PARAMS,"open: %q is no bookmark name: letters, digits, - _ . and / of at most %d bytes",p.open,vcs.BOOKMARK_NAME_MAX)
-        return
-    }
-    project,m:=api_kai_project(s,call)
-    if project==nil {return}
-    t:=&s.kai.state.team
-    r:=api.call_result(call,Api_Kai_Proposals)
-    if p.open!="" {
-        if _,message:=kai_prepare(s);message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
-        stack:=make([dynamic]vcs.Revision,context.temp_allocator)
-        for text in p.changes {
-            revision,ok:=api_kai_revision(s,call,text)
-            if !ok {return}
-            append(&stack,revision)
+    r.running=k.running
+    if k.running {r.port=vcs.agent_port(&k.agent)}
+    r.addresses=make([]string,len(k.view.addresses),call.allocator)
+    for a,i in k.view.addresses {r.addresses[i]=strings.clone(a,call.allocator)}
+    r.peers=make([]Api_Kai_Peer,len(k.view.peers),call.allocator)
+    for x,i in k.view.peers {r.peers[i]={strings.clone(x.name,call.allocator),strings.clone(x.device,call.allocator),strings.clone(x.address,call.allocator)}}
+    r.pulls=make([]Api_Kai_Pull,len(k.view.pulls),call.allocator)
+    for x,i in k.view.pulls {
+        name:=""
+        for o in k.view.orgs {
+            for repo in o.repos {if repo.id==x.repo {name=repo.name}}
         }
-        title:=p.title
-        if title=="" {title=ka.proposal_title(project)}
-        if title=="" {title="(no description)"}
-        id,e:=ka.proposal_open(project,m,p.open,title,p.text,stack[:])
-        if e!=.None {api_kai_why(call,m,e);return}
-        r.opened=api_kai_hex(id[:],call)
-        kai_team_wrote(s)
+        r.pulls[i]={strings.clone(name,call.allocator),x.chunks,x.left,x.bytes,x.whole}
     }
-    v:=&t.view
-    if v.org<0 {
-        e:=vcs.Error.Missing
-        if _,_,e=ka.project_of(project,m);e!=.None {api_kai_why(call,m,e);return}
-    }
-    r.proposals=make([]Api_Kai_Proposal_Row,len(v.proposals),call.allocator)
-    for row,i in v.proposals {
-        id:=row.id
-        r.proposals[i]={id=api_kai_hex(id[:],call),title=strings.clone(row.title,call.allocator),target=strings.clone(row.target,call.allocator),opener=strings.clone(row.opener,call.allocator),status=kai_status_text(row.status),approvals=row.approvals,comments=row.comments}
-    }
-}
-
-kai_status_text :: proc(status:vcs.Proposal_Status) -> string {
-    texts:=[vcs.Proposal_Status]string{.Open="open",.Closed="closed",.Landed="landed"}
-    return texts[status]
 }
 
 @(private)
-api_kai_proposal :: proc(s:^Session,call:^api.Call) {
-    p:=api.call_params(call,Api_Kai_Proposal_Params)
-    if p.proposal=="" {
-        api.call_fail(call,api.INVALID_PARAMS,"proposal: name one by a prefix of its id, as kai.proposals lists it")
-        return
-    }
-    action,ok:=api_kai_action(call,{"comment","verdict","revise","check","close","reopen","land"},{p.comment!="",p.verdict!="",p.revise,p.check!="",p.close,p.reopen,p.land})
-    if !ok {return}
-    anchor:vcs.Anchor
-    switch {
-    case action!="comment" && action!="" && p.file!="":
-        api.call_fail(call,api.INVALID_PARAMS,"file goes with comment, or alone for its detail")
-        return
-    case action!="comment" && (p.lines!="" || p.entity!=0 || p.reply!=""):
-        api.call_fail(call,api.INVALID_PARAMS,"lines, entity and reply go with comment: give its text")
-        return
-    case p.change!="" && p.file=="":
-        api.call_fail(call,api.INVALID_PARAMS,"change goes with file: name the file whose detail it gives")
-        return
-    case (p.lines!="" || p.entity!=0) && p.file=="":
-        api.call_fail(call,api.INVALID_PARAMS,"lines and entity hang on a file: give it with file")
-        return
-    case p.lines!="" && p.entity!=0:
-        api.call_fail(call,api.INVALID_PARAMS,"a comment hangs on lines or on an entity, not both")
-        return
-    case p.lines!="":
-        parsed:bool
-        if anchor,parsed=ka.lines_of(p.lines);!parsed {
-            api.call_failf(call,api.INVALID_PARAMS,"lines is A-B from 1 with A no greater than B, as 3-7, not %q",p.lines)
+api_kai_web_login :: proc(s:^Session,call:^api.Call) {
+    p:=api.call_params(call,Api_Kai_Web_Login_Params)
+    if api_kai_team(s,call)==nil {return}
+    if p.server!="" || p.name!="" || p.password!="" {
+        server,name:=strings.trim_space(p.server),strings.trim_space(p.name)
+        if server=="" || name=="" || len(p.password)<8 || len(p.password)>256 {
+            api.call_fail(call,api.INVALID_PARAMS,"give server, name and a password of 8 to 256 bytes")
             return
         }
-    case p.entity!=0: anchor={kind=.Structural,key=p.entity}
-    case p.file!="": anchor={kind=.File}
-    }
-    verdict:vcs.Verdict_Kind
-    switch p.verdict {
-    case "","approve": verdict=.Approve
-    case "changes": verdict=.Changes
-    case "withdraw": verdict=.Withdraw
-    case:
-        api.call_failf(call,api.INVALID_PARAMS,"verdict is approve, changes or withdraw, not %q",p.verdict)
-        return
-    }
-    if action=="check" && len(p.command)==0 {
-        api.call_fail(call,api.INVALID_PARAMS,"command: a check runs a program, as [\"mirai\",\"test\",\"kai\"]")
-        return
-    }
-    if action!="check" && len(p.command)>0 {
-        api.call_fail(call,api.INVALID_PARAMS,"command goes with check: give the check's name")
-        return
-    }
-    if action!="revise" && len(p.changes)>0 {
-        api.call_fail(call,api.INVALID_PARAMS,"changes go with revise")
-        return
-    }
-    project,m:=api_kai_project(s,call)
-    if project==nil {return}
-    project_id,id,e:=ka.proposal_find(project,m,p.proposal)
-    if e!=.None {api_kai_why(call,m,e);return}
-    passed:bool
-    switch action {
-    case "comment": e=ka.proposal_comment(project,m,id,p.file,anchor,p.reply,p.comment)
-    case "verdict": e=vcs.machine_proposal_verdict(m,project_id,id,verdict)
-    case "revise":
-        if _,message:=kai_prepare(s);message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
-        stack:=make([dynamic]vcs.Revision,context.temp_allocator)
-        for text in p.changes {
-            revision,found:=api_kai_revision(s,call,text)
-            if !found {return}
-            append(&stack,revision)
-        }
-        e=ka.proposal_revise(project,m,id,stack[:])
-    case "check":
-        if _,message:=kai_prepare(s);message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
-        passed,_,e=ka.check_run(project,m,id,p.check,p.command)
-    case "close","reopen": e=vcs.machine_proposal_close(m,project_id,id,action=="reopen")
-    case "land": e=vcs.machine_proposal_land(m,project_id,id)
-    }
-    if e!=.None {api_kai_why(call,m,e);return}
-    t:=&s.kai.state.team
-    t.proposal=id
-    if action!="" {kai_team_wrote(s)} else {kai_team_read(s)}
-    v:=&t.view
-    if !v.shown {
-        api.call_fail(call,api.SERVER_ERROR,m.why!=""?m.why:"the proposal does not read: let the agent fetch its log")
-        return
-    }
-    r:=api.call_result(call,Api_Kai_Proposal)
-    api_kai_proposal_fill(r,v,call)
-    r.passed=passed
-    if p.file=="" || action!="" {return}
-    revision:vcs.Revision
-    if p.change!="" {
-        found:bool
-        if revision,found=api_kai_revision(s,call,p.change);!found {return}
-    } else {
-        // The topmost change of the stack that changed the file.
-        #reverse for files,i in v.changes {
-            for file in files {
-                if file.path==p.file {revision=v.proposal.stack[i].revision}
-            }
-            if revision!={} {break}
-        }
-        if revision=={} {
-            api.call_failf(call,api.INVALID_PARAMS,"file: no change of the stack changed %q: give a file stack lists",p.file)
+        if message:=kai_task_start(s,.Web_Login,server,name,p.password);message!="" {
+            api.call_fail(call,api.SERVER_ERROR,message)
             return
         }
     }
-    if !api_kai_detail(s,call,revision,p.file,&r.detail) {return}
+    r:=api.call_result(call,Api_Kai_Task)
+    r.stage,r.why=api_kai_task_state(&s.kai.team.tasks[.Web_Login],call)
 }
 
-@(private)
-api_kai_proposal_fill :: proc(r:^Api_Kai_Proposal,v:^Kai_Team_View,call:^api.Call) {
-    a:=call.allocator
-    x:=&v.proposal
-    id:=x.id
-    r^={id=api_kai_hex(id[:],call),title=strings.clone(x.title,a),text=strings.clone(x.text,a),target=strings.clone(x.target,a),opener=strings.clone(x.opener,a),status=kai_status_text(x.status),approvals=x.approvals,blocking=strings.clone(x.blocking,a)}
-    r.stack=make([]Api_Kai_Proposal_Change,len(x.stack),a)
-    for item,i in x.stack {
-        files:=make([]Api_Kai_File,len(v.changes[i]),a)
-        for f,k in v.changes[i] {
-            mark:=[1]u8{f.mark}
-            files[k]={strings.clone(f.path,a),strings.clone(string(mark[:]),a)}
-        }
-        r.stack[i]={ka.change_text(item.change,a),strings.clone(item.description,a),files}
-    }
-    r.comments=make([]Api_Kai_Comment,len(x.notes),a)
-    for n,i in x.notes {
-        address,reply:=n.address,n.reply_to
-        c:=&r.comments[i]
-        c^={id=api_kai_hex(address[:],call),author=strings.clone(n.author,a),text=strings.clone(n.text,a),file=strings.clone(n.path,a),outdated=n.outdated}
-        if reply!={} {c.reply_to=api_kai_hex(reply[:],call)}
-        if n.path!="" {c.change=ka.change_text(n.change,a)}
-        #partial switch n.anchor.kind {
-        case .Lines: c.lines=fmt.aprintf("%d-%d",n.anchor.line,n.anchor.line+n.anchor.lines-1,allocator=a)
-        case .Structural: c.entity=n.anchor.key
-        }
-    }
-    verdicts:=[vcs.Verdict_Kind]string{.Approve="approve",.Changes="changes",.Withdraw="withdraw"}
-    r.verdicts=make([]Api_Kai_Verdict,len(x.verdicts),a)
-    for verdict,i in x.verdicts {r.verdicts[i]={strings.clone(verdict.user,a),verdicts[verdict.verdict],verdict.current}}
-    states:=[vcs.Check_State]string{.Pending="pending",.Passed="passed",.Failed="failed"}
-    r.checks=make([]Api_Kai_Check,len(x.checks),a)
-    for c,i in x.checks {r.checks[i]={strings.clone(c.name,a),states[c.state]}}
-}
-
-@(private)
-api_kai_scopes :: proc(s:^Session,call:^api.Call) {
-    p:=api.call_params(call,Api_Kai_Scopes_Params)
-    action,ok:=api_kai_action(call,{"add","remove","rotate","public"},{len(p.add)>0,p.remove!="",p.rotate!="",p.public!=""})
-    if !ok {return}
-    readers:=vcs.Role.Writer
-    switch {
-    case action!="add" && (p.readers!="" || p.history):
-        api.call_fail(call,api.INVALID_PARAMS,"readers and history go with add: give the patterns of the scope")
-        return
-    case p.readers=="owner": readers=.Owner
-    case p.readers!="":
-        if readers=ka.role_of(p.readers);readers==.None {
-            api.call_failf(call,api.INVALID_PARAMS,"readers is reader, writer, admin or owner, not %q",p.readers)
-            return
-        }
-    }
-    for pattern in p.add {
-        if pattern=="" || strings.has_prefix(pattern,"/") || strings.contains(pattern,"..") || strings.contains_any(pattern,"\\\x00") {
-            api.call_failf(call,api.INVALID_PARAMS,"add: %q is no pattern of the project's paths: relative with forward slashes, as secrets/** or .env",pattern)
-            return
-        }
-    }
-    path,line:=p.public,0
-    if cut:=strings.last_index_byte(path,':');action=="public" && cut>0 {
-        n,parsed:=strconv.parse_int(path[cut+1:],10)
-        if !parsed || n<1 {
-            api.call_failf(call,api.INVALID_PARAMS,"public: %q is path or path:line with a line from 1",p.public)
-            return
-        }
-        path,line=path[:cut],n
-    }
-    project,m:=api_kai_project(s,call)
-    if project==nil {return}
-    t:=&s.kai.state.team
-    e:vcs.Error
-    switch action {
-    case "add": _,e=ka.scope_add(project,m,p.add,readers,p.history)
-    case "remove","rotate":
-        scope:vcs.Scope_Id
-        if scope,e=ka.scope_find(project,m,action=="remove"?p.remove:p.rotate);e!=.None {break}
-        if action=="remove" {e=ka.scope_remove(project,m,scope)} else {_,e=ka.scope_rotate(project,m,scope)}
-    case "public": e=ka.public_add(project,m,path,line)
-    }
-    if e!=.None {api_kai_why(call,m,e);return}
-    if action!="" {
-        kai_refusal_set(t,{})
-        kai_team_wrote(s)
-        // What a scope or a public path changes is read again by a snapshot of every file.
-        vcs.workspace_touched(&project.workspace,nil,false)
-        kai_snapshot(s)
-        kai_publish(s)
-    }
-    v:=&t.view
-    if v.org<0 {
-        e=.Missing
-        if _,_,e=ka.project_of(project,m);e!=.None {api_kai_why(call,m,e);return}
-    }
-    r:=api.call_result(call,Api_Kai_Scopes)
-    o:=&v.orgs[v.org]
-    scopes:=make([dynamic]Api_Kai_Scope,call.allocator)
-    for sc in o.scopes {
-        if sc.project!=v.project {continue}
-        patterns:=make([]string,len(sc.patterns),call.allocator)
-        for x,k in sc.patterns {patterns[k]=strings.clone(x,call.allocator)}
-        append(&scopes,Api_Kai_Scope{strings.clone(sc.id,call.allocator),patterns,ka.role_text(sc.readers),sc.history})
-    }
-    r.scopes=scopes[:]
-    publics:=make([dynamic]string,call.allocator)
-    for x in o.publics {
-        if x.project==v.project {append(&publics,strings.clone(x.path,call.allocator))}
-    }
-    r.public=publics[:]
-    refusal:=&t.refusal
-    if refusal.text!="" {
-        actions:=[ka.Refusal_Action]string{.None="",.Keep_Public="public",.Rotate="rotate"}
-        r.refused,r.refused_path,r.refused_line,r.action=strings.clone(refusal.text,call.allocator),strings.clone(refusal.path,call.allocator),refusal.line,actions[refusal.action]
-        if refusal.action==.Rotate {
-            scope:=refusal.scope
-            r.scope=ka.hex(scope[:4],call.allocator)
-        }
-    }
-}
-
-// The names of the shared bookmarks that point at revision: the project's and
-// every device's, apart by commas, in allocator.
+// The names of the shared bookmarks that point at revision, apart by commas, in allocator.
 kai_shared_names :: proc(s:^Session,revision:vcs.Revision,allocator:=context.temp_allocator) -> string {
-    if s.kai==nil || s.kai.state==nil {return ""}
+    if s.kai==nil || s.kai.team==nil {return ""}
     names:=make([dynamic]string,context.temp_allocator)
-    for b in s.kai.state.team.view.shared {
+    for b in s.kai.team.view.shared {
         if b.target==revision {append(&names,b.name)}
     }
     return strings.join(names[:],", ",allocator)
 }
 
-// What kai.bookmarks lists of the project: its shared bookmarks and every
-// device's, after the workspace's own.
+// What kai.bookmarks lists of the project: its shared bookmarks after the
+// workspace's own.
 @(private)
 api_kai_shared :: proc(s:^Session,call:^api.Call,out:^[dynamic]Api_Kai_Bookmark) {
     w:=kai_workspace(s)
-    for b in s.kai.state.team.view.shared {
-        x:=Api_Kai_Bookmark{name=strings.clone(b.name,call.allocator),shared=b.device==({}),here=b.here}
+    if s.kai.team==nil {return}
+    for b in s.kai.team.view.shared {
+        x:=Api_Kai_Bookmark{name=strings.clone(b.name,call.allocator),shared=true,here=b.here}
         if b.here {x.change=api_kai_text(w,b.target,call)}
-        if b.device!=({}) {
-            cut:=strings.last_index_byte(b.name,':')
-            if cut>0 {x.device=strings.clone(b.name[:cut],call.allocator)}
-        }
         append(out,x)
     }
 }
 
-// Moves or guards a shared bookmark of the project for kai.bookmarks: false
-// when the call failed.
+// Moves a shared bookmark of the project for kai.bookmarks: false when the call failed.
 @(private)
 api_kai_bookmark_team :: proc(s:^Session,call:^api.Call,p:^Api_Kai_Bookmarks_Params) -> bool {
-    if p.move=="" && p.policy=="" {return true}
-    if p.move!="" && p.policy!="" {
-        api.call_fail(call,api.INVALID_PARAMS,"move and policy are given together: give one per call")
+    if p.move=="" {return true}
+    if !vcs.bookmark_name_valid(p.move) {
+        api.call_failf(call,api.INVALID_PARAMS,"%q is no bookmark name: letters, digits, - _ . and / of at most %d bytes",p.move,vcs.BOOKMARK_NAME_MAX)
         return false
     }
-    name:=p.move!=""?p.move:p.policy
-    if !vcs.bookmark_name_valid(name) {
-        api.call_failf(call,api.INVALID_PARAMS,"%q is no bookmark name: letters, digits, - _ . and / of at most %d bytes",name,vcs.BOOKMARK_NAME_MAX)
+    t:=api_kai_team(s,call)
+    if t==nil {return false}
+    w,message:=kai_prepare(s)
+    if w==nil {
+        api.call_fail(call,api.SERVER_ERROR,message)
         return false
     }
-    if p.policy!="" && (p.approvals<0 || p.approvals>255) {
-        api.call_fail(call,api.INVALID_PARAMS,"approvals is from 0 to 255: how many members approve before it lands")
-        return false
-    }
-    for check in p.checks {
-        if check=="" || len(check)>vcs.NAME_MAX {
-            api.call_failf(call,api.INVALID_PARAMS,"checks: a check's name is 1 to %d bytes, as unit",vcs.NAME_MAX)
-            return false
-        }
-    }
-    project,m:=api_kai_project(s,call)
-    if project==nil {return false}
-    e:vcs.Error
-    if p.move!="" {
-        if _,message:=kai_prepare(s);message!="" {
-            api.call_fail(call,api.SERVER_ERROR,message)
-            return false
-        }
-        revision,ok:=api_kai_revision(s,call,p.change!=""?p.change:"@")
-        if !ok {return false}
-        m.leak={}
-        if e=ka.bookmark_move(project,m,p.move,revision);e!=.None && m.leak.path!="" {kai_refusal_set(&s.kai.state.team,ka.publish_refusal(m))}
-    } else {
-        e=ka.policy_set(project,m,p.policy,p.approvals,p.checks)
-    }
+    revision,e:=ka.revision_resolve(&s.kai.state.project,t,p.change!=""?p.change:"@")
     if e!=.None {
-        api_kai_why(call,m,e)
+        api.call_failf(call,api.INVALID_PARAMS,"%q names no single change: @, @-, a bookmark or a prefix of at least %d digits of a change id",p.change,ka.CHANGE_TEXT_MIN)
+        return false
+    }
+    if e=ka.bookmark_move(&s.kai.state.project,t,p.move,revision);e!=.None {
+        api_kai_why(call,t,e)
         return false
     }
     kai_team_wrote(s)

@@ -205,7 +205,7 @@ failure) and compiles into `<engine>/.mirai/engine/<mode>/`.
 Assembled by `mirai package engine --out <folder>` (CI `.github/workflows/release.yml` on tag
 `v<ENGINE_VERSION>`), marked by `engine.mirai` (`project.ENGINE_FILE`). Compiles projects, never
 itself. The same release attaches `mirai-kai-<version>-linux-arm64`, the static
-[node](../../mirai-kai/references/node.md#deployment) that the Linux job cross-builds with
+[Kai server](../../mirai-kai/references/server.md#deployment) that the Linux job cross-builds with
 `mirai build kai --target linux_arm64`.
 
 - **Root lookup (`project.engine_root_find`):** `--engine`, `MIRAI_ROOT`, or nearest ancestor with
@@ -246,7 +246,7 @@ PowerShell/cmd/Python. Builds are dev ([release builds](../../../../AGENTS.md#co
 | Generate / Content | `mirai generate [project] [--store dir]` / `mirai content [project] [-- args]` |
 | Import / Refresh | `mirai import <file> [--project P] [--folder F]` / `mirai import --refresh <root> [--final]` |
 | Share / Join | `mirai share [project] [--port N] [--store S]` / `mirai join <invite> [dir] [--address A]` |
-| Kai VCS & mesh | `mirai kai init\|status\|snapshot\|new\|describe\|split\|log\|diff\|undo\|restore\|conflicts\|verify\|bookmarks\|identity\|agent\|pair\|org\|grant\|scope\|public\|proposal\|check\|serve\|web ...` |
+| Kai VCS & sync | `mirai kai init\|status\|snapshot\|new\|describe\|split\|log\|diff\|undo\|restore\|conflicts\|prune\|bookmarks\|publish\|profile\|org\|invite\|join\|pull\|agent\|web-login\|serve ...` |
 | Docs without editor | `mirai ui\|scene read\|write\|check ... [--project P]`, `mirai records create\|read\|write\|check ...` |
 | Git plugins | `mirai plugin add\|update\|remove\|sync\|list\|catalog\|check ...` |
 | Typecheck + lints | `mirai check [<pkg> [-flag...]]` (alloc lint `tools/mirai/alloc_lint.odin`; solver/render lint `tools/mirai/solver_lint.odin`) |

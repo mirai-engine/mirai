@@ -293,7 +293,7 @@ library_rows_end_in_one_column_and_a_fetch_cancels_from_its_ring :: proc(t:^test
     _,add_found=ui.widget_rect(&ctx,package_add)
     testing.expect(t,add_found,"a cancelled fetch gives its add back")
     text,_,_=content_package_state(&f.s,p)
-    testing.expect_value(t,text,"512.0 MiB to fetch")
+    testing.expect_value(t,text,"512.0 MB to fetch")
     // Its end adds nothing and tells nothing.
     take.done=true
     collab_take_update(&f.s,st)

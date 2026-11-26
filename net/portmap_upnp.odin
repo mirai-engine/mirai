@@ -266,7 +266,7 @@ portmap_upnp_acquire :: proc(m:^Port_Mapping,u:^Udp,gateway,local:Address,lease:
         for attempt in 0..<3 {
             if attempt>0 {lease.external.port=u16(49152+int(portmap_get16(lease.nonce[attempt*2:attempt*2+2]))%16384)}
             args_bytes:[256]u8
-            args:=fmt.bprintf(args_bytes[:],"<NewRemoteHost></NewRemoteHost><NewExternalPort>%d</NewExternalPort><NewProtocol>UDP</NewProtocol>",lease.external.port)
+            args:=fmt.bprintf(args_bytes[:],"<NewRemoteHost></NewRemoteHost><NewExternalPort>%d</NewExternalPort><NewProtocol>%s</NewProtocol>",lease.external.port,upnp_protocol(m))
             body,code,queried:=portmap_upnp_soap(m,&lease.upnp,"GetSpecificPortMappingEntry",args,response[:])
             if !queried {break}
             if code==200 {continue}
@@ -281,7 +281,7 @@ portmap_upnp_acquire :: proc(m:^Port_Mapping,u:^Udp,gateway,local:Address,lease:
 @(private)
 portmap_upnp_add :: proc(m:^Port_Mapping,local:Address,lease:^Portmap_Lease,seconds:u32) -> bool {
     bytes:[1024]u8;ip:=local.ip
-    args:=fmt.bprintf(bytes[:],"<NewRemoteHost></NewRemoteHost><NewExternalPort>%d</NewExternalPort><NewProtocol>UDP</NewProtocol><NewInternalPort>%d</NewInternalPort><NewInternalClient>%d.%d.%d.%d</NewInternalClient><NewEnabled>1</NewEnabled><NewPortMappingDescription>%s</NewPortMappingDescription><NewLeaseDuration>%d</NewLeaseDuration>",lease.external.port,m.port,ip[0],ip[1],ip[2],ip[3],string(lease.upnp.description[:lease.upnp.description_len]),seconds)
+    args:=fmt.bprintf(bytes[:],"<NewRemoteHost></NewRemoteHost><NewExternalPort>%d</NewExternalPort><NewProtocol>%s</NewProtocol><NewInternalPort>%d</NewInternalPort><NewInternalClient>%d.%d.%d.%d</NewInternalClient><NewEnabled>1</NewEnabled><NewPortMappingDescription>%s</NewPortMappingDescription><NewLeaseDuration>%d</NewLeaseDuration>",lease.external.port,upnp_protocol(m),m.port,ip[0],ip[1],ip[2],ip[3],string(lease.upnp.description[:lease.upnp.description_len]),seconds)
     response:[65536]u8
     lease.upnp.owned=true
     body,status,ok:=portmap_upnp_soap(m,&lease.upnp,"AddPortMapping",args,response[:])
@@ -309,7 +309,7 @@ portmap_upnp_add :: proc(m:^Port_Mapping,local:Address,lease:^Portmap_Lease,seco
 @(private)
 portmap_upnp_owns :: proc(m:^Port_Mapping,local:Address,lease:^Portmap_Lease,releasing:=false) -> bool {
     bytes:[256]u8
-    args:=fmt.bprintf(bytes[:],"<NewRemoteHost></NewRemoteHost><NewExternalPort>%d</NewExternalPort><NewProtocol>UDP</NewProtocol>",lease.external.port)
+    args:=fmt.bprintf(bytes[:],"<NewRemoteHost></NewRemoteHost><NewExternalPort>%d</NewExternalPort><NewProtocol>%s</NewProtocol>",lease.external.port,upnp_protocol(m))
     response:[65536]u8
     body,status,ok:=portmap_upnp_soap(m,&lease.upnp,"GetSpecificPortMappingEntry",args,response[:],releasing)
     if !ok || status!=200 {return false}
@@ -333,8 +333,14 @@ portmap_upnp_renew :: proc(m:^Port_Mapping,local:Address,lease:^Portmap_Lease) -
 portmap_upnp_release :: proc(m:^Port_Mapping,local:Address,lease:^Portmap_Lease) {
     if !lease.upnp.owned || !portmap_upnp_owns(m,local,lease,true) {return}
     bytes:[256]u8
-    args:=fmt.bprintf(bytes[:],"<NewRemoteHost></NewRemoteHost><NewExternalPort>%d</NewExternalPort><NewProtocol>UDP</NewProtocol>",lease.external.port)
+    args:=fmt.bprintf(bytes[:],"<NewRemoteHost></NewRemoteHost><NewExternalPort>%d</NewExternalPort><NewProtocol>%s</NewProtocol>",lease.external.port,upnp_protocol(m))
     response:[65536]u8
     portmap_upnp_soap(m,&lease.upnp,"DeletePortMapping",args,response[:],true)
     lease.upnp.owned=false
+}
+
+@(private)
+upnp_protocol :: proc(m:^Port_Mapping) -> string {
+    names:=UPNP_PROTOCOL
+    return names[m.protocol]
 }

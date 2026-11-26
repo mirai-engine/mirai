@@ -9,13 +9,6 @@ import "core:time"
 // another process or an antivirus could be neither replaced nor removed.
 // file_open shares read, write and delete.
 
-foreign import kernel32 "system:Kernel32.lib"
-
-@(private="file", default_calling_convention="system")
-foreign kernel32 {
-    GetComputerNameW :: proc(lpBuffer:windows.LPWSTR,nSize:^windows.DWORD) -> windows.BOOL ---
-}
-
 @(private="file") FILE_RENAME_INFO_EX :: windows.FILE_INFO_BY_HANDLE_CLASS(22)
 @(private="file") FILE_DISPOSITION_INFO_EX :: windows.FILE_INFO_BY_HANDLE_CLASS(21)
 @(private="file") FILE_RENAME_FLAG_REPLACE_IF_EXISTS :: 0x1
@@ -25,7 +18,6 @@ foreign kernel32 {
 @(private="file") FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE :: 0x10
 @(private="file") ERROR_DISK_FULL :: 112
 @(private="file") ERROR_HANDLE_DISK_FULL :: 39
-@(private="file") STILL_ACTIVE :: 259
 @(private="file") SHARE_ALL :: windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE
 // An antivirus or the search indexer opens a file for a few milliseconds
 // after it is written; a lasting cause still fails, about 0.4 s later.
@@ -33,6 +25,18 @@ foreign kernel32 {
 
 @(private="file")
 Wide_Path :: [PATH_BYTES+9]u16
+
+// FILE_RENAME_INFO with the name inline; the name length is in bytes, without
+// the terminator.
+@(private="file")
+File_Rename_Info :: struct {
+    flags:u32,
+    root:windows.HANDLE,
+    name_length:u32,
+    name:Wide_Path,
+}
+#assert(offset_of(File_Rename_Info,root)==8 && offset_of(File_Rename_Info,name)==20)
+#assert(align_of(File_Rename_Info)==8)
 
 // Runs attempt until it succeeds or fails with something other than a
 // sharing violation or a denied access, sleeping a little longer each time.
@@ -132,27 +136,16 @@ posix_replace :: proc(from,to:cstring16) -> bool {
         windows.FILE_FLAG_BACKUP_SEMANTICS,nil)
     if handle==windows.INVALID_HANDLE_VALUE {return false}
     defer windows.CloseHandle(handle)
-    // FILE_RENAME_INFO: Flags, RootDirectory, FileNameLength, FileName.
-    NAME_AT :: 20
     name:=([^]u16)(rawptr(to))
     length:=0
     for name[length]!=0 {length+=1}
-    info:[NAME_AT+size_of(Wide_Path)]u8
-    if NAME_AT+(length+1)*2>len(info) {return false}
-    (^u32)(&info[0])^=FILE_RENAME_FLAG_POSIX_SEMANTICS|FILE_RENAME_FLAG_REPLACE_IF_EXISTS
-    (^u32)(&info[16])^=u32(length*2)
-    copy(info[NAME_AT:][:(length+1)*2],([^]u8)(rawptr(to))[:(length+1)*2])
-    return bool(windows.SetFileInformationByHandle(handle,FILE_RENAME_INFO_EX,&info[0],u32(NAME_AT+(length+1)*2)))
-}
-
-@(private)
-rename_new :: proc(from,to:string) -> (exists:bool,error:Error) {
-    a,b:Wide_Path
-    m:=Move{from=rename_path(from,&a) or_return,to=rename_path(to,&b) or_return}
-    code:=retrying(move,&m)
-    if code==0 {return false,.None}
-    if code==windows.ERROR_ALREADY_EXISTS || code==windows.ERROR_FILE_EXISTS {return true,.None}
-    return false,os_error(platform_error(code))
+    info:File_Rename_Info
+    if length+1>len(info.name) {return false}
+    info.flags=FILE_RENAME_FLAG_POSIX_SEMANTICS|FILE_RENAME_FLAG_REPLACE_IF_EXISTS
+    info.name_length=u32(length*2)
+    copy(info.name[:length+1],name[:length+1])
+    size:=int(offset_of(File_Rename_Info,name))+(length+1)*2
+    return bool(windows.SetFileInformationByHandle(handle,FILE_RENAME_INFO_EX,&info,u32(size)))
 }
 
 // Renames from to to, replacing to; a reader of the old to keeps it.
@@ -164,17 +157,6 @@ rename_replace :: proc(from,to:string) -> os.Error {
     if m.from,error=rename_path(from,&a);error!=.None {return .Invalid_Path}
     if m.to,error=rename_path(to,&b);error!=.None {return .Invalid_Path}
     m.flags,m.posix=windows.MOVEFILE_REPLACE_EXISTING,true
-    return platform_error(retrying(move,&m))
-}
-
-// Renames the folder from to to, which must not hold anything.
-@(private)
-rename_folder :: proc(from,to:string) -> os.Error {
-    a,b:Wide_Path
-    m:Move
-    error:Error
-    if m.from,error=rename_path(from,&a);error!=.None {return .Invalid_Path}
-    if m.to,error=rename_path(to,&b);error!=.None {return .Invalid_Path}
     return platform_error(retrying(move,&m))
 }
 
@@ -206,34 +188,35 @@ no_space :: proc(error:os.Error) -> bool {
     return ok && (u32(e)==ERROR_DISK_FULL || u32(e)==ERROR_HANDLE_DISK_FULL)
 }
 
-// When the process started, as a FILETIME; alive is false for one that is
-// not running.
+// Locks a byte far past the end of file, so the lock never stands in the way
+// of reading or writing its content, for this handle apart from every other
+// handle of it, also of this process; the system lets it go when the process
+// ends. With wait it blocks until the lock is free, else locked is false while
+// another holds it.
 @(private)
-process_start :: proc(pid:u64) -> (start:u64,alive:bool) {
-    if pid==0 || pid>u64(max(u32)) {return 0,false}
-    handle:=windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION,false,u32(pid))
-    if handle==nil {return 0,false}
-    defer windows.CloseHandle(handle)
-    code:u32
-    if !windows.GetExitCodeProcess(handle,&code) || code!=STILL_ACTIVE {return 0,false}
-    created,exited,kernel,user:windows.FILETIME
-    if !windows.GetProcessTimes(handle,&created,&exited,&kernel,&user) {return 0,false}
-    return u64(created.dwHighDateTime)<<32|u64(created.dwLowDateTime),true
+file_lock :: proc(file:^os.File,mode:Lock_Mode,wait:bool) -> (locked:bool,error:Error) {
+    flags:windows.DWORD
+    if mode==.Exclusive {flags|=windows.LOCKFILE_EXCLUSIVE_LOCK}
+    if !wait {flags|=windows.LOCKFILE_FAIL_IMMEDIATELY}
+    at:windows.OVERLAPPED
+    at.OffsetHigh=LOCK_AT
+    if windows.LockFileEx(windows.HANDLE(os.fd(file)),flags,0,1,0,&at) {return true,.None}
+    code:=windows.GetLastError()
+    if code==windows.ERROR_LOCK_VIOLATION || code==windows.ERROR_IO_PENDING {return false,.None}
+    return false,.Io
 }
 
 @(private)
-host_name :: proc(buffer:^[HOST_BYTES]u8) {
-    wide:[HOST_BYTES]u16
-    size:=windows.DWORD(len(wide)-1)
-    if !GetComputerNameW(&wide[0],&size) {return}
-    windows.WideCharToMultiByte(windows.CP_UTF8,0,cstring16(&wide[0]),i32(size),&buffer[0],HOST_BYTES-1,nil,nil)
+file_unlock :: proc(file:^os.File) {
+    at:windows.OVERLAPPED
+    at.OffsetHigh=LOCK_AT
+    windows.UnlockFileEx(windows.HANDLE(os.fd(file)),0,1,0,&at)
 }
 
-// Windows bounds the handles of a process by its memory alone.
-@(private)
-files_limit_raise :: proc() {}
+@(private="file") LOCK_AT :: 0x4000_0000 // high half of the offset locked: 1<<62
 
-// Maps size bytes of file read-only; the mapping outlives the file's name.
+// Maps size bytes of file read-only; the mapping outlives the file's name and
+// its handle.
 @(private)
 file_map :: proc(file:^os.File,size:i64) -> ([]u8,Error) {
     if size<=0 || size>i64(max(int)) {return nil,.Invalid_Argument}

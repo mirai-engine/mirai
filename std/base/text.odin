@@ -83,3 +83,13 @@ contains_fold :: proc(text,part:string) -> bool {
     }
     return false
 }
+
+// A size in bytes as a person reads it, in the temp allocator.
+bytes_text :: proc(bytes:i64) -> string {
+    switch {
+    case bytes>=1<<30: return fmt.tprintf("%.1f GB",f64(bytes)/(1<<30))
+    case bytes>=1<<20: return fmt.tprintf("%.1f MB",f64(bytes)/(1<<20))
+    case bytes>=1<<10: return fmt.tprintf("%.1f KB",f64(bytes)/(1<<10))
+    }
+    return fmt.tprintf("%d bytes",bytes)
+}

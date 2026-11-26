@@ -79,7 +79,7 @@ Collab_Offer :: struct {
     store:^store.Store,
     root,store_root:string,
     secret:u64,
-    refresh,cancel,done:bool,
+    cancel,done:bool,
     thread:^thread.Thread,
     arena:mem.Dynamic_Arena,
     result:share.Offer,
@@ -172,13 +172,6 @@ collab_offer_run :: proc(o:^Collab_Offer) {
     defer runtime.default_temp_allocator_destroy(&runtime.global_default_temp_allocator_data)
     if sync.atomic_load(&o.cancel) {return}
     allocator:=base.dynamic_arena_allocator(&o.arena)
-    if o.refresh {
-        if error:=share.offer_refresh(o.node);error!=.None {
-            o.error=fmt.aprintf("the project lease could not be refreshed (%v)",
-                error,allocator=allocator)
-        }
-        return
-    }
     if o.store.root=="" {
         opened,error:=store.open(o.store_root,runtime.heap_allocator())
         if error!=.None {
@@ -214,19 +207,18 @@ collab_offer_free :: proc(o:^Collab_Offer) {
 
 // The host offers its project under the token of the session, on a thread of its own.
 @(private)
-collab_offer_start :: proc(s:^Session,st:^Collab_State,now:f64,refresh:bool) -> bool {
+collab_offer_start :: proc(s:^Session,st:^Collab_State,now:f64) -> bool {
     o:=new(Collab_Offer)
     mem.dynamic_arena_init(&o.arena,runtime.heap_allocator(),runtime.heap_allocator())
     o.root=strings.clone(s.project_root,base.dynamic_arena_allocator(&o.arena))
     o.node,o.secret,o.store,o.store_root=st.node,st.invite.secret,&st.offer_store,s.store.root
-    o.refresh=refresh
     o.thread=thread.create_and_start_with_poly_data(o,collab_offer_run)
     if o.thread==nil {
         collab_offer_free(o)
         return false
     }
     st.offer=o
-    if !refresh {st.changed_at=0}
+    st.changed_at=0
     st.offered_at=now
     return true
 }
@@ -266,10 +258,6 @@ collab_host_changes :: proc(s:^Session,st:^Collab_State,now:f64) {
         if !sync.atomic_load(&o.done) {return}
         st.offer=nil
         defer collab_offer_free(o)
-        if o.refresh {
-            if o.error!="" {log.warn(o.error)}
-            return
-        }
         for line in o.result.taken.skipped {log.warnf("the session does not carry it: %s",line)}
         for line in o.result.problems {log.warnf("a guest will not get it: %s",line)}
         if o.error!="" {
@@ -292,13 +280,8 @@ collab_host_changes :: proc(s:^Session,st:^Collab_State,now:f64) {
     // Record the original file times before an initial offer starts reading those files.
     ready:=watch_ready if first else st.changed_at!=0 && now-st.changed_at>=COLLAB_OFFER_QUIET &&
         now-st.offered_at>=COLLAB_OFFER_EVERY
-    refresh:=!ready && !first && now-st.offered_at>=share.LEASE_SECONDS
-    if (ready || refresh) && !collab_offer_start(s,st,now,refresh) {
+    if ready && !collab_offer_start(s,st,now) {
         st.offered_at=now
-        if refresh {
-            log.warn("the project lease could not be refreshed: no thread could be started")
-            return
-        }
         st.changed_at=0
         collab_offer_failed(st,"no thread could be started to read the project")
     }
@@ -470,8 +453,8 @@ collab_join_text :: proc(j:^Collab_Join) -> string {
     case .Snapshot:   return "Asking for the project..."
     case .Files:
         left:=state.left>=0?fmt.tprintf(", %s left",share.seconds_text(state.left)):""
-        return fmt.tprintf("Files: %d of %d, %s of %s, %s/s%s",state.files_done,state.files,vcs.bytes_text(state.bytes_done),vcs.bytes_text(state.bytes),vcs.bytes_text(i64(state.rate)),left)
-    case .Packages:   return fmt.tprintf("Builds: %s, %s/s",vcs.bytes_text(i64(state.received)),vcs.bytes_text(i64(state.rate)))
+        return fmt.tprintf("Files: %d of %d, %s of %s, %s/s%s",state.files_done,state.files,base.bytes_text(state.bytes_done),base.bytes_text(state.bytes),base.bytes_text(i64(state.rate)),left)
+    case .Packages:   return fmt.tprintf("Builds: %s, %s/s",base.bytes_text(i64(state.received)),base.bytes_text(i64(state.rate)))
     case .Done:
     }
     return ""

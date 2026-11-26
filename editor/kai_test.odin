@@ -335,223 +335,14 @@ kai_ok :: proc(t:^testing.T,call:api.Call,what:string,loc:=#caller_location) -> 
     return testing.expectf(t,!call.failed,"%s: %s",what,call.error.message,loc=loc)
 }
 
-// Two editors, each with its store and its runner on 127.0.0.1: the first
-// makes its user and an org with the project in it and offers a ticket, the
-// second joins with it, and the first approves with the code both show,
-// which names the second by its handle. The second works on the org's
-// project from main and opens a proposal with a check; the first comments
-// on lines of its file, approves and lands it, and both see main moved. A
-// move of main around its policy answers the policy.
-@(test)
-editor_kai_pairs_and_lands_a_proposal :: proc(t:^testing.T) {
-    ka_:=new(Kai_Fixture);defer free(ka_)
-    kb:=new(Kai_Fixture);defer free(kb)
-    if !kai_fixture_init(t,ka_,"kai-team-a") || !kai_fixture_init(t,kb,"kai-team-b") {return}
-    defer kai_fixture_destroy(ka_)
-    defer kai_fixture_destroy(kb)
-    a,b:=&ka_.s,&kb.s
-    for s in ([2]^Session{a,b}) {
-        s.kai.mesh_loopback=true
-        testing.expect_value(t,kai_enable(s),"")
-        if !testing.expectf(t,kai_workspace(s)!=nil,"the workspace opens: %v",s.kai.error) {return}
-    }
-
-    // A user each; the recovery key comes once, in a dialog.
-    ana:=Api_Kai_Identity_Params{name="ana",device="studio-pc"}
-    call,me:=kai_call(a,api_kai_identity,&ana,Api_Kai_Identity)
-    if !kai_ok(t,call,"ana") {return}
-    testing.expect_value(t,me.device,"studio-pc")
-    testing.expect(t,me.handle=="ana" && a.kai.state.team.recovery_length>0 && a.kai.state.team.dialog==.Recovery)
-    kai_dialog_close(a)
-    bo:=Api_Kai_Identity_Params{name="bo"}
-    call,me=kai_call(b,api_kai_identity,&bo,Api_Kai_Identity)
-    if !kai_ok(t,call,"bo") {return}
-    bo_device:=strings.clone(me.device,context.temp_allocator)
-    host:[vcs.NAME_MAX]u8
-    testing.expectf(t,bo_device==vcs.device_name_of("",&host) && !strings.contains(bo_device,"."),"a device is named by its host: %s",bo_device)
-    kai_dialog_close(b)
-
-    // The org and the project in it; main at the first change, guarded.
-    studio:=Api_Kai_Org_Params{new="studio"}
-    call,_=kai_call(a,api_kai_org,&studio,Api_Kai_Orgs)
-    if !kai_ok(t,call,"new org") {return}
-    add:=Api_Kai_Org_Params{add="org"}
-    _,orgs:=kai_call(a,api_kai_org,&add,Api_Kai_Orgs)
-    if !testing.expectf(t,len(orgs.orgs)==1 && len(orgs.orgs[0].projects)==1 && orgs.orgs[0].projects[0].open,"%v",orgs) {return}
-    project:=strings.clone(orgs.orgs[0].projects[0].id,context.temp_allocator)
-    kai_write(t,a,fmt.tprintf("%s/a.txt",ka_.root),transmute([]u8)string("a\n"))
-    testing.expect_value(t,kai_describe(a,vcs.repo_working(&kai_workspace(a).repo),"first"),"")
-    testing.expect_value(t,kai_new(a,nil,""),"")
-    main:=Api_Kai_Bookmarks_Params{move="main",change="@-"}
-    call,_=kai_call(a,api_kai_bookmarks,&main,Api_Kai_Bookmarks)
-    if !kai_ok(t,call,"main") {return}
-    guard:=Api_Kai_Bookmarks_Params{policy="main",approvals=1,checks={"unit"}}
-    call,_=kai_call(a,api_kai_bookmarks,&guard,Api_Kai_Bookmarks)
-    if !kai_ok(t,call,"policy") {return}
-
-    // Pairing: a ticket, joined; the request names bo by handle, and the codes agree.
-    offer:=Api_Kai_Pair_Params{offer="member"}
-    offered:^Api_Kai_Pair
-    call,offered=kai_call(a,api_kai_pair,&offer,Api_Kai_Pair)
-    if !kai_ok(t,call,"offer") || !testing.expect(t,offered.ticket!="") {return}
-    join:=Api_Kai_Pair_Params{join=strings.clone(offered.ticket,context.temp_allocator)}
-    call,_=kai_call(b,api_kai_pair,&join,Api_Kai_Pair)
-    if !kai_ok(t,call,"join") {return}
-    started:=time.tick_now()
-    nothing:=Api_Kai_Pair_Params{}
-    asked,joined:^Api_Kai_Pair
-    for {
-        _,asked=kai_call(a,api_kai_pair,&nothing,Api_Kai_Pair)
-        _,joined=kai_call(b,api_kai_pair,&nothing,Api_Kai_Pair)
-        if asked.asking && joined.joined_code!="" {break}
-        if !testing.expect(t,kai_tick(a,b,started),"the request reaches the first editor") {return}
-    }
-    testing.expect_value(t,asked.who,fmt.tprintf("bo/%s",bo_device))
-    testing.expect_value(t,asked.code,joined.joined_code)
-    testing.expect(t,a.kai.state.team.dialog==.Pair,"the request asks in a dialog")
-    approve:=Api_Kai_Pair_Params{answer="approve",code=strings.clone(asked.code,context.temp_allocator)}
-    call,_=kai_call(a,api_kai_pair,&approve,Api_Kai_Pair)
-    if !kai_ok(t,call,"approve") {return}
-    for {
-        _,joined=kai_call(b,api_kai_pair,&nothing,Api_Kai_Pair)
-        if joined.joining=="approved" {break}
-        if !testing.expectf(t,kai_tick(a,b,started) && joined.joining!="failed","the pairing ends approved: %s %s",joined.joining,joined.why) {return}
-    }
-
-    // The second works on the org's project, from main.
-    link:=Api_Kai_Org_Params{link=project}
-    for {
-        call,_=kai_call(b,api_kai_org,&link,Api_Kai_Orgs)
-        if !call.failed {break}
-        if !testing.expectf(t,kai_tick(a,b,started),"the org's logs reach the second: %s",call.error.message) {return}
-    }
-    // The editors' imports share what they build through the mesh: what the
-    // first one's import keeps, the second one's takes without building it.
-    org:=kai_mesh_org(a)
-    testing.expect(t,org!={} && kai_mesh_org(b)==org,"both share the org's derived data")
-    put_source,put_close:=ka.peers_open(a.store.root,ka_.root)
-    take_source,take_close:=ka.peers_open(b.store.root,kb.root)
-    defer {
-        if put_close!=nil {put_close(put_source)}
-        if take_close!=nil {take_close(take_source)}
-    }
-    if !testing.expect(t,put_close!=nil && take_close!=nil,"an import opens the mesh's cache") {return}
-    KEY,VERSION :: 0x5eed,3
-    pixels:=make([]u8,4*4*4,context.temp_allocator)
-    for &p,i in pixels {p=u8(i)}
-    mips:=[1][]u8{pixels}
-    doc:asset.Document
-    testing.expect_value(t,asset.texture_document(&doc,&ka_.assets.types,{id=cache.id(KEY,VERSION),width=4,height=4,format=.RGBA8,mips=mips[:]},context.temp_allocator),asset.Error.None)
-    texture,_:=asset.document_bytes(&doc,context.temp_allocator)
-    asset.document_destroy(&doc)
-    // What it is made from decides its scopes: a file of the project, in none.
-    swatch:=fmt.tprintf("%s/swatch.png",ka_.root)
-    testing.expect(t,os.write_entire_file(swatch,pixels)==nil)
-    from:=[1]string{swatch}
-    testing.expect(t,cache.put({store=&a.store,source=put_source,from=from[:]},"textures",KEY,VERSION,texture),"the first editor's import keeps and publishes it")
-    loaded:asset.Asset
-    if testing.expect(t,cache.load({store=&b.store,source=take_source},"textures",KEY,VERSION,&loaded),"the second editor's import takes it") {
-        testing.expect(t,loaded.blob.header.id==cache.id(KEY,VERSION))
-        asset.asset_close(&loaded)
-    }
-
-    on_main:=Api_Kai_New_Params{parents={"main"}}
-    started=time.tick_now()
-    for {
-        call,_=kai_call(b,api_kai_new,&on_main,Api_Kai_Change)
-        if !call.failed {break}
-        if !testing.expectf(t,kai_tick(a,b,started),"main reaches the second: %s",call.error.message) {return}
-    }
-    kai_write(t,b,fmt.tprintf("%s/b.txt",kb.root),transmute([]u8)string("one\ntwo\n"))
-    testing.expect_value(t,kai_describe(b,vcs.repo_working(&kai_workspace(b).repo),"add b"),"")
-    testing.expect_value(t,kai_new(b,nil,""),"")
-    wb:=kai_workspace(b)
-    parent,_:=vcs.change_get(wb.repo.s,vcs.repo_working(&wb.repo),context.temp_allocator)
-    proposed,_:=vcs.change_get(wb.repo.s,parent.parents[0],context.temp_allocator)
-    change:=ka.change_text(proposed.id)
-    open:=Api_Kai_Proposals_Params{open="main"}
-    opened:^Api_Kai_Proposals
-    call,opened=kai_call(b,api_kai_proposals,&open,Api_Kai_Proposals)
-    if !kai_ok(t,call,"open") {return}
-    id:=strings.clone(opened.opened,context.temp_allocator)
-    command:=[]string{"true"} when ODIN_OS!=.Windows else []string{"cmd","/c","exit 0"}
-    check:=Api_Kai_Proposal_Params{proposal=id,check="unit",command=command}
-    checked:^Api_Kai_Proposal
-    call,checked=kai_call(b,api_kai_proposal,&check,Api_Kai_Proposal)
-    if !kai_ok(t,call,"check") {return}
-    testing.expect(t,checked.passed && len(checked.stack)==1 && checked.stack[0].change==change)
-
-    // The first sees it whole: its stack with b.txt, and the check.
-    view:=Api_Kai_Proposal_Params{proposal=id}
-    seen:^Api_Kai_Proposal
-    for {
-        call,seen=kai_call(a,api_kai_proposal,&view,Api_Kai_Proposal)
-        if !call.failed && len(seen.stack)==1 && len(seen.stack[0].files)==1 && len(seen.checks)==1 {break}
-        if !testing.expectf(t,kai_tick(a,b,started),"the proposal reaches the first: %s",call.error.message) {return}
-    }
-    testing.expect(t,len(seen.stack[0].files)==1 && seen.stack[0].files[0].path=="b.txt" && seen.checks[0].state=="passed")
-    testing.expect(t,seen.blocking!="","it waits for an approval")
-    comment:=Api_Kai_Proposal_Params{proposal=id,comment="both lines read well",file="b.txt",lines="1-2"}
-    call,seen=kai_call(a,api_kai_proposal,&comment,Api_Kai_Proposal)
-    if !kai_ok(t,call,"comment") {return}
-    testing.expectf(t,len(seen.comments)==1 && seen.comments[0].lines=="1-2" && seen.comments[0].change==change && !seen.comments[0].outdated,"%v",seen.comments)
-    // The first reads what the change did to b.txt: its bytes come from the
-    // second, asked without waiting, and read on a later call.
-    look:=Api_Kai_Proposal_Params{proposal=id,file="b.txt"}
-    for {
-        call,seen=kai_call(a,api_kai_proposal,&look,Api_Kai_Proposal)
-        if !kai_ok(t,call,"detail") {return}
-        if !seen.detail.fetching {break}
-        if !testing.expect(t,kai_tick(a,b,started),"the bytes of b.txt come from the second") {return}
-    }
-    rows:=seen.detail.rows
-    testing.expectf(t,seen.detail.kind=="text" && seen.detail.change==change && len(rows)==2 && rows[0].mark=="+" && rows[0].new==1 && rows[0].text=="one" && rows[1].text=="two","%v",seen.detail)
-    verdict:=Api_Kai_Proposal_Params{proposal=id,verdict="approve"}
-    call,seen=kai_call(a,api_kai_proposal,&verdict,Api_Kai_Proposal)
-    if !kai_ok(t,call,"approve") {return}
-    testing.expectf(t,seen.blocking=="","it may land: %s",seen.blocking)
-
-    // main moves only by landing: a move around the policy answers it.
-    around:=Api_Kai_Bookmarks_Params{move="main",change="@"}
-    call,_=kai_call(a,api_kai_bookmarks,&around,Api_Kai_Bookmarks)
-    testing.expectf(t,call.failed && strings.contains(call.error.message,"policy"),"%s",call.error.message)
-    land:=Api_Kai_Proposal_Params{proposal=id,land=true}
-    call,seen=kai_call(a,api_kai_proposal,&land,Api_Kai_Proposal)
-    if !kai_ok(t,call,"land") {return}
-    testing.expect_value(t,seen.status,"landed")
-    // What a result holds lives in the call's allocator: the temporary one is overwritten once
-    // the call returns.
-    owned:=make([]u8,1<<20)
-    defer delete(owned)
-    own:mem.Arena
-    mem.arena_init(&own,owned)
-    apart:=Api_Kai_Proposal_Params{proposal=id}
-    call,seen=kai_call_apart(a,api_kai_proposal,&apart,Api_Kai_Proposal,mem.arena_allocator(&own))
-    if !kai_ok(t,call,"view apart") {return}
-    testing.expect_value(t,seen.status,"landed")
-
-    // Both see main moved to the change that landed.
-    listed:=Api_Kai_Bookmarks_Params{}
-    for s in ([2]^Session{a,b}) {
-        for {
-            _,marks:=kai_call(s,api_kai_bookmarks,&listed,Api_Kai_Bookmarks)
-            moved:=false
-            for m in marks.bookmarks {moved||=m.name=="main" && m.shared && m.change==change}
-            if moved {break}
-            if !testing.expect(t,kai_tick(a,b,started),"main moved for both") {return}
-        }
-    }
-}
-
-// The width of the Kai tab: that of the left panel inside its padding.
 @(private="file") KAI_TAB :: LEFT_WIDTH.min-2*PANEL_PADDING
+@(private="file") Kai_None :: struct {}
 
 @(private="file")
 kai_panel_frame :: proc(s:^Session,input:ui.Input) -> ui.Frame {
     ctx:=s.gui.ctx
     ui.frame_begin(ctx,input)
     if ui.box(ctx,{width=ui.fixed(KAI_TAB),height=ui.fixed(860),direction=.Column,gap=6}) {kai_panel_build(s,KAI_TAB,860)}
-    if s.gui.modal==.Kai {kai_dialog_build(s)}
     return ui.frame_end(ctx)
 }
 
@@ -621,38 +412,95 @@ kai_panel_stable :: proc(t:^testing.T,s:^Session,what:string,loc:=#caller_locati
     testing.expectf(t,heap.total_allocation_count==0 && temp.total_allocation_count==0,"%s: a stable frame allocates nothing (%d, %d)",what,heap.total_allocation_count,temp.total_allocation_count,loc=loc)
 }
 
-// A machine of the store that does not open (here its X25519 key does not
-// read) leaves a workspace with no team: the view names no org, Team says why
-// and Changes draws, instead of reading the org at an index nothing set.
+// Two editors, each with its store and its agent on 127.0.0.1, without a
+// terminal: the first names itself, makes an org and publishes the project to
+// main into it (one call, Org only); a publish that fails keeps the typed
+// description. It makes an invite; the second, a launcher with no project,
+// joins with it, sees the repository in its Repositories and pulls it into a
+// folder, with how far the pull is in chunks and bytes, until its files are
+// there.
 @(test)
-editor_kai_team_view_of_a_machine_that_does_not_open_says_why :: proc(t:^testing.T) {
-    k:=new(Kai_Fixture);defer free(k)
-    if !kai_fixture_init(t,k,"kai-team-closed") {return}
-    defer kai_fixture_destroy(k)
-    s:=&k.s
-    ctx:ui.Context
-    if !testing.expect(t,test_ui_init(&ctx,{})) {return}
-    defer ui.context_destroy(&ctx)
-    k.gui.ctx,k.gui.begun=&ctx,true
-    testing.expect(t,os.write_entire_file(fmt.tprintf("%s/%s",s.store.root,vcs.DH_FILE),transmute([]u8)string("short"))==nil)
-    testing.expect_value(t,kai_enable(s),"")
-    if !testing.expect(t,kai_workspace(s)!=nil) {return}
-    team:=&s.kai.state.team
-    testing.expect(t,!team.opened && team.view.org<0 && len(team.view.orgs)==0,"no machine, no org")
-    for tab in Kai_Tab {
-        team.tab=tab
-        kai_panel_still(t,s)
+editor_kai_publishes_to_main_and_a_launcher_pulls_it :: proc(t:^testing.T) {
+    ka_:=new(Kai_Fixture);defer free(ka_)
+    kb:=new(Kai_Fixture);defer free(kb)
+    if !kai_fixture_init(t,ka_,"kai-team-a") || !kai_fixture_init(t,kb,"kai-team-b") {return}
+    defer kai_fixture_destroy(ka_)
+    defer kai_fixture_destroy(kb)
+    a,b:=&ka_.s,&kb.s
+    a.kai.mesh_loopback,b.kai.mesh_loopback=true,true
+    b.has_project=false
+    testing.expect_value(t,kai_enable(a),"")
+    if !testing.expectf(t,kai_workspace(a)!=nil,"the workspace opens: %v",a.kai.error) {return}
+    for x in ([]struct{s:^Session,name,device:string}{{a,"ana","studio-pc"},{b,"bo","laptop"}}) {
+        p:=Api_Kai_Profile_Params{name=x.name,device=x.device}
+        call,r:=kai_call(x.s,api_kai_profile,&p,Api_Kai_Orgs)
+        if !kai_ok(t,call,x.name) || !testing.expect_value(t,r.device,x.device) {return}
     }
-    testing.expect(t,team.machine.why!="","the machine says why it does not open")
+    studio:=Api_Kai_Org_Params{new="studio"}
+    call,orgs:=kai_call(a,api_kai_org,&studio,Api_Kai_Orgs)
+    if !kai_ok(t,call,"new org") || !testing.expect(t,len(orgs.orgs)==1 && orgs.orgs[0].role=="admin") {return}
+    org:=strings.clone(orgs.orgs[0].id,context.temp_allocator)
+    // A publish that fails leaves the typed description where it was.
+    st:=a.kai.state
+    st.description_length=copy(st.description[:],"the first version")
+    bad:=Api_Kai_Publish_Params{description="the first version",org="nowhere"}
+    call,_=kai_call(a,api_kai_publish,&bad,Api_Kai_Published)
+    testing.expect(t,call.failed && st.description_length>0,"a failed publish keeps the description")
+    // A first publish that refuses leaves the org's record as it was.
+    unnamed:=Api_Kai_Publish_Params{org=org,visibility="org",bookmark="no name\x00"}
+    call,_=kai_call(a,api_kai_publish,&unnamed,Api_Kai_Published)
+    _,orgs=kai_call(a,api_kai_org,&Api_Kai_Org_Params{},Api_Kai_Orgs)
+    testing.expect(t,call.failed && len(orgs.orgs[0].repositories)==0,"a refused first publish adds no repository to the org")
+    kai_write(t,a,fmt.tprintf("%s/a.txt",ka_.root),transmute([]u8)string("a\n"))
+    publish:=Api_Kai_Publish_Params{description="the first version",org=org,visibility="org"}
+    published:^Api_Kai_Published
+    call,published=kai_call(a,api_kai_publish,&publish,Api_Kai_Published)
+    if !kai_ok(t,call,"publish") {return}
+    testing.expect(t,published.bookmark=="main" && published.change!="" && st.description_length==0,"main moved, and the description went into the change")
+    _,orgs=kai_call(a,api_kai_org,&Api_Kai_Org_Params{},Api_Kai_Orgs)
+    testing.expect(t,len(orgs.orgs[0].repositories)==1 && !orgs.orgs[0].repositories[0].public && orgs.orgs[0].repositories[0].main!="","the project is a repository of the org, org only, on main")
+    again:=Api_Kai_Publish_Params{org=org,visibility="public"}
+    call,_=kai_call(a,api_kai_publish,&again,Api_Kai_Published)
+    testing.expect(t,call.failed && call.error.code==api.INVALID_PARAMS,"visibility goes only with the first publish")
+
+    invite:=Api_Kai_Invite_Params{org="studio",role="writer"}
+    invited:^Api_Kai_Invite
+    call,invited=kai_call(a,api_kai_invite,&invite,Api_Kai_Invite)
+    if !kai_ok(t,call,"invite") || !testing.expect(t,strings.has_prefix(invited.invite,"kai2") && len(invited.addresses)>0) {return}
+    join:=Api_Kai_Join_Params{invite=strings.clone(invited.invite,context.temp_allocator)}
+    joined:^Api_Kai_Joined
+    call,joined=kai_call(b,api_kai_join,&join,Api_Kai_Joined)
+    if !kai_ok(t,call,"join") {return}
+    // The join runs on a thread of the agent: the frames go on.
+    joining:=time.tick_now()
+    for joined.stage=="waiting" {
+        if !testing.expect(t,kai_tick(a,b,joining),"the join ends") {return}
+        _,joined=kai_call(b,api_kai_join,&Api_Kai_Join_Params{},Api_Kai_Joined)
+    }
+    if !testing.expectf(t,joined.stage=="done" && joined.name=="studio","the join is done: %v",joined^) {return}
+    testing.expect_value(t,projects_unpulled_count(b),1)
+    folder:=fmt.tprintf("%s/pulled",base.test_folder(t,"kai-team-pull"))
+    clone:=Api_Kai_Clone_Params{org="studio",repository=orgs.orgs[0].repositories[0].name,folder=folder}
+    pulling:^Api_Kai_Clone
+    call,pulling=kai_call(b,api_kai_clone,&clone,Api_Kai_Clone)
+    if !kai_ok(t,call,"clone") {return}
+    started:=time.tick_now()
+    for pulling.stage=="waiting" {
+        if !testing.expect(t,kai_tick(a,b,started),"the pull ends") {return}
+        _,pulling=kai_call(b,api_kai_clone,&Api_Kai_Clone_Params{},Api_Kai_Clone)
+    }
+    testing.expectf(t,pulling.stage=="done" && pulling.chunks>0 && pulling.bytes>0,"the pull is done and says how much it took: %v",pulling^)
+    text,_:=os.read_entire_file(fmt.tprintf("%s/a.txt",folder),context.temp_allocator)
+    testing.expect_value(t,string(text),"a\n")
+    _,peers:=kai_call(b,api_kai_peers,&Kai_None{},Api_Kai_Peers)
+    testing.expect(t,peers.running && len(peers.peers)==1 && peers.peers[0].name=="ana","the launcher's agent is connected to the first editor")
 }
 
-// The team views draw what was read, and a frame that changes nothing
-// allocates nothing in any of them; their buttons ask for kai.* methods,
-// which run between frames. The recovery key's dialog goes only by its
-// button, and a pairing request's dialog has no default: Enter and Escape
-// answer nothing.
+// The Team view draws what was read, and reads again only when the agent
+// moved: a frame that changes nothing allocates nothing; its buttons ask for
+// kai.* methods, which run between frames.
 @(test)
-editor_kai_team_views_ask_their_methods_and_keep_still_frames :: proc(t:^testing.T) {
+editor_kai_team_view_reads_only_when_the_agent_moves :: proc(t:^testing.T) {
     k:=new(Kai_Fixture);defer free(k)
     if !kai_fixture_init(t,k,"kai-team-panel") {return}
     defer kai_fixture_destroy(k)
@@ -666,246 +514,86 @@ editor_kai_team_views_ask_their_methods_and_keep_still_frames :: proc(t:^testing
     defer test_commands_close(s)
     testing.expect_value(t,kai_enable(s),"")
     if !testing.expect(t,kai_workspace(s)!=nil) {return}
-    st:=s.kai.state
-    team:=&st.team
-
-    // Team, with no user: a handle typed and Make user ask kai.identity.
-    team.tab=.Team
-    kai_team_read(s)
-    kai_panel_stable(t,s,"team without a user")
-    team.fields.name_length=copy(team.fields.name[:],"ana")
+    s.kai.state.tab=.Team
+    kai_team_open(s)
     kai_panel_still(t,s)
-    if !kai_panel_click(t,s,ui.id(&ctx,"kai_user_make")) {return}
+    kai_panel_click(t,s,ui.id(&ctx,"kai_profile",0))
     method,params:=kai_panel_asked(s)
-    testing.expect(t,method=="kai.identity" && strings.contains(params,`"ana"`),params)
-    commands_run(s)
-    testing.expect(t,team.machine.user!={} && s.gui.modal==.Kai && team.dialog==.Recovery,"the method ran and shows the key")
-    kai_panel_still(t,s)
-    escape_run(s,s.gui,s.viewport,s.selection)
-    testing.expect(t,team.dialog==.Recovery,"Escape leaves the recovery key up")
-    if !kai_panel_click(t,s,shell_id(s.gui,"kai_recovery_done")) {return}
-    testing.expect(t,team.dialog==.None && s.gui.modal==.None && team.recovery_length==0)
-
-    // An org: Make org asks kai.org; with the project in it, the tab lists it.
-    team.fields.org_length=copy(team.fields.org[:],"studio")
-    kai_panel_still(t,s)
-    if !kai_panel_click(t,s,ui.id(&ctx,"kai_org_make")) {return}
-    method,params=kai_panel_asked(s)
-    testing.expect(t,method=="kai.org" && strings.contains(params,`"studio"`),params)
-    commands_run(s)
-    add:=Api_Kai_Org_Params{add="org"}
-    call,_:=kai_call(s,api_kai_org,&add,Api_Kai_Orgs)
-    if !kai_ok(t,call,"add") {return}
-    kai_write(t,s,fmt.tprintf("%s/a.txt",k.root),transmute([]u8)string("a"))
-    testing.expect_value(t,kai_new(s,nil,"first"),"")
-    main:=Api_Kai_Bookmarks_Params{move="main",change="@-"}
-    call,_=kai_call(s,api_kai_bookmarks,&main,Api_Kai_Bookmarks)
-    if !kai_ok(t,call,"main") {return}
-    kai_write(t,s,fmt.tprintf("%s/b.txt",k.root),transmute([]u8)string("b"))
-    testing.expect_value(t,kai_new(s,nil,"second"),"")
-    open:=Api_Kai_Proposals_Params{open="main"}
-    call,_=kai_call(s,api_kai_proposals,&open,Api_Kai_Proposals)
-    if !kai_ok(t,call,"open") {return}
-    kai_team_read(s)
-    kai_panel_stable(t,s,"team")
-    // At the tab's width every control shows its text whole.
-    kai_fit(t,s,{
-        {ui.id(&ctx,"kai_offer",0),"Member",false},{ui.id(&ctx,"kai_offer",1),"Second device",false},{ui.id(&ctx,"kai_offer",2),"Node",false},
-        {ui.id(&ctx,"kai_identity_act",0),"Rotate recovery key",false},{ui.id(&ctx,"kai_identity_act",1),"Copy subject",false},
-        {ui.id(&ctx,"kai_ticket"),"Ticket from another machine",true},{kai_row_id(&ctx,{{"org",0}},"kai_policy_approvals"),"Approvals",true},
-        {kai_row_id(&ctx,{{"org",0}},"kai_policy_checks"),"Checks, as unit,lint",true},{ui.id(&ctx,"kai_patterns"),"Patterns, as secrets/** .env",true},
-    })
-    if !kai_panel_click(t,s,ui.id(&ctx,"kai_offer",0)) {return}
-    method,params=kai_panel_asked(s)
-    testing.expect(t,method=="kai.pair" && strings.contains(params,`"member"`),params)
-    api_state(s).commands.asked_count=0
-
-    // Changes: the shared main among the bookmarks; a name typed shares @-.
-    team.tab=.Changes
-    kai_panel_stable(t,s,"changes")
-    team.fields.bookmark_length=copy(team.fields.bookmark[:],"next")
-    kai_panel_still(t,s)
-    if !kai_panel_click(t,s,ui.id(&ctx,"kai_share")) {return}
-    method,params=kai_panel_asked(s)
-    testing.expect(t,method=="kai.bookmarks" && strings.contains(params,`"move":"next"`),params)
-    api_state(s).commands.asked_count=0
-    // A change of the log shows its files; one opens what the change did to it.
-    if !kai_panel_click(t,s,kai_row_id(&ctx,{{"change",1}},"row")) {return}
-    if !testing.expectf(t,len(st.view.picked)==1 && st.view.picked[0].path=="b.txt","%v",st.view.picked) {return}
-    if !kai_panel_click(t,s,kai_row_id(&ctx,{{"change",1},{"file",0}},"row")) {return}
-    testing.expect(t,st.detail.open && st.detail.tab==.Changes && st.detail.view.kind==.Text,"the file's detail opens")
-    kai_panel_stable(t,s,"a change's file")
-    kai_detail_close(st)
-    st.picked={}
-    kai_read(s)
-
-    // Proposals: the list, then one open; Approve asks for the verdict.
-    team.tab=.Proposals
-    kai_panel_stable(t,s,"proposals")
-    team.proposal=team.view.proposals[0].id
-    kai_team_read(s)
-    if !testing.expect(t,team.view.shown) {return}
-    kai_panel_stable(t,s,"a proposal")
-    kai_fit(t,s,{
-        {ui.id(&ctx,"kai_verdict",0),"Approve",false},{ui.id(&ctx,"kai_verdict",1),"Request changes",false},{ui.id(&ctx,"kai_verdict",2),"Withdraw",false},
-        {ui.id(&ctx,"kai_proposal_act",0),"Revise",false},{ui.id(&ctx,"kai_proposal_act",2),"Land",false},
-        {ui.id(&ctx,"kai_check_command"),"Command, as mirai test kai",true},
-    })
-
-    // A file of the stack opens what its change did; a click on a line starts
-    // a comment there, which then shows under it.
-    if !kai_panel_click(t,s,kai_row_id(&ctx,{{"item",0},{"file",0}},"row")) {return}
-    d:=&st.detail
-    if !testing.expectf(t,d.open && d.view.path=="b.txt" && len(d.view.rows)==1 && d.view.rows[0].mark=='+',"%v",d.view) {return}
-    kai_panel_stable(t,s,"a file's detail")
-    if !kai_panel_click(t,s,kai_row_id(&ctx,{{"entry",0}},"row")) {return}
-    testing.expect(t,team.fields.file==0 && string(team.fields.lines[:team.fields.lines_length])=="1","the line picked is the comment's")
-    team.fields.comment_length=copy(team.fields.comment[:],"why b")
-    kai_panel_still(t,s)
-    if !kai_panel_click(t,s,ui.id(&ctx,"kai_comment_go",0)) {return}
-    method,params=kai_panel_asked(s)
-    testing.expect(t,method=="kai.proposal" && strings.contains(params,`"file":"b.txt"`) && strings.contains(params,`"lines":"1"`),params)
-    commands_run(s)
-    testing.expectf(t,len(d.entries)==2 && d.entries[1].note==0,"the comment shows under its line: %v",d.entries[:])
-    kai_panel_stable(t,s,"a file's detail with a comment")
-    if !kai_panel_click(t,s,ui.id(&ctx,"kai_detail_back")) {return}
-    testing.expect(t,!d.open,"back to the proposal")
-    if !kai_panel_click(t,s,ui.id(&ctx,"kai_verdict",0)) {return}
-    method,params=kai_panel_asked(s)
-    testing.expect(t,method=="kai.proposal" && strings.contains(params,`"verdict":"approve"`),params)
-    commands_run(s)
-    testing.expect(t,len(team.view.proposal.verdicts)==1,"the method ran")
-
-    // A pairing request: neither Enter nor Escape answers it.
-    team.request={mode=.Member}
-    team.request.who_length=copy(team.request.who[:],"bo/laptop")
-    copy(team.request.code[:],"1234-5678")
-    kai_dialog_open(s,.Pair)
-    kai_panel_still(t,s)
-    kai_panel_still(t,s,{size={900,900},pointer_absent=true,keys_down={.Enter},keys_pressed={.Enter}})
-    escape_run(s,s.gui,s.viewport,s.selection)
-    testing.expect(t,team.dialog==.Pair && api_state(s).commands.asked_count==0,"no answer without a button")
-    if !kai_panel_click(t,s,shell_id(s.gui,"kai_pair_deny")) {return}
-    method,params=kai_panel_asked(s)
-    testing.expect(t,method=="kai.pair" && strings.contains(params,`"deny"`),params)
-    api_state(s).commands.asked_count=0
-    kai_dialog_close(s)
+    testing.expectf(t,method=="kai.profile" && strings.contains(params,"\"name\""),"Save asks kai.profile: %s %s",method,params)
+    p:=Api_Kai_Profile_Params{name="ana",device="mac"}
+    kai_call(s,api_kai_profile,&p,Api_Kai_Orgs)
+    o:=Api_Kai_Org_Params{new="studio"}
+    kai_call(s,api_kai_org,&o,Api_Kai_Orgs)
+    team:=s.kai.team
+    testing.expect(t,team.running && len(team.view.orgs)==1,"the agent runs once the machine is in an org")
+    started:=time.tick_now()
+    for team.generation!=vcs.agent_generation(&team.agent) {
+        kai_poll(s)
+        if time.duration_seconds(time.tick_since(started))>5 {break}
+    }
+    generation:=team.generation
+    kai_poll(s)
+    testing.expect_value(t,team.generation,generation)
+    kai_panel_stable(t,s,"Team")
+    s.kai.state.tab=.Changes
+    kai_panel_stable(t,s,"Changes")
 }
 
-// Every team method refuses params that do not fit, with what to give.
+// The team methods refuse what does not fit and say why.
 @(test)
 editor_kai_team_methods_refuse_hostile_params :: proc(t:^testing.T) {
     k:=new(Kai_Fixture);defer free(k)
     if !kai_fixture_init(t,k,"kai-team-hostile") {return}
     defer kai_fixture_destroy(k)
     s:=&k.s
+    s.kai.mesh_loopback=true
     testing.expect_value(t,kai_enable(s),"")
-    if !testing.expect(t,kai_workspace(s)!=nil) {return}
-    refused :: proc(t:^testing.T,call:api.Call,want:string,loc:=#caller_location) {
-        testing.expectf(t,call.failed && call.error.code==api.INVALID_PARAMS && strings.contains(call.error.message,want),"wanted %q: %v %s",want,call.failed,call.error.message,loc=loc)
+    profiles:=[]Api_Kai_Profile_Params{{name="",device="mac"},{name="ana",device=""},{name=strings.repeat("x",200,context.temp_allocator),device="mac"},{name="a\xff",device="mac"}}
+    for &p in profiles {
+        call,_:=kai_call(s,api_kai_profile,&p,Api_Kai_Orgs)
+        testing.expectf(t,call.failed,"%q %q",p.name,p.device)
     }
-    long:=strings.repeat("x",vcs.NAME_MAX+1,context.temp_allocator)
-    identities:=[?]struct{p:Api_Kai_Identity_Params,want:string}{
-        {{name="a",revoke="b"},"give one of"},
-        {{name=long},"1 to 64 bytes"},
-        {{revoke="b",device="pc"},"goes with name"},
-        {{name="a",device=long},"1 to 64 bytes"},
-        {{recover="ab12cd34"},"recover takes recovery"},
-        {{recover="ab12cd34",recovery="x",name="a"},"give one of"},
+    o:=Api_Kai_Org_Params{new="studio"}
+    call,_:=kai_call(s,api_kai_org,&o,Api_Kai_Orgs)
+    testing.expect(t,call.failed && strings.contains(call.error.message,"name yourself"),"an org needs the profile first")
+    p:=Api_Kai_Profile_Params{name="ana",device="mac"}
+    kai_call(s,api_kai_profile,&p,Api_Kai_Orgs)
+    kai_call(s,api_kai_org,&o,Api_Kai_Orgs)
+    orgs:=[]Api_Kai_Org_Params{{new="x",member="y"},{role="admin"},{org="studio",member="nobody",role="admin"},{org="studio",member="mac",role="boss"},{org="nowhere",member="mac",role="admin"}}
+    for &x in orgs {
+        call,_=kai_call(s,api_kai_org,&x,Api_Kai_Orgs)
+        testing.expectf(t,call.failed,"%v",x)
     }
-    for c in identities {
-        p:=c.p
-        call,_:=kai_call(s,api_kai_identity,&p,Api_Kai_Identity)
-        refused(t,call,c.want)
+    invites:=[]Api_Kai_Invite_Params{{org="nowhere"},{org="studio",role="boss"}}
+    for &x in invites {
+        call,_=kai_call(s,api_kai_invite,&x,Api_Kai_Invite)
+        testing.expectf(t,call.failed,"%v",x)
     }
-    // With no window to show a recovery key to, neither making a user nor
-    // rotating its key makes anything.
-    s.headless=true
-    for &p in ([]Api_Kai_Identity_Params{{name="ana"},{recovery="ABCD"},{first_recovery=true}}) {
-        call,_:=kai_call(s,api_kai_identity,&p,Api_Kai_Identity)
-        testing.expectf(t,call.failed && strings.contains(call.error.message,"mirai kai identity"),"%v %s",p,call.error.message)
+    joins:=[]Api_Kai_Join_Params{{invite="kai2!!!"},{invite="kai2aaaa"}}
+    for &x in joins {
+        call,_=kai_call(s,api_kai_join,&x,Api_Kai_Joined)
+        testing.expectf(t,call.failed,"%q",x.invite)
     }
-    testing.expect(t,s.kai.state.team.machine.user=={} && s.kai.state.team.dialog==.None,"nothing was made")
-    s.headless=false
-    orgs:=[?]struct{p:Api_Kai_Org_Params,want:string}{
-        {{add="everyone"},"public or org"},
-        {{member="x",role="god"},"reader, writer or admin"},
-        {{role="admin"},"goes with member"},
-        {{new="a",leave=true},"give one of"},
+    joined:^Api_Kai_Joined
+    call,joined=kai_call(s,api_kai_join,&Api_Kai_Join_Params{},Api_Kai_Joined)
+    testing.expect(t,!call.failed && joined.stage=="none","with no invite it says no join ran")
+    logins:=[]Api_Kai_Web_Login_Params{{server="127.0.0.1:7350"},{server="127.0.0.1:7350",name="ana",password="short"}}
+    for &x in logins {
+        call,_=kai_call(s,api_kai_web_login,&x,Api_Kai_Task)
+        testing.expectf(t,call.failed,"%v",x.server)
     }
-    for c in orgs {
-        p:=c.p
-        call,_:=kai_call(s,api_kai_org,&p,Api_Kai_Orgs)
-        refused(t,call,c.want)
+    publishes:=[]Api_Kai_Publish_Params{{},{org="studio",visibility="everyone"},{org="studio",bookmark="no name\x00"}}
+    for &x in publishes {
+        call,_=kai_call(s,api_kai_publish,&x,Api_Kai_Published)
+        testing.expectf(t,call.failed,"%v",x)
     }
-    pairs:=[?]struct{p:Api_Kai_Pair_Params,want:string}{
-        {{offer="cat"},"member, device, node or recover"},
-        {{offer="member",role="god"},"reader, writer or admin"},
-        {{offer="node",modes="teleport"},"relay, seed and ddc"},
-        {{join="not a ticket"},"does not read"},
-        {{answer="maybe"},"approve or deny"},
-        {{answer="approve"},"1234-5678"},
-    }
-    for c in pairs {
-        p:=c.p
-        call,_:=kai_call(s,api_kai_pair,&p,Api_Kai_Pair)
-        refused(t,call,c.want)
-    }
-    lists:=[?]struct{p:Api_Kai_Proposals_Params,want:string}{
-        {{title="x"},"go with open"},
-        {{open="has space"},"no bookmark name"},
-    }
-    for c in lists {
-        p:=c.p
-        call,_:=kai_call(s,api_kai_proposals,&p,Api_Kai_Proposals)
-        refused(t,call,c.want)
-    }
-    proposals:=[?]struct{p:Api_Kai_Proposal_Params,want:string}{
-        {{},"name one"},
-        {{proposal="ab",lines="1-2"},"go with comment"},
-        {{proposal="ab",file="a.txt",verdict="approve"},"file goes with comment"},
-        {{proposal="ab",change="@"},"goes with file"},
-        {{proposal="ab",comment="x",file="a.txt",lines="9-1"},"A-B"},
-        {{proposal="ab",comment="x",entity=5},"hang on a file"},
-        {{proposal="ab",verdict="maybe"},"approve, changes or withdraw"},
-        {{proposal="ab",check="unit"},"command"},
-        {{proposal="ab",land=true,close=true},"give one of"},
-    }
-    for c in proposals {
-        p:=c.p
-        call,_:=kai_call(s,api_kai_proposal,&p,Api_Kai_Proposal)
-        refused(t,call,c.want)
-    }
-    scopes:=[?]struct{p:Api_Kai_Scopes_Params,want:string}{
-        {{add={"x"},readers="god"},"reader, writer, admin or owner"},
-        {{add={"../etc"}},"no pattern"},
-        {{public="a.txt:0"},"line from 1"},
-        {{remove="a",rotate="b"},"give one of"},
-        {{readers="admin"},"go with add"},
-    }
-    for c in scopes {
-        p:=c.p
-        call,_:=kai_call(s,api_kai_scopes,&p,Api_Kai_Scopes)
-        refused(t,call,c.want)
-    }
-    marks:=[?]struct{p:Api_Kai_Bookmarks_Params,want:string}{
-        {{move="main",policy="main"},"one per call"},
-        {{policy="main",approvals=-3},"from 0 to 255"},
-        {{move="has space"},"no bookmark name"},
-        {{policy="main",checks={""}},"a check's name"},
-    }
-    for c in marks {
-        p:=c.p
-        call,_:=kai_call(s,api_kai_bookmarks,&p,Api_Kai_Bookmarks)
-        refused(t,call,c.want)
+    clones:=[]Api_Kai_Clone_Params{{org="studio",repository="nothing"},{org="nowhere",repository="game"}}
+    for &x in clones {
+        call,_=kai_call(s,api_kai_clone,&x,Api_Kai_Clone)
+        testing.expectf(t,call.failed,"%v",x)
     }
 }
 
-@(private="file") Kai_None :: struct {}
-
-// A project without a Kai workspace uses no version control: opening and
-// polling it makes none, nor the machine's identity in the store, the editor edits as ever, the Kai tab offers Enable
-// Kai, which asks kai.init, and kai.init makes the workspace on demand, once;
 // it then opens with the project.
 @(test)
 editor_kai_is_optional_until_enabled :: proc(t:^testing.T) {
@@ -1071,9 +759,9 @@ editor_kai_methods_record_read_and_settle_the_working_copy :: proc(t:^testing.T)
     if !kai_ok(t,call,"kai.prune") {return}
     testing.expect(t,pruned.freed>=0 && vcs.repo_working(&w.repo)==working)
 
-    // kai.peers: no runner, no peers.
+    // kai.peers: in no org, no agent and no peers.
     peers:^Api_Kai_Peers
     call,peers=kai_call(s,api_kai_peers,&none,Api_Kai_Peers)
     if !kai_ok(t,call,"kai.peers") {return}
-    testing.expectf(t,peers.mesh!="" && len(peers.peers)==0,"%v",peers^)
+    testing.expectf(t,!peers.running && len(peers.peers)==0,"%v",peers^)
 }

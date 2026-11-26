@@ -121,16 +121,17 @@ Kai_State :: struct {
     width:f32,             // of the tab this frame: what its rows of buttons lay out in
     picked:vcs.Revision,   // the change of the log whose files show
     detail:Kai_Detail,     // a file of a change, open in the tab
-    team:Kai_Team,
+    tab:Kai_Tab,
 }
 
 @(storage)
 Kai :: struct {
     state:^Kai_State,
+    team:^Kai_Team,   // the machine of the store and its agent: with the workspace, or alone in a launcher
     tried:bool,       // opening was tried for this project
     error:vcs.Error,  // why it is not open
     key:vcs.Key,      // this editor's identity in every session and change
-    mesh_loopback:bool, // the runner the editor starts listens on 127.0.0.1 alone: tests
+    mesh_loopback:bool, // the agent the editor starts listens on 127.0.0.1 alone, with no beacon: tests
 }
 
 // The workspace of the project; nil when it has none open.
@@ -207,8 +208,6 @@ kai_attach :: proc(s:^Session,create:bool) -> vcs.Error {
     }
     k.error=.None
     k.state=st
-    // No org until the team is read: a machine that does not open reads nothing.
-    st.team.view.org=-1
     if s.edits!=nil {st.seen_state,st.seen_epoch=s.edits.serial,s.edits.epoch}
     if s.app!=nil && s.app.platform!=nil {
         if watch,error:=platform.watch_create(s.app.platform,{path=s.project_root,recursive=true,file_capacity=1<<16});error==.None {
@@ -224,10 +223,11 @@ kai_attach :: proc(s:^Session,create:bool) -> vcs.Error {
 
 kai_close :: proc(s:^Session) {
     k:=s.kai
-    if k==nil || k.state==nil {return}
+    if k==nil {return}
+    kai_team_close(s)
+    if k.state==nil {return}
     st:=k.state
     if st.watching && s.app!=nil && s.app.platform!=nil {platform.watch_destroy(s.app.platform,st.watch)}
-    kai_team_close(s)
     kai_detail_close(st)
     ka.project_close(&st.project)
     vmem.arena_destroy(&st.arena)
@@ -262,6 +262,7 @@ kai_touched_relative :: proc(s:^Session,relative:string) {
 // since, and a snapshot once the files are quiet.
 kai_poll :: proc(s:^Session) {
     kai_open(s)
+    kai_team_poll(s)
     w:=kai_workspace(s)
     if w==nil {return}
     st:=s.kai.state
@@ -277,7 +278,6 @@ kai_poll :: proc(s:^Session) {
         }
     }
     kai_authors_follow(s)
-    kai_team_poll(s)
     if !st.touched || platform.clock_seconds()-st.touched_at<KAI_QUIET || !kai_files_settled(s) {return}
     kai_snapshot(s)
 }
@@ -339,15 +339,7 @@ kai_snapshot :: proc(s:^Session) -> string {
         if address,pe:=store.put(w.repo.s,([^]u8)(&turn)[:size_of(turn)]);pe==.None {append(&turns,vcs.Attachment{KAI_TURN,address})}
     }
     _,e:=ka.snapshot_authored(w,keys[:],turns[:])
-    // A refusal stays until a snapshot holds; one of a publish, until a publish does.
-    t:=&st.team
-    if refusal:=ka.snapshot_refusal(&st.project);e==.Unauthorized && refusal.text!="" {
-        kai_refusal_set(t,refusal)
-    } else if e==.None && t.refusal.text!="" && t.refusal.line==0 {
-        kai_refusal_set(t,{})
-    }
     kai_read(s)
-    if e==.Unauthorized && t.refusal.text!="" {return t.refusal.text}
     if e!=.None {return vcs.error_text(e)}
     return ""
 }
@@ -402,7 +394,6 @@ kai_prepare :: proc(s:^Session) -> (w:^vcs.Workspace,message:string) {
 @(private)
 kai_finish :: proc(s:^Session,e:vcs.Error,changed:[]string) -> string {
     kai_wrote(s,changed)
-    if e==.None {kai_publish(s)}
     kai_read(s)
     if e!=.None {return vcs.error_text(e)}
     return ""

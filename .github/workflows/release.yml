@@ -180,6 +180,6 @@ jobs:
 
           Building the game code needs the system linker: Visual Studio Build Tools with C++ on Windows, clang on Linux, the Xcode Command Line Tools on macOS. `mirai doctor` checks the machine. On macOS the binaries are not signed: `xattr -dr com.apple.quarantine <folder>`.
 
-          `mirai-kai-*-linux-arm64` is the headless Kai node alone, a static executable for a Linux ARM64 server: `mirai-kai serve --mode relay|seed|seed+ddc --store <folder>`.
+          `mirai-kai-*-linux-arm64` is the headless Kai server alone, a static executable for a Linux ARM64 server behind a TLS reverse proxy: `mirai-kai serve --root <folder> --join <invite>`.
           EOF
           gh release create "$GITHUB_REF_NAME" packages/* --repo "$GITHUB_REPOSITORY" --draft --title "Mirai $GITHUB_REF_NAME" --notes-file notes.md

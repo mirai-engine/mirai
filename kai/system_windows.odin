@@ -51,39 +51,7 @@ socket_share_port :: proc(socket:cnet.UDP_Socket) -> bool {
 
 @(private) ERROR_BUFFER_OVERFLOW :: 111
 
-// Keeps an IPv6 socket, before its bind, to IPv6 alone.
-@(private)
-socket_ip6_only :: proc(socket:cnet.UDP_Socket) -> bool {
-    on:win.DWORD=1
-    return win.setsockopt(win.SOCKET(uintptr(socket)),win.IPPROTO_IPV6,win.IPV6_V6ONLY,&on,size_of(on))==0
-}
 
-// Lets an IPv6 socket take what is sent to the multicast group on the
-// interface of index.
-@(private)
-socket_join6 :: proc(socket:cnet.UDP_Socket,group:[16]u8,index:u32) -> bool {
-    m:=win.ipv6_mreq{ipv6mr_multiaddr={s6_addr=group},ipv6mr_interface=win.c_uint(index)}
-    return win.setsockopt(win.SOCKET(uintptr(socket)),win.IPPROTO_IPV6,win.IPV6_ADD_MEMBERSHIP,&m,size_of(m))==0
-}
-
-// The indexes of the interfaces that are up and have an IPv6 address: where
-// a link-local multicast goes out.
-@(private)
-interfaces6 :: proc(out:^[dynamic]u32) {
-    size:u32=16*1024
-    for _ in 0..<4 {
-        buffer,e:=make([]u8,int(size),context.temp_allocator)
-        if e!=nil {return}
-        first:=(^win.IP_Adapter_Addresses)(raw_data(buffer))
-        result:=win.GetAdaptersAddresses(.IPv6,{.Skip_Anycast,.Skip_Multicast,.Skip_DNS_Server,.Skip_Friendly_Name},nil,first,&size)
-        if result==ERROR_BUFFER_OVERFLOW {continue}
-        if result!=0 {return}
-        for a:=first;a!=nil;a=a.Next {
-            if a.OperStatus==.Up && a.Ipv6IfIndex!=0 && a.FirstUnicastAddress!=nil {append(out,a.Ipv6IfIndex)}
-        }
-        return
-    }
-}
 
 // The broadcast address of every IPv4 network this machine is on. A beacon
 // goes to each: the limited broadcast leaves through one interface alone,
@@ -112,7 +80,6 @@ broadcasts4 :: proc(out:^[dynamic][4]u8) {
 }
 
 // This machine's host name, in buffer; empty when the system gives none.
-@(private)
 host_name :: proc(buffer:[]u8) -> string {
     name,found:=os.lookup_env("COMPUTERNAME",context.temp_allocator)
     if !found {return ""}

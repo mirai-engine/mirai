@@ -96,7 +96,6 @@ Api_Kai_Detail :: struct {
     changed:int `mirai:"label=Of an asset: fields changed"`,
     rows:[]Api_Kai_Detail_Row,
     cut:int `mirai:"label=Rows past the bound of a detail, not given"`,
-    fetching:bool `mirai:"optional,label=The bytes of a side are on a peer and the mesh fetches them: the rows are not given yet; call again until it is false"`,
 }
 
 Api_Kai_Undone :: struct {undone:string `mirai:"label=The operation taken back"`}
@@ -133,17 +132,13 @@ Api_Kai_Bookmarks_Params :: struct {
     set:string `mirai:"optional,label=A bookmark of this workspace to point at change"`,
     change:string `mirai:"optional,label=With set or move: the change; none: the working copy"`,
     remove:string `mirai:"optional,label=A bookmark of this workspace to remove"`,
-    move:string `mirai:"optional,label=A bookmark the project's org shares: moves it to change for the whole org, refused with the policy's reason when one guards it"`,
-    policy:string `mirai:"optional,label=A shared bookmark to guard: it then moves only by landing a proposal with approvals and checks"`,
-    approvals:int `mirai:"optional,label=With policy: the approvals a landing needs"`,
-    checks:[]string `mirai:"optional,label=With policy: the checks that must pass on the final revision"`,
+    move:string `mirai:"optional,label=A bookmark the project's org shares: moves it to change for the whole org"`,
 }
 Api_Kai_Bookmark :: struct {
-    name:string `mirai:"label=A device's is <handle>/<device>:<bookmark>"`,
-    change:string `mirai:"label=Empty while two operations moved it apart, or while its change is not in the store"`,
+    name:string,
+    change:string `mirai:"label=Empty while two operations moved it apart, or while its change is not all in the store"`,
     shared:bool `mirai:"optional,label=Of the project's org"`,
-    device:string `mirai:"optional,label=The device that published it, <handle>/<device>"`,
-    here:bool `mirai:"optional,label=Of a shared one: its change is in the store"`,
+    here:bool `mirai:"optional,label=Of a shared one: every object it reaches is in the store"`,
 }
 Api_Kai_Bookmarks :: struct {bookmarks:[]Api_Kai_Bookmark}
 
@@ -161,7 +156,7 @@ kai_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="kai.restore",summary="Gives the working copy the files of another change and writes them.",params=type_info_of(Api_Kai_Restore_Params),result=type_info_of(Api_Kai_Done),flags={.Destructive},run=api_kai_restore})
     api_register(s,st,{name="kai.conflicts",summary="The files of the working copy in conflict; an asset with its fields both sides changed apart, ours and theirs.",result=type_info_of(Api_Kai_Conflicts),flags={.Read_Only},run=api_kai_conflicts})
     api_register(s,st,{name="kai.resolve",summary="Resolves a file in conflict: field by field with the conflicts that take theirs, or one side whole. The file is written and recorded.",params=type_info_of(Api_Kai_Resolve_Params),result=type_info_of(Api_Kai_Done),run=api_kai_resolve})
-    api_register(s,st,{name="kai.bookmarks",summary="The bookmarks of the workspace, then those the project's org shares and every device's; sets or removes one of the workspace, moves a shared one or guards it with a policy first when asked.",params=type_info_of(Api_Kai_Bookmarks_Params),result=type_info_of(Api_Kai_Bookmarks),run=api_kai_bookmarks})
+    api_register(s,st,{name="kai.bookmarks",summary="The bookmarks of the workspace, then those the project's org shares; sets or removes one of the workspace, or moves a shared one, first when asked.",params=type_info_of(Api_Kai_Bookmarks_Params),result=type_info_of(Api_Kai_Bookmarks),run=api_kai_bookmarks})
     kai_team_api_register(s,st)
 }
 
@@ -176,6 +171,18 @@ api_kai_workspace :: proc(s:^Session,call:^api.Call) -> ^vcs.Workspace {
 @(private)
 api_kai_change :: proc(s:^Session,call:^api.Call,w:^vcs.Workspace,text:string) -> (revision:vcs.Revision,ok:bool) {
     return api_kai_revision(s,call,text)
+}
+
+// The change text names in the workspace, or a shared bookmark of its repository.
+@(private)
+api_kai_revision :: proc(s:^Session,call:^api.Call,text:string) -> (revision:vcs.Revision,ok:bool) {
+    w:=kai_workspace(s)
+    if r,e:=ka.revision_find(w,text);e==.None {return r,true}
+    if t,_:=kai_team_of(s);t!=nil {
+        if r,e:=ka.revision_resolve(&s.kai.state.project,t,text);e==.None {return r,true}
+    }
+    api.call_failf(call,api.INVALID_PARAMS,"%q names no single visible change: @, @-, a bookmark, a shared bookmark or a prefix of at least %d digits of a change kai.log lists",text,ka.CHANGE_TEXT_MIN)
+    return
 }
 
 @(private)
@@ -313,12 +320,7 @@ api_kai_log :: proc(s:^Session,call:^api.Call) {
 api_kai_detail :: proc(s:^Session,call:^api.Call,revision:vcs.Revision,path:string,out:^Api_Kai_Detail) -> bool {
     a:=call.allocator
     d:ka.File_Detail
-    message,waiting:=kai_detail_read(s,revision,path,&d,a)
-    if waiting {
-        out^={file=strings.clone(path,a),change=api_kai_text(kai_workspace(s),revision,call),fetching=true}
-        return true
-    }
-    if message!="" {
+    if message:=kai_detail_read(s,revision,path,&d,a);message!="" {
         api.call_fail(call,api.INVALID_PARAMS,message)
         return false
     }
