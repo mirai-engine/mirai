@@ -241,3 +241,64 @@ mirai_import_takes_what_the_import_of_the_editor_left :: proc(t:^testing.T) {
         testing.expectf(t,done.code==0 && (len(reported_paths(done.out))>0)==c.built,"%s %v: %s%s",c.source,c.args,done.out,done.err)
     }
 }
+
+// Images of one name in two folders, imported in one command: each is a
+// package of its own, pinned under its folder, with a texture of its own,
+// though their bytes are the same and the second is taken from the texture
+// cache at once. Imported again they are current, and each pin keeps what the
+// project used of its package.
+@(test)
+mirai_import_of_images_of_one_name_in_two_folders_pins_both :: proc(t:^testing.T) {
+    root_folder,folder:=test_project(t,"cli-same-name")
+    if folder=="" {return}
+    context.user_ptr=prefab.import_world(t)
+    kept:=fmt.tprintf("%s/store",root_folder)
+    data,_:=os.read_entire_file(DEMO+"surfaces/bricks/bricks_color.png",context.temp_allocator)
+    sparks:[2]string
+    for &spark,at in sparks {
+        os.make_directory_all(fmt.tprintf("%s/fx_%c",folder,'a'+at))
+        spark=fmt.tprintf("%s/fx_%c/spark.png",folder,'a'+at)
+        testing.expect(t,os.write_entire_file(spark,data)==nil)
+    }
+    first:=import_run(kept,sparks[0],sparks[1])
+    if !testing.expectf(t,first.code==0,"%d: %s%s",first.code,first.out,first.err) {return}
+    textures:=make([dynamic]string,context.temp_allocator)
+    for line in reported_assets(first.out) {
+        if strings.contains(line," texture ") {append(&textures,line[:32])}
+    }
+    testing.expectf(t,len(textures)==2 && textures[0]!=textures[1],"a texture each: %s",first.out)
+    list,_,list_error:=asset.packages_load(root_folder,context.temp_allocator)
+    if !testing.expectf(t,list_error==.None && len(list.packages)==2,"two pins: %v %v",list_error,list.packages) {return}
+    testing.expect(t,list.packages[0].id!=list.packages[1].id && list.packages[0].folder=="fx_a" && list.packages[1].folder=="fx_b",first.out)
+
+    // Both are listed, built, and open as textures.
+    found,found_error:=asset.root_packages(root_folder,kept,context.temp_allocator)
+    if !testing.expect_value(t,found_error,asset.Error.None) {return}
+    s:=test_store(t,kept)
+    if s==nil {return}
+    types:asset.Types
+    asset.types_init(&types,context.temp_allocator)
+    built:=0
+    for listed in found.listed {
+        if listed.path!="fx_a/spark.tex" && listed.path!="fx_b/spark.tex" {continue}
+        testing.expectf(t,listed.state==.Built,"%s: %v",listed.path,listed.state)
+        a:asset.Asset
+        if !testing.expectf(t,asset.asset_open_object(&a,s,listed.object,context.temp_allocator)==.None,"%s opens",listed.path) {continue}
+        _,view_error:=asset.texture_view(&a,&types)
+        testing.expect_value(t,view_error,asset.Error.None)
+        asset.asset_close(&a)
+        built+=1
+    }
+    testing.expectf(t,built==2,"both are listed: %v",found.listed)
+
+    // What the project uses of the first package is kept by an import that finds it current.
+    used:=list.packages[0]
+    used.assets=make([dynamic]base.Asset_Id,context.temp_allocator)
+    for listed in found.listed {if listed.package_id==used.id {append(&used.assets,listed.id)}}
+    testing.expect_value(t,project_pin(root_folder,s,used),asset.Error.None)
+    store.close(s)
+    again:=import_run(kept,sparks[0],sparks[1])
+    testing.expectf(t,again.code==0 && strings.count(again.out,"0 assets")==2,"%d: %s%s",again.code,again.out,again.err)
+    list,_,_=asset.packages_load(root_folder,context.temp_allocator)
+    testing.expect(t,len(list.packages)==2 && list.packages[0].id==used.id && slice.equal(list.packages[0].assets[:],used.assets[:]) && len(used.assets)==1,"the pin keeps what the project uses")
+}
