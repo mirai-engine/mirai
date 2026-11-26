@@ -157,6 +157,40 @@ a_small_mesh_or_one_told_not_to_keeps_one_level :: proc(t:^testing.T) {
     testing.expect(t,len(plain.lods)>1 && len(plain.submeshes)==0 && levels_valid(t,plain,1))
 }
 
+// A clump of grass of 75 triangles, one cluster, is imported with coarser
+// levels in its DAG down to a root of geom.CLUSTER_ROOT_TRIANGLES, which
+// sheds what is under a pixel far away without levels drawn by hand.
+@(test)
+a_clump_of_one_cluster_gets_coarser_levels :: proc(t:^testing.T) {
+    vertices:=make([dynamic]asset.Vertex,context.temp_allocator)
+    indices:=make([dynamic]u32,context.temp_allocator)
+    for b in 0..<15 {
+        angle:=f32(b)*2.4
+        r:=0.5*math.sqrt((f32(b)+0.5)/15)
+        at:=[3]f32{r*math.cos(angle),0,r*math.sin(angle)}
+        across:=[3]f32{math.cos(angle*3),0,math.sin(angle*3)}*0.04
+        normal:=linalg.normalize([3]f32{-across.z,0,across.x})
+        first:=u32(len(vertices))
+        for step in 0..<3 {
+            y,w:=f32(step)*0.15,1-0.4*f32(step)/3
+            append(&vertices,test_vertex(at-across*w+{0,y,0},normal,{0,f32(step)/3}),test_vertex(at+across*w+{0,y,0},normal,{1,f32(step)/3}))
+        }
+        append(&vertices,test_vertex(at+{0,0.45,0},normal,{0.5,1}))
+        for k in u32(0)..<2 {
+            a,c:=first+2*k,first+2*k+2
+            append(&indices,a,a+1,c+1,a,c+1,c)
+        }
+        append(&indices,first+4,first+5,first+6)
+    }
+    levels:=mesh_levels(vertices[:],indices[:],nil,nil,allocator=context.temp_allocator)
+    if !testing.expect(t,levels.dag && levels_valid(t,levels,1)) {return}
+    geometry:asset.Mesh_Geometry
+    if !testing.expect(t,levels_geometry(levels,{},&geometry,context.temp_allocator)) {return}
+    testing.expectf(t,len(geometry.levels)>=2,"%d levels",len(geometry.levels))
+    last:=geometry.levels[len(geometry.levels)-1]
+    testing.expectf(t,geometry.levels[0].triangle_count==75 && last.triangle_count<=geom.CLUSTER_ROOT_TRIANGLES,"from %d triangles to %d",geometry.levels[0].triangle_count,last.triangle_count)
+}
+
 @(test)
 a_faceted_mesh_with_a_seam_on_every_edge_reaches_a_small_root :: proc(t:^testing.T) {
     // A crystal: each triangle has vertices of its own, its flat normal and a uv chart of its own.

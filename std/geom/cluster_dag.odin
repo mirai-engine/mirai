@@ -9,7 +9,9 @@ import "core:math"
 // Karis, Nanite: a deep dive (2021).
 //
 // Level 0 is the mesh in clusters, those of each submesh apart. While a
-// level has more than one cluster, its clusters are partitioned in groups;
+// level has more than one cluster, or one of more than CLUSTER_ROOT_TRIANGLES
+// (a small mesh, a clump of grass, the last cluster of a large one), its
+// clusters are partitioned in groups;
 // the triangles of each group are simplified to CLUSTER_SIMPLIFY_RATIO of
 // them with the vertices it shares with other groups locked, and split again
 // in clusters, which make the next level. Where the seams of attributes stop
@@ -41,6 +43,9 @@ CLUSTER_MIN_TRIANGLES :: CLUSTER_MAX_TRIANGLES/3 // a cluster is cut where the n
 CLUSTER_SPLIT_FACTOR :: 2                       // far: beyond this many expected radii of a cluster
 CLUSTER_GROUP_SIZE :: 16                        // clusters a group aims at; it may have a third more
 CLUSTER_SIMPLIFY_RATIO :: 0.5
+// A level of a lone cluster with more triangles is simplified once more: what
+// is far enough draws a root this small, a mesh of one cluster included.
+CLUSTER_ROOT_TRIANGLES :: CLUSTER_MAX_TRIANGLES/4
 CLUSTER_SIMPLIFY_STUCK :: 0.85
 // Of the longest edge of the triangles of a group (the short edge of each, or
 // half its long one for a sliver), the most its attributes add to its error.
@@ -334,7 +339,7 @@ cluster_dag_build :: proc(dag:^Cluster_Dag,source:Cluster_Source,allocator:=cont
     work:runtime.Arena
     defer runtime.arena_destroy(&work)
     depth:=0
-    for len(clusters)>1 {
+    for len(clusters)>1 || len(clusters)==1 && clusters[0].index_count>CLUSTER_ROOT_TRIANGLES*3 {
         level_temp:=runtime.arena_temp_begin(&work)
         defer runtime.arena_temp_end(level_temp)
         context.temp_allocator=runtime.arena_allocator(&work)

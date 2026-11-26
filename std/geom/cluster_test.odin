@@ -617,3 +617,67 @@ a_group_that_loses_every_triangle_keeps_its_largest :: proc(t:^testing.T) {
         testing.expectf(t,abs(lost-math.sqrt(total-0.5*side*side))<1e-6,"%v loses %f",c.sides,lost)
     }
 }
+
+// A mesh of one cluster (a clump of grass, a small prop) is simplified into
+// coarser levels of one cluster each, about half the triangles of the one
+// before, down to CLUSTER_ROOT_TRIANGLES: far away its cut draws that root,
+// near it level 0. Each level reaches farther than the one before, and one
+// already that small has no other.
+@(test)
+a_lone_cluster_is_simplified_into_coarser_levels :: proc(t:^testing.T) {
+    positions:=make([dynamic]Vec3,context.temp_allocator)
+    indices:=make([dynamic]u32,context.temp_allocator)
+    Case :: struct {name:string,blades,grid:int,levels:[2]int}
+    cases:=[?]Case{{"clump of 15 blades",15,0,{2,3}},{"plane of 8 by 8 quads",0,8,{2,3}},{"clump of 4 blades",4,0,{1,1}}}
+    for c in cases {
+        clear(&positions);clear(&indices)
+        rng:=base.rng_make(7)
+        // Blades of 5 triangles, tapering to a tip, a disc of them.
+        for b in 0..<c.blades {
+            angle:=f32(b)*2.4
+            r:=0.5*math.sqrt((f32(b)+0.5)/f32(c.blades))
+            base_at:=Vec3{r*math.cos(angle),0,r*math.sin(angle)}
+            face:=f32(base.rng_u32(&rng)%628)*0.01
+            across:=Vec3{math.cos(face),0,math.sin(face)}*0.04
+            h:=0.35+f32(base.rng_u32(&rng)%25)*0.01
+            first:=u32(len(positions))
+            for step in 0..<3 {
+                y:=f32(step)/3*h
+                w:=1-0.4*f32(step)/3
+                append(&positions,base_at-across*w+{0,y,0},base_at+across*w+{0,y,0})
+            }
+            append(&positions,base_at+{0,h,0})
+            for k in u32(0)..<2 {
+                a,bb,cc,d:=first+2*k,first+2*k+1,first+2*k+2,first+2*k+3
+                append(&indices,a,bb,d,a,d,cc)
+            }
+            append(&indices,first+4,first+5,first+6)
+        }
+        // A plane of quads.
+        n:=c.grid
+        for z in 0..=n {for x in 0..=n {append(&positions,Vec3{f32(x),0.05*f32((x*7+z*3)%5),f32(z)})}}
+        for z in 0..<n {
+            for x in 0..<n {
+                a:=u32(z*(n+1)+x)
+                append(&indices,a,a+u32(n+1),a+1,a+1,a+u32(n+1),a+u32(n+2))
+            }
+        }
+        dag:Cluster_Dag
+        defer cluster_dag_destroy(&dag)
+        if !testing.expect_value(t,cluster_dag_build(&dag,{positions=positions[:],indices=indices[:]}),Cluster_Error.None) {continue}
+        testing.expectf(t,dag.levels>=c.levels[0] && dag.levels<=c.levels[1],"%s: %d levels",c.name,dag.levels)
+        if dag.clusters[0].level!=0 || dag.clusters[0].triangle_count!=u32(len(indices)/3) {testing.expectf(t,false,"%s: level 0 is one cluster of the mesh",c.name);continue}
+        before:=dag.clusters[0]
+        for k in 1..<len(dag.clusters) {
+            l:=dag.clusters[k]
+            testing.expectf(t,l.level==before.level+1 && l.generator==before.group && l.own==before.parent,"%s: level %d follows the one before",c.name,l.level)
+            testing.expectf(t,l.triangle_count<before.triangle_count && l.triangle_count*3>=before.triangle_count,"%s: %d triangles after %d",c.name,l.triangle_count,before.triangle_count)
+            testing.expectf(t,before.parent.error>0 && before.parent.error<max(f32) && before.own.error<=before.parent.error,"%s: level %d reaches farther than the one before (%v, %v)",c.name,before.level,before.own,before.parent)
+            before=l
+        }
+        root:=dag.clusters[len(dag.clusters)-1]
+        testing.expectf(t,root.parent.error==max(f32) && (root.triangle_count<=CLUSTER_ROOT_TRIANGLES || len(dag.clusters)==1),"%s: a root of %d triangles",c.name,root.triangle_count)
+        far,near:=cut(&dag,{0,0,1000},0.01),cut(&dag,{0,0,0.5},0.0001)
+        testing.expectf(t,len(far)==int(root.triangle_count)*3 && len(near)==len(indices),"%s: far it draws %d corners, near %d",c.name,len(far),len(near))
+    }
+}
