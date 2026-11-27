@@ -152,10 +152,13 @@ a sync; `mirai:net` gives only the
 - `cook/kai`'s `peers_open` is what a project's imports and cooks take (`cache.Peers_Open`): when
   the project is a workspace of an org's repository, an agent of the process dials the org's
   members (waiting up to `PEERS_WAIT`), a miss asks them (`agent_ddc_ask`) and takes the output
-  whole, and what the cache keeps is published and told to the org's nodes. A build found here
-  that the org has no record of is published too, so the builds a project came with reach the
-  machines that pull it. Before it stops, an agent that published waits until its peers ask it
-  nothing for `DRAIN_IDLE` (at most `DRAIN_MAX`, `agent_drain`), so a node takes what it was told.
+  whole, and what the cache keeps is published and told to the org's nodes. A record whose output
+  the asking store already holds whole under the ref is passed over (the caller asked because
+  that result did not serve it), and with none left the connected machines are asked. A build
+  found here that the org has no record of is published too, so the builds a project came with
+  reach the machines that pull it. Before it stops, an agent that published waits until its
+  peers ask it nothing for `DRAIN_IDLE` (at most `DRAIN_MAX`, `agent_drain`), so a node takes
+  what it was told.
 - Publishing a project (`cook/kai` `publish`, so `kai.publish`, the Launcher and
   `mirai kai publish`) also publishes the builds of the packages it pins that the store holds
   whole, under `asset.REF_BUILDS`/<select> and `asset.REF_IMPORTS[_FAST]`/<key>

@@ -146,6 +146,7 @@ Projects :: struct {
     cancelling:bool,      // user asked to cancel; projects_poll cleans up without blocking a frame
     error:[1024]u8,
     error_length:int,
+    error_copied:f64,   // ui.Context.time its banner last copied it (error_banner)
     next:bool,          // built: this editor starts it when it ends
     next_launcher:bool, // next starts the standalone launcher (--launcher) instead of a project
     started:subprocess.Process, // the editor started on it, which this process waits for once it closes
@@ -601,6 +602,17 @@ projects_open :: proc(s:^Session,folder:string,steps:[]install.Step={}) -> strin
     return projects_build_start(s)
 }
 
+// Adds text to the error of the opening on a line of its own: what its plugins
+// from git said when they could not be installed stays when its build then fails.
+@(private)
+projects_error_add :: proc(p:^Projects,text:string) {
+    if p.error_length>0 && p.error_length<len(p.error) {
+        p.error[p.error_length]='\n'
+        p.error_length+=1
+    }
+    p.error_length+=copy(p.error[p.error_length:],text)
+}
+
 // A project is being opened: its plugins installing or its build thread running.
 projects_opening :: proc(p:^Projects) -> bool {return p.run!=nil || p.install!=nil}
 
@@ -612,7 +624,7 @@ projects_build_start :: proc(s:^Session) -> string {
     r:=build_run_spawn(absolute,s.engine_root,engine_folder_here(s),s.store.root,"","",nil,.Build,.Editor,0)
     if r==nil {
         text:="No thread could be started for it"
-        p.error_length=copy(p.error[:],text)
+        projects_error_add(p,text)
         notify(s,text)
         return text
     }
@@ -662,8 +674,8 @@ projects_poll :: proc(s:^Session) {
     }
     if !r.opened {
         text:=r.open_error if r.open_error!="" else fmt.tprintf("%s could not be opened",base.text_get(p.opening[:]))
-        p.error_length=copy(p.error[:],text)
-        notify(s,string(p.error[:p.error_length]))
+        projects_error_add(p,text)
+        notify(s,text)
         return
     }
     if r.job==nil {return}
@@ -674,7 +686,7 @@ projects_poll :: proc(s:^Session) {
             if d.severity==.Error {text=fmt.tprintf("%s(%d:%d) %s",d.file,d.line,d.column,d.message);break}
         }
         if text=="" {text=fmt.tprintf("The build failed: %v",result.failure)}
-        p.error_length=copy(p.error[:],text)
+        projects_error_add(p,text)
         log.errorf("%s could not be built: %s",base.text_get(p.opening[:]),text)
         return
     }
@@ -686,7 +698,7 @@ projects_poll :: proc(s:^Session) {
             if d.severity==.Error {why=fmt.tprintf("%s(%d:%d) %s",d.file,d.line,d.column,d.message);break}
         }
         text:=fmt.tprintf("The shaders of the project could not be built: %s",why if why!="" else "the generation failed")
-        p.error_length=copy(p.error[:],text)
+        projects_error_add(p,text)
         log.errorf("%s: %s",base.text_get(p.opening[:]),text)
         return
     }
@@ -1189,10 +1201,32 @@ projects_section_head :: proc(ctx:^ui.Context,title:string) {
 @(private)
 projects_error_build :: proc(ctx:^ui.Context,p:^Projects) {
     if p.error_length<=0 {return}
-    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=8,align_y=.Start,padding={10,8,8,8},fill=ui.tone(ctx,"danger_soft"),radius=6}) {
-        ui.text(ctx,string(p.error[:p.error_length]),ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"danger")),ui.GROW,ui.FIT)
-        if ui.icon_button(ctx,ui.id(ctx,"projects_error_dismiss"),.Cross,20,"ghost","Dismiss error").clicked {p.error_length=0}
+    if error_banner(ctx,ui.id(ctx,"projects_error"),p.error[:],&p.error_length,&p.error_copied,dismiss=true) {p.error_length=0}
+}
+
+ERROR_COPIED_SHOWN :: 1.5 // seconds the Copy of an error banner shows that it copied
+
+// An error read whole, selected and copied: its text wraps in a read-only
+// field, whose height follows the text at the width it had the frame before,
+// and Copy puts all of it on the clipboard. copied: ui.Context.time of the
+// last copy. dismissed: its Dismiss, shown when dismiss, was clicked.
+@(private)
+error_banner :: proc(ctx:^ui.Context,id:ui.Id,text:[]u8,length:^int,copied:^f64,dismiss:=false) -> (dismissed:bool) {
+    message:=string(text[:length^])
+    size:=ui.metric(ctx,"font_small")
+    width:=f32(360)
+    if rect,found:=ui.widget_rect(ctx,id);found {width=rect.w}
+    height:=ui.text_height(ctx,message,{size=size,wrap=.Words},max(width-16,1))+10
+    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=2,align_y=.Start,padding={2,3,4,3},fill=ui.tone(ctx,"danger_surface"),stroke=ui.tone(ctx,"danger_stroke"),stroke_width=1,radius=6}) {
+        ui.text_field(ctx,id,text,length,{read_only=true,multiline=true,bare=true,height=height,size=size,color=ui.tone(ctx,"text_body")})
+        shown:=copied^>0 && ctx.time-copied^<ERROR_COPIED_SHOWN
+        if ui.icon_button(ctx,ui.id_derive(ctx,id,"copy"),shown?.Check:.Copy,22,"ghost",shown?"Copied":"Copy error").clicked && ctx.clipboard_set!=nil {
+            ctx.clipboard_set(ctx.clipboard_user,message)
+            copied^=ctx.time
+        }
+        dismissed=dismiss && ui.icon_button(ctx,ui.id_derive(ctx,id,"dismiss"),.Cross,22,"ghost","Dismiss error").clicked
     }
+    return
 }
 
 // The count of a tab; none while it is 0.
@@ -1243,7 +1277,7 @@ projects_row :: proc(s:^Session,index:int,row:^Projects_Row,folder:string,busy,o
             if ui.button(ctx,ui.id(ctx,"project_cancel"),{label="Cancel",variant="field",height=28,size=ui.metric(ctx,"font_small"),disabled=p.cancelling}).clicked {projects_cancel_request(s)}
         } else {
             if row.missing {
-                if ui.box(ctx,{width=ui.FIT,height=ui.fixed(22),gap=5,padding={8,0,8,0},align_y=.Center,fill=ui.tone(ctx,"danger_soft"),radius=11}) {
+                if ui.box(ctx,{width=ui.FIT,height=ui.fixed(22),gap=5,padding={8,0,8,0},align_y=.Center,fill=ui.tone(ctx,"danger_surface"),stroke=ui.tone(ctx,"danger_stroke"),stroke_width=1,radius=11}) {
                     ui.label(ctx,"Folder not found",ui.metric(ctx,"font_small"),ui.tone(ctx,"danger"))
                 }
             } else if on:=base.text_get(row.kai[:]);on!="" {

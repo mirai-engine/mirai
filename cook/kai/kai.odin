@@ -1,9 +1,10 @@
 // What Kai knows of Mirai projects: the structural merge of assets, row by
 // id and field by field (asset.scene_merge), and which paths of a project a
-// workspace tracks (project.own_path).
+// workspace tracks (tracked_path).
 package kai_assets
 
 import "core:slice"
+import "core:strings"
 import "mirai:asset"
 import "mirai:project"
 import "mirai:std/base"
@@ -23,15 +24,47 @@ driver :: proc(d:^Asset_Driver) -> vcs.Driver {
     return {data=d,merge=asset_merge}
 }
 
-// Tracks what a project owns: not its generated folder nor version control
-// folders.
-filter :: proc() -> vcs.Filter {
-    return {procedure=proc(_:rawptr,path:string) -> bool {return project.own_path(path)}}
+// What a workspace over a project tracks: its own files (project.own_path),
+// not the checkouts of the plugins from git its manifest names (`sources`),
+// which git versions and each machine makes (install.sync), as its
+// .gitignore leaves them out of a repository of git.
+Tracked :: struct {
+    sources:[project.MAX_SOURCES]project.Name,
+}
+
+// Reads the plugins from git the manifest of the project at root names; none
+// when it has no manifest yet.
+tracked_read :: proc(t:^Tracked,root:string) {
+    t^={}
+    m,error:=project.manifest_read(project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator))
+    if error.code!=.None {return}
+    for &source,i in m.sources {t.sources[i]=source.name}
+}
+
+// Whether relative, with forward slashes, is a path a workspace over the
+// project tracks.
+tracked_path :: proc(t:^Tracked,relative:string) -> bool {
+    if !project.own_path(relative) {return false}
+    names:=project.FOLDER_NAMES
+    plugins:=names[.Plugins]
+    if len(relative)<=len(plugins) || relative[len(plugins)]!='/' || !project.path_same(relative[:len(plugins)],plugins) {return true}
+    plugin:=relative[len(plugins)+1:]
+    if slash:=strings.index_byte(plugin,'/');slash>=0 {plugin=plugin[:slash]}
+    for &name in t.sources {
+        source:=base.text_get(name[:])
+        if source!="" && project.path_same(plugin,source) {return false}
+    }
+    return true
+}
+
+// The filter of tracked_path over t, which must outlive the workspace.
+filter :: proc(t:^Tracked) -> vcs.Filter {
+    return {procedure=proc(data:rawptr,path:string) -> bool {return tracked_path((^Tracked)(data),path)},data=t}
 }
 
 // The options of a workspace over a project: its filter and the asset driver.
-workspace_options :: proc(drivers:[]vcs.Driver) -> vcs.Workspace_Options {
-    return {filter=filter(),drivers=drivers}
+workspace_options :: proc(t:^Tracked,drivers:[]vcs.Driver) -> vcs.Workspace_Options {
+    return {filter=filter(t),drivers=drivers}
 }
 
 @(private)

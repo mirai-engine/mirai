@@ -142,9 +142,11 @@ bounds of every record are constants of `kai/types.odin`; past one is `Too_Large
   it holds, settled and still of the row's size, time and inode, is cloned without reading it
   where the volume can (APFS `clonefile`, `FICLONE`) and copied where it cannot; any other comes
   from the store. A snapshot takes its new index into memory only once it is saved.
-- What a workspace tracks is a `Filter` its owner gives: for a project it is `project.own_path`,
-  which leaves out the generated folder and the folders of version control. Kai has no ignore
-  file: what is not the project's is decided where the project is defined.
+- What a workspace tracks is a `Filter` its owner gives: for a project it is `tracked_path`
+  (`cook/kai`): `project.own_path`, which leaves out the generated folder and the folders of
+  version control, and not the checkouts of the plugins from git the manifest names (read when the
+  workspace opens and after a clone writes its files). Kai has no ignore file: what is not the
+  project's is decided where the project is defined.
 
 ## Surfaces
 

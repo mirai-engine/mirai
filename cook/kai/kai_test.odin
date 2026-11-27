@@ -91,7 +91,8 @@ a_scene_merges_by_field_through_the_driver :: proc(t:^testing.T) {
     conflicted,_:=vcs.tree_merge3(&m,tree_with(t,&s,origin),tree_with(t,&s,ours),tree_with(t,&s,apart))
     totals,_=vcs.tree_totals(&s,conflicted)
     testing.expect_value(t,totals.conflicts,1)
-    testing.expect(t,!filter().procedure(nil,".mirai/cache") && filter().procedure(nil,"assets/level.scene"))
+    none:Tracked
+    testing.expect(t,!filter(&none).procedure(&none,".mirai/cache") && filter(&none).procedure(&none,"assets/level.scene"))
 }
 
 // Rows of one table that name rows of another by what they hold, which a

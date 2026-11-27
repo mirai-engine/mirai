@@ -209,7 +209,9 @@ remove :: proc(root,engine_root,name:string,allocator:=context.allocator) -> (re
 
 // Makes every plugin from git a checkout at the commit the project names:
 // what a fresh clone of the project, or a pull that moved a commit, needs
-// before it builds. A checkout with changes of its own is left as it is.
+// before it builds. A checkout with changes of its own is left as it is, and
+// a copy of one without .git becomes a checkout keeping its files
+// (checkout_adopt).
 // changed counts the ones it cloned or moved; message says what went wrong.
 sync :: proc(root:string,allocator:=context.allocator) -> (changed:int,message:string) {
     manifest,read_error:=project.manifest_read(project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator))
@@ -220,6 +222,15 @@ sync :: proc(root:string,allocator:=context.allocator) -> (changed:int,message:s
         if name=="" {continue}
         folder:=project.path(root,"plugins",name,allocator=context.temp_allocator)
         commit:=base.text_get(source.commit[:])
+        if os.exists(folder) && !os.exists(project.path(folder,".git",allocator=context.temp_allocator)) {
+            if failure:=checkout_adopt(root,&source);failure!="" {
+                append(&problems,failure)
+                continue
+            }
+            ignore_set(root,name,true)
+            changed+=1
+            continue
+        }
         if os.exists(folder) {
             head,_:=git(folder,"rev-parse","HEAD")
             if head==commit {continue}
@@ -359,6 +370,27 @@ checkout_ensure :: proc(root:string,source:^project.Source) -> string {
     if _,failure:=git(staging,"checkout","--quiet","--detach",commit);failure!="" {return fmt.tprintf("%s has no commit %s: %s",url,commit,failure)}
     if error:=os.make_directory_all(project.path(root,"plugins",allocator=context.temp_allocator));error!=nil && error!=.Exist {return "The plugins folder of the project could not be made"}
     if error:=os.rename(staging,folder);error!=nil {return fmt.tprintf("%s could not be moved to %s: %v",staging,folder,error)}
+    return ""
+}
+
+// Makes the folder of source, a copy of its checkout without .git (what a
+// pull of a project published with the files of the checkout brings), the
+// checkout of the commit the project names: its history comes from a clone,
+// its files stay as they are, and what differs from the commit is a change of
+// its own.
+@(private)
+checkout_adopt :: proc(root:string,source:^project.Source) -> string {
+    name:=base.text_get(source.name[:])
+    folder:=project.path(root,"plugins",name,allocator=context.temp_allocator)
+    url,commit:=base.text_get(source.url[:]),base.text_get(source.commit[:])
+    staging,staging_ok:=staging_folder(root)
+    if !staging_ok {return fmt.tprintf("%s could not be made",staging)}
+    defer base.remove_all(staging)
+    if _,failure:=git("","clone","--quiet","--no-checkout",url,staging);failure!="" {return fmt.tprintf("%s could not be cloned: %s",url,failure)}
+    if _,failure:=git(staging,"update-ref","--no-deref","HEAD",strings.concatenate({commit,"^{commit}"},context.temp_allocator));failure!="" {return fmt.tprintf("%s has no commit %s: %s",url,commit,failure)}
+    if _,failure:=git(staging,"read-tree","HEAD");failure!="" {return fmt.tprintf("%s could not be read at %s: %s",url,commit[:12],failure)}
+    history:=project.path(staging,".git",allocator=context.temp_allocator)
+    if error:=os.rename(history,project.path(folder,".git",allocator=context.temp_allocator));error!=nil {return fmt.tprintf("%s is not a checkout of git, and its history could not be moved into it: %v",folder,error)}
     return ""
 }
 

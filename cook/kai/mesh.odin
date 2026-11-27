@@ -114,6 +114,11 @@ peers_close :: proc(source:cache.Source) -> (taken,published:int) {
     return
 }
 
+// Gives each ref of names from a record of the org, taking its output whole.
+// A record whose output into holds whole under the ref already is passed
+// over: the caller asks for what it lacks, so that result is not one it
+// takes (a build another ingest made under the same key). With no record
+// here that gives it, the connected machines are asked once.
 @(private)
 mesh_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
     c:=(^Mesh_Cache)(user)
@@ -123,25 +128,37 @@ mesh_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string
     scratch:[]u8
     for name,k in names {
         key:=ddc_key(namespace,name)
-        if vcs.ddc_lookup(s,c.org,key,&records)!=.None || len(records)==0 {
-            if !vcs.agent_ddc_ask(c.agent,c.org,key) {continue}
-            if vcs.ddc_lookup(s,c.org,key,&records)!=.None || len(records)==0 {continue}
+        held,_:=store.ref_get(into,namespace,name)
+        for asked:=false;;asked=true {
+            if vcs.ddc_lookup(s,c.org,key,&records)!=.None {clear(&records)}
+            for &record in records {
+                objects,e:=vcs.ddc_output_get(s,record.output_root,context.temp_allocator)
+                if e!=.None || len(objects)==0 {continue}
+                if held==objects[0] && objects_whole(into,objects) {continue}
+                if into.root!=s.root {
+                    whole:=true
+                    if scratch==nil {scratch=make([]u8,cache.COPY_SCRATCH,context.temp_allocator)}
+                    for o in objects {whole&&=cache.object_copy(s,into,o,scratch)==.None}
+                    if !whole {continue}
+                }
+                if given[k]=store.ref_set(into,namespace,name,objects[0])==.None;given[k] {break}
+            }
+            if given[k] || asked || !vcs.agent_ddc_ask(c.agent,c.org,key) {break}
         }
-        objects,e:=vcs.ddc_output_get(s,records[0].output_root,context.temp_allocator)
-        if e!=.None || len(objects)==0 {continue}
-        if into.root!=s.root {
-            whole:=true
-            if scratch==nil {scratch=make([]u8,cache.COPY_SCRATCH,context.temp_allocator)}
-            for o in objects {whole&&=cache.object_copy(s,into,o,scratch)==.None}
-            if !whole {continue}
-        }
-        given[k]=store.ref_set(into,namespace,names[k],objects[0])==.None
         if given[k] {
             sync.mutex_lock(&c.lock)
             c.taken+=1
             sync.mutex_unlock(&c.lock)
         }
     }
+}
+
+@(private="file")
+objects_whole :: proc(s:^store.Store,objects:[]store.Hash) -> bool {
+    for o in objects {
+        if !asset.object_whole(s,o) {return false}
+    }
+    return true
 }
 
 // Publishes what the cache kept and tells the org's connected nodes.

@@ -23,6 +23,7 @@ Project :: struct {
     types:asset.Types,
     driver:Asset_Driver,
     drivers:[1]vcs.Driver,
+    tracked:Tracked,
     workspace:vcs.Workspace,
     owns_types:bool,
 }
@@ -42,7 +43,7 @@ project_exists :: proc(root:string) -> bool {
 }
 
 @(private)
-project_prepare :: proc(p:^Project,types:^asset.Types) -> vcs.Workspace_Options {
+project_prepare :: proc(p:^Project,root:string,types:^asset.Types) -> vcs.Workspace_Options {
     if types==nil {
         asset.types_init(&p.types)
         p.owns_types=true
@@ -51,7 +52,8 @@ project_prepare :: proc(p:^Project,types:^asset.Types) -> vcs.Workspace_Options 
         p.driver.types=types
     }
     p.drivers[0]=driver(&p.driver)
-    return workspace_options(p.drivers[:])
+    tracked_read(&p.tracked,root)
+    return workspace_options(&p.tracked,p.drivers[:])
 }
 
 // Makes the folder of a project a workspace of a new repository whose first
@@ -59,7 +61,7 @@ project_prepare :: proc(p:^Project,types:^asset.Types) -> vcs.Workspace_Options 
 // the engine's.
 project_create :: proc(p:^Project,root:string,s:^store.Store,types:^asset.Types=nil,allocator:=context.allocator) -> vcs.Error {
     identity:=identity_load(s) or_return
-    options:=project_prepare(p,types)
+    options:=project_prepare(p,root,types)
     if e:=vcs.workspace_create(&p.workspace,root,s,identity,options,allocator=allocator);e!=.None {
         project_close(p)
         return e
@@ -71,7 +73,7 @@ project_create :: proc(p:^Project,root:string,s:^store.Store,types:^asset.Types=
 project_open :: proc(p:^Project,root:string,s:^store.Store,types:^asset.Types=nil,allocator:=context.allocator) -> vcs.Error {
     if !project_exists(root) {return .Missing}
     identity:=identity_load(s) or_return
-    options:=project_prepare(p,types)
+    options:=project_prepare(p,root,types)
     if e:=vcs.workspace_open(&p.workspace,root,s,identity,options,allocator);e!=.None {
         project_close(p)
         return e

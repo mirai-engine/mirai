@@ -660,6 +660,25 @@ build_whole :: proc(s:^store.Store,b:^Build,with_thumbnails:=false) -> bool {
     return true
 }
 
+// Whether b has an output of the same id and kind for every asset of the
+// cache p lists: what a build of p holds. Another ingest of the same source
+// under the same key (one that lacked content it reads, such as an engine's)
+// can lack some.
+build_complete :: proc(b:^Build,p:^Package) -> bool {
+    for &a in p.assets {
+        if !import_cached(a.kind) {continue}
+        held:=false
+        for &o in b.outputs {
+            if o.id==a.id {
+                held=o.kind==a.kind
+                break
+            }
+        }
+        if !held {return false}
+    }
+    return true
+}
+
 program_address_less :: proc(a,b:store.Hash) -> bool {
     a,b:=a,b
     return string(a[:])<string(b[:])

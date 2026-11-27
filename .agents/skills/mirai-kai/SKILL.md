@@ -151,7 +151,9 @@ read a server's repositories, from a browser.
   what its web view shows, by the role of the device that set each sign-in.
 - Kai is the only version control of a project that has it: its snapshots track what
   `project.own_path` accepts (never `.mirai` nor a `.git`, `.hg`, `.svn` or `.jj` at any depth)
-  and nothing else decides which files are the project's. A project without it records nothing.
+  minus the checkouts `plugins/<name>` of the plugins from git its manifest names (`sources`,
+  `cook/kai` `tracked_path`), and nothing else decides which files are the project's. A project
+  without it records nothing.
 
 ## Verification
 

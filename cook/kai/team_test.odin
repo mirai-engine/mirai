@@ -2,10 +2,12 @@ package kai_assets
 
 import "core:fmt"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 import "core:time"
 import "mirai:asset"
+import "mirai:project"
 import "mirai:std/base"
 import "mirai:store"
 import vcs "mirai:kai"
@@ -263,4 +265,40 @@ a_change_in_conflict_is_not_published :: proc(t:^testing.T) {
     testing.expectf(t,pe==.Invalid_Argument && strings.contains(mac.team.why,"conflict"),"refused: %v %s",pe,mac.team.why)
     _,_,re:=vcs.repo_refs_head(&mac.s,org,p.workspace.repo.id,context.temp_allocator)
     testing.expect_value(t,re,vcs.Error.Missing)
+}
+
+// The checkout of a plugin from git the manifest names is git's, as the
+// project's .gitignore says: a workspace over the project tracks the
+// project's own plugins and never that checkout, which each machine makes.
+@(test)
+a_workspace_leaves_out_the_checkouts_of_plugins_from_git :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-git-plugins")
+    if folder=="" {return}
+    mac:Team_Machine
+    if !team_open(t,&mac,folder,"Ana") {return}
+    defer team_close(&mac)
+    root:=strings.concatenate({mac.folder,"/game"},context.temp_allocator)
+    m:=project.manifest_default("Game")
+    base.text_set(m.sources[0].name[:],"unreal")
+    base.text_set(m.sources[0].url[:],"https://example.com/unreal.git")
+    base.text_set(m.sources[0].commit[:],"e0509415e4a0e0509415e4a0e0509415e4a0e050")
+    write(t,root,project.PROJECT_FILE,project.manifest_text(&m,context.temp_allocator))
+    write(t,root,"assets/readme.txt","the game\n")
+    write(t,root,"plugins/unreal/plugin.mirai","{\"name\": \"unreal\"}\n")
+    write(t,root,"plugins/unreal/runtime/unreal.odin","package unreal\n")
+    write(t,root,"plugins/unreal_tools/plugin.mirai","{\"name\": \"unreal_tools\"}\n")
+    write(t,root,"plugins/mine/plugin.mirai","{\"name\": \"mine\"}\n")
+    p:Project
+    if !testing.expect_value(t,project_create(&p,root,&mac.s),vcs.Error.None) {return}
+    defer project_close(&p)
+    w:=&p.workspace
+    c,ce:=vcs.change_get(w.repo.s,vcs.repo_working(&w.repo),context.temp_allocator)
+    if !testing.expect_value(t,ce,vcs.Error.None) {return}
+    files:=make([dynamic]vcs.File,context.temp_allocator)
+    testing.expect_value(t,vcs.tree_files(w.repo.s,c.tree,&files,context.temp_allocator),vcs.Error.None)
+    paths:=make([dynamic]string,context.temp_allocator)
+    for f in files {append(&paths,f.path)}
+    testing.expectf(t,slice.equal(paths[:],[]string{"assets/readme.txt","plugins/mine/plugin.mirai","plugins/unreal_tools/plugin.mirai","project.mirai"}),"the checkout of unreal is left out: %v",paths)
+    testing.expect(t,!tracked_path(&p.tracked,"plugins/unreal") && !tracked_path(&p.tracked,"plugins/unreal/runtime/unreal.odin"))
+    testing.expect(t,tracked_path(&p.tracked,"plugins") && tracked_path(&p.tracked,"plugins/mine/plugin.mirai"))
 }

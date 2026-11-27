@@ -149,6 +149,7 @@ Kai_Clone :: struct {
     name_length:int,
     why:[KAI_TEXT]u8,
     why_length:int,
+    why_copied:f64, // ui.Context.time its banner last copied why (error_banner)
 }
 
 Kai_Team :: struct {

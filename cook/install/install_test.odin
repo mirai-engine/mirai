@@ -93,6 +93,26 @@ a_plugin_from_git_is_added_updated_synced_and_removed :: proc(t:^testing.T) {
     testing.expect_value(t,head,first)
     testing.expect(t,!sync_needed(root))
 
+    // A copy of the checkout without .git, as a pull of a project published with its files
+    // brings, becomes the checkout; what it changed stays as a change of its own.
+    checkout:=project.path(root,"plugins/hello",allocator=context.temp_allocator)
+    testing.expect(t,base.remove_all(project.path(checkout,".git",allocator=context.temp_allocator))==nil)
+    write(t,root,"plugins/hello/runtime/plugin.odin","package hello\n// copied\n")
+    testing.expect(t,sync_needed(root))
+    changed,message=sync(root,context.temp_allocator)
+    testing.expect_value(t,changed,1)
+    testing.expect_value(t,message,"")
+    head,_=git(checkout,"rev-parse","HEAD")
+    testing.expect_value(t,head,first)
+    status,_:=git(checkout,"status","--porcelain")
+    testing.expect_value(t,status,"M runtime/plugin.odin")
+    copied,_:=os.read_entire_file(project.path(checkout,"runtime/plugin.odin",allocator=context.temp_allocator),context.temp_allocator)
+    testing.expect_value(t,string(copied),"package hello\n// copied\n")
+    testing.expect(t,!sync_needed(root))
+    _,_=git(checkout,"checkout","--quiet",".")
+    status,_=git(checkout,"status","--porcelain")
+    testing.expect_value(t,status,"")
+
     // Changes of its own keep it.
     write(t,root,"plugins/hello/runtime/plugin.odin","package hello\n// mine\n")
     kept:=remove(root,"","hello",context.temp_allocator)

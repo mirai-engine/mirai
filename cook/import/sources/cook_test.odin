@@ -160,6 +160,72 @@ a_peer_with_only_fetched_builds_cooks_the_game_its_sources_cook :: proc(t:^testi
     }
 }
 
+// A build made under the key of a package by another ingest (one that lacked
+// content it reads, such as an engine's) lacks assets of the manifest the
+// project pins: no refresh takes it, from the store or from a peer, and a peer
+// whose build under the key is that one gives the build it chose for the
+// manifest instead.
+@(test)
+a_refresh_takes_no_build_that_lacks_assets_of_its_manifest :: proc(t:^testing.T) {
+    top:=base.test_folder(t,"refresh-degraded")
+    if top=="" {return}
+    defer free_all(context.temp_allocator)
+    context.user_ptr=prefab.import_world(t)
+    game:=fmt.tprintf("%s/game",top)
+    os.make_directory_all(fmt.tprintf("%s/assets/props",game))
+    box:=box_source(fmt.tprintf("%s/assets/props",game),"box.gltf","Wood","Paint")
+    host:=test_store(t,fmt.tprintf("%s/host",top))
+    if host==nil {return}
+    options:=Library_Options{store=host,root=game,plugins=test_library}
+    report,error:=ingest(box,options,allocator=context.temp_allocator)
+    if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
+    added:=project_add(game,report.manifest,"props",nil,options,context.temp_allocator)
+    if !testing.expectf(t,len(added.failures)==0 && len(added.missing)==0,"%v",added) {return}
+    if !testing.expect(t,report.final,"the build is Final") {return}
+
+    // The peer keeps, under the key, a build without the texture.
+    complete,_:=asset.build_get(host,report.build,context.temp_allocator)
+    degraded:=complete
+    degraded.outputs=make([dynamic]asset.Build_Output,context.temp_allocator)
+    for o in complete.outputs {
+        if o.kind!=asset.KIND_TEXTURE {append(&degraded.outputs,o)}
+    }
+    if !testing.expect(t,len(degraded.outputs)<len(complete.outputs),"the build has a texture") {return}
+    stale,put_error:=asset.build_put(host,&degraded)
+    if !testing.expect_value(t,put_error,asset.Error.None) {return}
+    digits,key_digits:[64]u8
+    key:=store.hex(report.key,&key_digits)
+    testing.expect_value(t,store.ref_set(host,asset.REF_IMPORTS,key,stale),store.Error.None)
+
+    peer:=fmt.tprintf("%s/peer",top)
+    folder_copy(game,peer)
+    for source in ([2]string{"assets/props/box.gltf","assets/props/wood.png"}) {testing.expect(t,os.remove(fmt.tprintf("%s/%s",peer,source))==nil)}
+    here:=test_store(t,fmt.tprintf("%s/here",top))
+    if here==nil {return}
+    from:=cache.store_source(host)
+    for namespace in ([2]string{asset.REF_MANIFESTS,asset.REF_IMPORTS}) {
+        pins,_,_:=asset.packages_load(peer,context.temp_allocator)
+        name:=key if namespace==asset.REF_IMPORTS else store.hex(pins.packages[0].manifest,&digits)
+        names:=[1]string{name}
+        given:=[1]bool{}
+        from.fetch(from.user,here,namespace,names[:],given[:])
+        testing.expectf(t,given[0],"this machine keeps %s/%s",namespace,name)
+    }
+    alone:=project_refresh(peer,{store=here,root=peer},context.temp_allocator)
+    testing.expectf(t,len(alone.missing)==1 && alone.fetched==0,"the build here lacks the texture: %v",alone)
+
+    taken:=project_refresh(peer,{store=here,root=peer,source=from},context.temp_allocator)
+    testing.expectf(t,taken.fetched==1 && len(taken.missing)==0 && len(taken.failures)==0,"%v",taken)
+    held,_:=store.ref_get(here,asset.REF_IMPORTS,key)
+    testing.expect_value(t,held,report.build)
+    pins,_,_:=asset.packages_load(peer,context.temp_allocator)
+    p,_:=asset.package_get(here,pins.packages[0].manifest,context.temp_allocator)
+    chosen,_:=store.ref_get(here,asset.REF_BUILDS,store.hex(asset.build_select(pins.packages[0].manifest,&p),&digits))
+    testing.expect_value(t,chosen,report.build)
+    again:=project_refresh(peer,{store=here,root=peer},context.temp_allocator)
+    testing.expectf(t,again.fetched==0 && len(again.missing)==0 && len(again.failures)==0,"%v",again)
+}
+
 // A refresh takes the builds its store lacks from a second store, as the
 // installed engine does from the store of the builds of its plugins: with
 // the source gone, mirai import --refresh --from copies them and imports nothing.

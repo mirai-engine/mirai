@@ -674,9 +674,9 @@ Found :: struct {
     fast_here:bool, // a Fast build is here, which a Final one was required over
 }
 
-// The build of p under key this store has whole: Final, or Fast when Fast
-// textures are allowed. A build is taken only under the namespace of what its
-// manifest says it is.
+// The build of p under key this store has whole and complete
+// (asset.build_complete): Final, or Fast when Fast textures are allowed. A
+// build is taken only under the namespace of what its manifest says it is.
 @(private="file")
 build_here :: proc(l:^Library_State,p:^asset.Package,key:store.Hash) -> (f:Found,ok:bool) {
     s:=library_index(l)
@@ -687,29 +687,56 @@ build_here :: proc(l:^Library_State,p:^asset.Package,key:store.Hash) -> (f:Found
         if ref_error!=.None {continue}
         b,error:=asset.build_get(s,hash,context.temp_allocator)
         if error!=.None || b.package_id!=p.id || b.key!=key || b.final!=(at==0) {continue}
-        if !asset.build_whole(s,&b) {continue}
+        if !asset.build_complete(&b,p) || !asset.build_whole(s,&b) {continue}
         if at==1 && !l.options.fast_textures {return {build=b,hash=hash,fast_here=true},false}
         return {build=b,hash=hash,final=at==0},true
     }
     return
 }
 
-// The build of p this engine reads here: by its key, or for a source whose
-// importer this library lacks (a plugin that imports it whole and is not
-// read), the one this machine chose for its manifest (asset.REF_BUILDS) when
-// it is whole.
+// Whether this store keeps under key, in a namespace the library takes, a
+// build of p that is not complete (asset.build_complete): another ingest of
+// its source made it, and the build a peer chose for the manifest of p is
+// the one to take.
 @(private="file")
-build_found :: proc(l:^Library_State,p:^asset.Package,manifest,key:store.Hash,keyed:bool) -> (f:Found,ok:bool) {
-    if keyed {return build_here(l,p,key)}
+build_stale :: proc(l:^Library_State,p:^asset.Package,key:store.Hash) -> bool {
+    s:=library_index(l)
+    digits:[64]u8
+    name:=store.hex(key,&digits)
+    for namespace,at in ([2]string{asset.REF_IMPORTS,asset.REF_IMPORTS_FAST}) {
+        if at==1 && !l.options.fast_textures {break}
+        hash,ref_error:=store.ref_get(s,namespace,name)
+        if ref_error!=.None {continue}
+        b,error:=asset.build_get(s,hash,context.temp_allocator)
+        if error==.None && b.package_id==p.id && b.key==key && !asset.build_complete(&b,p) {return true}
+    }
+    return false
+}
+
+// The build this machine chose for the manifest of p (asset.REF_BUILDS) when
+// it is whole and complete, and, keyed, of key: the one an engine without
+// the importer of p reads, and the one a peer gives when what it has under
+// the key is not a build of p.
+@(private="file")
+build_chosen :: proc(l:^Library_State,p:^asset.Package,manifest,key:store.Hash,keyed:bool) -> (f:Found,ok:bool) {
     s:=library_index(l)
     digits:[64]u8
     hash,ref_error:=store.ref_get(s,asset.REF_BUILDS,store.hex(asset.build_select(manifest,p),&digits))
     if ref_error!=.None {return}
     b,error:=asset.build_get(s,hash,context.temp_allocator)
-    if error!=.None || b.package_id!=p.id {return}
-    if !asset.build_whole(s,&b) {return}
+    if error!=.None || b.package_id!=p.id || (keyed && b.key!=key) {return}
+    if !asset.build_complete(&b,p) || !asset.build_whole(s,&b) {return}
     if !b.final && !l.options.fast_textures {return {fast_here=true},false}
     return {build=b,hash=hash,final=b.final},true
+}
+
+// The build of p this engine reads here: by its key, or for a source whose
+// importer this library lacks (a plugin that imports it whole and is not
+// read), the one this machine chose for its manifest (build_chosen).
+@(private="file")
+build_found :: proc(l:^Library_State,p:^asset.Package,manifest,key:store.Hash,keyed:bool) -> (f:Found,ok:bool) {
+    if keyed {return build_here(l,p,key)}
+    return build_chosen(l,p,manifest,key,keyed)
 }
 
 // The files the build of p is made from, absolute, where the project at top
@@ -779,8 +806,10 @@ build_given :: proc(l:^Library_State,key:string) -> bool {
 // What a refresh will ask the source for, asked together before the packages
 // are refreshed in order, which then find it here: the manifests the store
 // does not keep, then the builds of the packages that have none here and no
-// changed source here to ingest again: by key, or the build a peer chose for
-// one whose importer this library lacks. A refresh asks for nothing else.
+// changed source here to ingest again: by key, then the build a peer chose
+// for the manifest of one whose build under the key is not its own
+// (build_stale), and that build for one whose importer this library lacks. A
+// refresh asks for nothing else.
 @(private="file")
 refresh_prefetch :: proc(l:^Library_State,top:string,entries:[]asset.Project_Package) {
     if l.options.source.fetch==nil {return}
@@ -799,8 +828,10 @@ refresh_prefetch :: proc(l:^Library_State,top:string,entries:[]asset.Project_Pac
     }
     fetch_many(l,asset.REF_MANIFESTS,lacking[:])
     keys:=make([dynamic]string,l.temp)
+    keyed_choices:=make([dynamic]string,l.temp) // of the packages of keys: the build a peer chose, when what it gives by key is not theirs
+    keyed_entries:=make([dynamic]int,l.temp)
     choices:=make([dynamic]string,l.temp) // of the packages whose importer this library lacks: the build a peer chose
-    for entry in entries {
+    for entry,at in entries {
         scratch:mem.Dynamic_Arena
         mem.dynamic_arena_init(&scratch,block_size=1<<20,out_band_size=1<<20)
         defer mem.dynamic_arena_destroy(&scratch)
@@ -812,14 +843,28 @@ refresh_prefetch :: proc(l:^Library_State,top:string,entries:[]asset.Project_Pac
         if source!="" && !importer.unsafe_path(source) && os.exists(source) && source_changed(l,&p,source) {continue}
         key,keyed:=package_key(l,&p)
         if _,found:=build_found(l,&p,entry.manifest,key,keyed);found {continue}
-        digits:[64]u8
+        digits,select_digits:[64]u8
+        select:=strings.clone(store.hex(asset.build_select(entry.manifest,&p),&select_digits),l.temp)
         if keyed {
             append(&keys,strings.clone(store.hex(key,&digits),l.temp))
+            append(&keyed_choices,select)
+            append(&keyed_entries,at)
         } else {
-            append(&choices,strings.clone(store.hex(asset.build_select(entry.manifest,&p),&digits),l.temp))
+            append(&choices,select)
         }
     }
     fetch_builds(l,keys[:])
+    for at,k in keyed_entries {
+        scratch:mem.Dynamic_Arena
+        mem.dynamic_arena_init(&scratch,block_size=1<<20,out_band_size=1<<20)
+        defer mem.dynamic_arena_destroy(&scratch)
+        context.temp_allocator=base.dynamic_arena_allocator(&scratch)
+        entry:=entries[at]
+        p,error:=asset.package_load(s,top,&entry,context.temp_allocator)
+        if error!=.None {continue}
+        key,_:=package_key(l,&p)
+        if _,found:=build_here(l,&p,key);!found && build_stale(l,&p,key) {append(&choices,keyed_choices[k])}
+    }
     fetch_many(l,asset.REF_BUILDS,choices[:])
 }
 
@@ -968,6 +1013,18 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
         fetch_builds(l,names[:])
         if build_given(l,key_name) {
             if f,found=build_here(l,&p,key);found {report.fetched+=1}
+        }
+        // What is under the key is not a build of p: the one a peer chose for its manifest is.
+        if !found && build_stale(l,&p,key) && fetch(l,asset.REF_BUILDS,select) {
+            if chosen,chosen_found:=build_chosen(l,&p,entry.manifest,key,keyed);chosen_found {
+                f,found=chosen,true
+                report.fetched+=1
+                namespace:=f.final?asset.REF_IMPORTS:asset.REF_IMPORTS_FAST
+                if ref_error:=store.ref_set(s,namespace,key_name,f.hash);ref_error!=.None {
+                    report_line(&report.failures,"package %s: the ref %s/%s could not be set in the store at %s: %v",p.name,namespace,key_name,s.root,ref_error)
+                    return
+                }
+            }
         }
     case !keyed:
         // Without its importer the build is the one a peer chose for its manifest.

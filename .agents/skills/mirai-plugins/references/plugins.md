@@ -91,6 +91,9 @@ dialog.
   project; only then does it move it to `plugins/<name>`, add the source, enable it and ignore it
   in the project's `.gitignore`. If the project does not open with it, it leaves everything as it
   was. Installing never runs plugin code.
+- Sync (`install.sync`, before a project opens) makes a copy of a checkout without `.git` (one a
+  pull brought) the checkout at the pinned commit, keeping its files; what differs stays as
+  changes of its own.
 - Updating and removing refuse if the checkout has changes of its own; removing also refuses if an
   active plugin that is not its companion depends on it. An update that does not pass
   `plugin_check` goes back to the previous commit.

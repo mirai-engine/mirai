@@ -160,8 +160,6 @@ projects_repository_row :: proc(s:^Session,r:^Kai_Repository,busy:bool) {
         }
     }
     if pulling && c.stage==.Failed && c.why_length>0 {
-        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={12,6,12,6},fill=ui.tone(ctx,"danger_soft"),radius=6}) {
-            ui.text(ctx,string(c.why[:c.why_length]),ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"danger")),ui.GROW,ui.FIT)
-        }
+        error_banner(ctx,ui.id(ctx,"repository_pull_error"),c.why[:],&c.why_length,&c.why_copied)
     }
 }

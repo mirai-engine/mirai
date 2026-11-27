@@ -153,6 +153,8 @@ clone_checkout :: proc(p:^Project,t:^vcs.Team) -> (bookmark:string,error:vcs.Err
     }
     on:=[1]vcs.Revision{b.target}
     if _,e:=new_change(&p.workspace,on[:],"",nil);e!=.None {return b.name,e}
+    // The manifest came with the files: what the workspace tracks follows it.
+    tracked_read(&p.tracked,p.workspace.root)
     return b.name,.None
 }
 

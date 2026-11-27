@@ -492,16 +492,25 @@ the_launcher_team_view_scrolls_with_the_wheel :: proc(t:^testing.T) {
     projects_next_cancel(s)
     testing.expect(t,!p.next && !p.next_launcher,"cancel clears pending launcher return")
 
-    // Long launcher errors wrap onto multiple lines instead of truncating and can be dismissed.
+    // Long launcher errors wrap onto multiple lines of a read-only field instead of truncating,
+    // and can be copied and dismissed.
     p.team=false
     p.show_all=true
     long_err:="C:/Users/espar/source/repos/mirai/Dreamscape/plugins/unreal/editor/scene/lights.odin(218:16): Undeclared name in render package when building editor library for project"
     p.error_length=copy(p.error[:],long_err)
-    ui.frame_begin(&ctx,{size=size,pointer_absent=true})
-    projects_build(s)
-    err_frame:=ui.frame_end(&ctx)
-    testing.expect(t,!err_frame.overflow && ctx.stats.layout_errors==0,"wrapped error banner lays out cleanly")
-    dismiss_rect,has_dismiss:=ui.widget_rect(&ctx,ui.id(&ctx,"projects_error_dismiss"))
+    for _ in 0..<2 {
+        ui.frame_begin(&ctx,{size=size,pointer_absent=true})
+        projects_build(s)
+        err_frame:=ui.frame_end(&ctx)
+        testing.expect(t,!err_frame.overflow && ctx.stats.layout_errors==0,"wrapped error banner lays out cleanly")
+    }
+    banner:=ui.id(&ctx,"projects_error")
+    field_rect,has_field:=ui.widget_rect(&ctx,banner)
+    line:=ui.metric(&ctx,"font_small")*ui.TEXT_LINE
+    testing.expectf(t,has_field && field_rect.h>2*line,"the field of the error fits its wrapped lines: %v",field_rect)
+    copy_rect,has_copy:=ui.widget_rect(&ctx,ui.id_derive(&ctx,banner,"copy"))
+    testing.expect(t,has_copy && copy_rect.w>0,"wrapped error banner has copy button")
+    dismiss_rect,has_dismiss:=ui.widget_rect(&ctx,ui.id_derive(&ctx,banner,"dismiss"))
     testing.expect(t,has_dismiss && dismiss_rect.w>0,"wrapped error banner has dismiss button")
     p.error_length=0
 }

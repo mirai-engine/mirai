@@ -126,7 +126,10 @@ across reimports (`asset.detach` clears it) unless overridden by `--parts auto|a
   `imports-fast` (with `fast_textures`), optional `cache.Source` (`--from`), or local re-ingest
   (finalizing Fast builds from texture cache when `--final` is required). Deduplicates pins sharing
   one origin; never deletes missing sources; tracks file size/mtime in `Source_Hashes` (re-ingest
-  USD stages after editing sublayers).
+  USD stages after editing sublayers). A build is taken only whole and complete
+  (`asset.build_complete`: an output for every cached asset of the pinned manifest); one under the
+  key that lacks some (another ingest, e.g. without `/Engine`) makes the refresh take the peer's
+  `builds/<build_select>` instead.
 - CLI: `mirai import <file>... [--project P] [--folder F] [--final] [--release] [--from S]` and
   `mirai import --refresh <root>`. Project builds auto-refresh packages (`build.job_imports`).
   Several files of one command share its options and its process (`import_file` per file:
