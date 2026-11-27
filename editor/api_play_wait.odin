@@ -1,5 +1,7 @@
 package editor
 
+import "base:intrinsics"
+import "base:runtime"
 import "core:encoding/json"
 import "core:fmt"
 import "core:math"
@@ -178,14 +180,15 @@ api_condition_expected :: proc(c:^Api_Play_Condition,expected:json.Value,actual:
     }
 }
 
+// The value at field inside a storage of the game world. missing says which
+// part of field is not there, as api_json_select does.
 @(private)
-api_condition_storage :: proc(s:^Session,w:core.World_Read,name:string,allocator:=context.temp_allocator) -> (value:json.Value,problem:string) {
+api_condition_storage :: proc(s:^Session,w:core.World_Read,name,field:string,there:^bool,allocator:=context.temp_allocator) -> (leaf:json.Value,problem,missing:string) {
     st:=api_state(s)
     for &info,i in w.info.storages {
         if info.name!=name || info.place!=.World || info.by_world || info.info==nil {continue}
-        if info.info.size>API_STORAGE_BYTES {return nil,fmt.tprintf("storage %q is too large to inspect",name)}
         ptr:=core.world_storage_read(w,info.type)
-        if ptr==nil {return nil,fmt.tprintf("storage %q is unavailable in this run",name)}
+        if ptr==nil {return nil,fmt.tprintf("storage %q is unavailable in this run",name),""}
         schema,index:=&st.schema,st.storage_types[i]
         runtime_schema:serial.Schema
         if index==serial.TYPE_NONE {
@@ -194,17 +197,105 @@ api_condition_storage :: proc(s:^Session,w:core.World_Read,name:string,allocator
             schema=&runtime_schema
             ok:bool
             if index,ok=serial.schema_add_type_info(schema,info.info);!ok {
-                return nil,fmt.tprintf("storage %q could not be reflected: %s",name,schema.error)
+                return nil,fmt.tprintf("storage %q could not be reflected: %s",name,schema.error),""
             }
         }
-        out:serial.Writer
-        serial.writer_init(&out,0,allocator)
-        serial.text_write(&out,schema,index,mem.byte_slice(ptr,info.info.size),.Line,omit_fields={})
-        whole,error:=json.parse(serial.writer_bytes(&out),allocator=allocator)
-        if error!=nil {return nil,fmt.tprintf("storage %q could not be read as JSON",name)}
-        return whole,""
+        leaf,problem,missing=api_value_select(schema,index,mem.byte_slice(ptr,info.info.size),field,there,allocator)
+        if problem!="" {problem=fmt.tprintf("storage %q %s",name,problem)}
+        return
     }
-    return nil,fmt.tprintf("storage %q is not a storage of the game; use scene.inspect with world Game",name)
+    return nil,fmt.tprintf("storage %q is not a storage of the game; use scene.inspect with world Game",name),""
+}
+
+// The value at a path inside data of type, as api_json_select reads it from
+// the text of the whole value. The path walks fields and elements in place
+// first, so only the part it names is written: a field of a value larger than
+// the API writes is read alone. missing says which part of the path is not
+// there; problem, that the part is too large or cannot be read.
+@(private)
+api_value_select :: proc(s:^serial.Schema,type:serial.Type_Index,data:[]u8,path:string,there:^bool,allocator:=context.temp_allocator) -> (leaf:json.Value,problem,missing:string) {
+    if int(type)<0 || int(type)>=len(s.types) || len(data)<int(s.types[type].size) {return nil,"is not of its type",""}
+    part,rest,lost,absent:=api_value_part(s,type,data,path,allocator)
+    if absent && there!=nil {
+        there^=false
+        return nil,"",""
+    }
+    if lost!="" {return nil,"",lost}
+    size:=len(part.bytes)
+    if s.types[part.type].kind==.Slice {size=len(api_slice_held(s,part.type,part.bytes))}
+    if size>API_STORAGE_BYTES {
+        what:=path==rest?"":fmt.tprintf("field %q ",strings.trim_right(path[:len(path)-len(rest)],"."))
+        return nil,fmt.tprintf("%sholds %d bytes, more than the %d the API reads; name a field or an element inside it",what,size,API_STORAGE_BYTES),""
+    }
+    out:serial.Writer
+    serial.writer_init(&out,0,allocator)
+    if part.field!=nil {serial.text_write_field(&out,s,part.field^,part.bytes,.Line,0,{})}
+    else {serial.text_write(&out,s,part.type,part.bytes,.Line,0,part.is_text,omit_fields={})}
+    value,error:=json.parse(serial.writer_bytes(&out),allocator=allocator)
+    if error!=nil {return nil,"could not be read as JSON",""}
+    leaf,missing=api_json_select(value,rest,allocator,there)
+    return
+}
+
+// A part of a value that a path walks to in place.
+@(private)
+Api_Value_Part :: struct {
+    type:serial.Type_Index,
+    bytes:[]u8,
+    field:^serial.Field, // the field it is; nil for the whole value and for an element
+    is_text:bool,        // an element of a list of texts
+}
+
+// Walks a path through fields of structs and elements of arrays and slices,
+// within their bytes, until it ends or reaches what the text of the value
+// writes otherwise (a text, a trimmed array, a bit set): rest is the path left
+// to read from that text. absent: missing names an element past its list.
+@(private)
+api_value_part :: proc(s:^serial.Schema,type:serial.Type_Index,data:[]u8,path:string,allocator:=context.temp_allocator) -> (part:Api_Value_Part,rest,missing:string,absent:bool) {
+    part,rest={type=type,bytes=data[:s.types[type].size]},path
+    for rest!="" {
+        if part.is_text || part.field!=nil && (.Trim in part.field.hints || .Text in part.field.flags && serial.type_is_bytes(s,part.type)) {return}
+        name,after,bad:=api_path_next(rest,path)
+        if bad!="" {return part,rest,bad,false}
+        t:=s.types[part.type]
+        #partial switch t.kind {
+        case .Struct:
+            fields:=s.fields[t.first:][:t.count]
+            inner:^serial.Field
+            for &field in fields {
+                if field.name==name {inner=&field;break}
+            }
+            if inner==nil {
+                keys:=make([]string,len(fields),allocator)
+                for field,i in fields {keys[i]=field.name}
+                return part,rest,fmt.tprintf("%q is not there; it has %s",name,strings.join(keys,", ",allocator)),false
+            }
+            size:=int(s.types[inner.type].size)
+            if int(inner.offset)+size>len(part.bytes) {return part,rest,fmt.tprintf("%q lies past the value that holds it",name),false}
+            part={type=inner.type,bytes=part.bytes[inner.offset:][:size],field=inner}
+        case .Array,.Slice:
+            elem_size:=int(s.types[t.elem].size)
+            if elem_size==0 {return}
+            elements:=t.kind==.Slice?api_slice_held(s,part.type,part.bytes):part.bytes
+            count:=len(elements)/elem_size
+            index,number:=api_path_index(name,count)
+            if !number || index<0 || index>=count {return part,rest,fmt.tprintf("%q is not an element of a list of %d",name,count),number}
+            texts:=part.field!=nil && .Text in part.field.flags && serial.type_is_bytes(s,t.elem)
+            part={type=t.elem,bytes=elements[index*elem_size:][:elem_size],is_text=texts}
+        case:
+            return
+        }
+        rest=after
+    }
+    return
+}
+
+// The bytes the slice in bytes holds, of type a slice of the schema.
+@(private)
+api_slice_held :: proc(s:^serial.Schema,type:serial.Type_Index,bytes:[]u8) -> []u8 {
+    held:=intrinsics.unaligned_load((^runtime.Raw_Slice)(raw_data(bytes)))
+    if held.data==nil || held.len<=0 {return nil}
+    return mem.byte_slice(held.data,held.len*int(s.types[s.types[type].elem].size))
 }
 
 @(private)
@@ -321,11 +412,12 @@ api_condition_read :: proc(
     }
 
     subject:="view"
-    whole:json.Value
+    whole,leaf:json.Value
     there:=true
+    missing:=""
     if storage!="" {
         subject=fmt.tprintf("storage %q",storage)
-        whole,problem=api_condition_storage(s,core.world_read(w),storage,allocator)
+        leaf,problem,missing=api_condition_storage(s,core.world_read(w),storage,field,&there,allocator)
     } else {
         targets:[1]Play_View_Target
         if entity!="" {
@@ -344,8 +436,8 @@ api_condition_read :: proc(
         }
     }
     if problem!="" {return {},problem}
-    leaf:json.Value
-    if there {leaf,problem=api_json_select(whole,field,allocator,&there)}
+    if storage=="" && there {leaf,missing=api_json_select(whole,field,allocator,&there)}
+    problem=missing
     actual:json.Value
     if problem=="" {actual,read.passed,problem=api_condition_leaf(c,leaf,expected,there)}
     if problem!="" {return {},fmt.tprintf("%s field %q: %s",subject,field,problem)}
@@ -530,21 +622,9 @@ api_json_select :: proc(value:json.Value,path:string,allocator:=context.temp_all
     leaf=value
     rest:=path
     for rest!="" {
-        part:string
-        if rest[0]=='[' {
-            end:=strings.index_byte(rest,']')
-            if end<0 {return nil,fmt.tprintf("%q has no ] that closes it",rest)}
-            part,rest=rest[1:end],rest[end+1:]
-            if strings.has_prefix(rest,".") {rest=rest[1:]}
-        } else {
-            end:=strings.index_any(rest,".[")
-            switch {
-            case end<0:          part,rest=rest,""
-            case rest[end]=='.': part,rest=rest[:end],rest[end+1:]
-            case:                part,rest=rest[:end],rest[end:]
-            }
-        }
-        if part=="" {return nil,fmt.tprintf("%q has an empty name: join names with one dot",path)}
+        part,after,bad:=api_path_next(rest,path)
+        if bad!="" {return nil,bad}
+        rest=after
         #partial switch v in leaf {
         case json.Object:
             inner,has:=v[part]
@@ -555,11 +635,7 @@ api_json_select :: proc(value:json.Value,path:string,allocator:=context.temp_all
             }
             leaf=inner
         case json.Array:
-            index,number:=strconv.parse_int(part)
-            if !number && len(part)==1 && len(v)>=2 && len(v)<=4 {
-                index=strings.index_byte("xyzw",part[0])
-                number=index>=0
-            } else if number && index<0 {index+=len(v)}
+            index,number:=api_path_index(part,len(v))
             if number && (index<0 || index>=len(v)) && there!=nil {
                 there^=false
                 return nil,""
@@ -570,6 +646,40 @@ api_json_select :: proc(value:json.Value,path:string,allocator:=context.temp_all
             return nil,fmt.tprintf("%q goes inside a value that has nothing inside",part)
         }
     }
+    return
+}
+
+// The first part of a path inside a value and the path after it: a name, or
+// an index in brackets. problem says what is wrong with path.
+@(private)
+api_path_next :: proc(rest,path:string) -> (part,after,problem:string) {
+    if rest[0]=='[' {
+        end:=strings.index_byte(rest,']')
+        if end<0 {return "","",fmt.tprintf("%q has no ] that closes it",rest)}
+        part,after=rest[1:end],rest[end+1:]
+        if strings.has_prefix(after,".") {after=after[1:]}
+    } else {
+        end:=strings.index_any(rest,".[")
+        switch {
+        case end<0:          part,after=rest,""
+        case rest[end]=='.': part,after=rest[:end],rest[end+1:]
+        case:                part,after=rest[:end],rest[end:]
+        }
+    }
+    if part=="" {problem=fmt.tprintf("%q has an empty name: join names with one dot",path)}
+    return
+}
+
+// The element of a list of count a part of a path names: an index, from the
+// end when negative, or x, y, z or w of a list of 2 to 4. number is false
+// when it names none; index may lie past the list.
+@(private)
+api_path_index :: proc(part:string,count:int) -> (index:int,number:bool) {
+    index,number=strconv.parse_int(part)
+    if !number && len(part)==1 && count>=2 && count<=4 {
+        index=strings.index_byte("xyzw",part[0])
+        number=index>=0
+    } else if number && index<0 {index+=count}
     return
 }
 

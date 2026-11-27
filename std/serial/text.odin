@@ -349,8 +349,8 @@ text_write_key :: proc(w:^Writer,name:string,first:bool,format:Text_Format,depth
     text_write_raw(w,": ")
 }
 
-// The value of a field of a struct, its bytes in part.
-@(private="file")
+// The value of a field of a struct, its bytes in part: as text_write, with
+// what the field says of it (a text, trimmed).
 text_write_field :: proc(w:^Writer,s:^Schema,field:Field,part:[]u8,format:Text_Format,depth:int,omit_fields:Field_Flags) {
     if .Trim in field.hints && s.types[field.type].kind==.Array {
         array:=s.types[field.type]
