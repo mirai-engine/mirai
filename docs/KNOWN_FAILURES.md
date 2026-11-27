@@ -13,7 +13,6 @@ a test is never weakened or deleted to leave this list.
 | `cook/build` | `no_store_of_an_aggregate_of_more_than_64_bytes` | 34 stores of aggregates over 64 bytes (Odin#7937 lint) |
 | `cook/workspace` | `a_holder_raises_its_charge_to_what_it_held` | POSIX `os.change_times` keeps only microseconds |
 | `net` | `a_long_acknowledgement_never_overflows_a_datagram` | throughput after the lossy spell below its bound |
-| `render` | `diffuse_transmission_lets_the_sun_through_the_leaves_in_its_way` | sun through stacked cards 0.028, expected 0.117 |
 | `render` | `pipeline_passes_run_between_stages_over_the_resources_they_declare` | channels of the view with passes are not 16 times |
 | `render` | `render_a_round_of_stacked_masked_cards_keeps_within_its_time` | the rounds of a frame take 32 ms, over the bound |
 
