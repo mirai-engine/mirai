@@ -42,6 +42,7 @@ PROJECTS_ROW :: 56
 PROJECTS_TILE :: 36
 PROJECTS_TEMPLATE_CARD :: 60
 PROJECTS_FADED :: 0.4 // opacity of what cannot be used while a project opens
+PROJECTS_REFRESH_COOLDOWN :: time.Second
 @(private) DIALOG_PROJECT_FOLDER :: u32(0x4d50524f)
 @(private) DIALOG_PROJECT_LOCATION :: u32(0x4d504c43)
 
@@ -100,6 +101,7 @@ Projects :: struct {
     search:[64]u8,
     search_length:int,
     scroll:[2]f32,
+    refreshed_at:time.Tick, // last click on Refresh, to disable it for PROJECTS_REFRESH_COOLDOWN
     creating:bool,  // the dialog of a new project
     name:[64]u8,
     name_length:int,
@@ -808,6 +810,11 @@ projects_body :: proc(s:^Session,popup:bool) {
     }
 }
 
+@(private)
+projects_refresh_cooling :: proc(p:^Projects) -> bool {
+    return p.refreshed_at!={} && time.tick_since(p.refreshed_at)<PROJECTS_REFRESH_COOLDOWN
+}
+
 // The row of the list of the project being opened; -1 when it is not in the list.
 @(private)
 projects_opening_row :: proc(p:^Projects) -> int {
@@ -896,7 +903,9 @@ projects_content :: proc(s:^Session,popup:bool) {
             if p.team {kai_team_open(s)}
         }
         ui.spacer(ctx)
-        if ui.icon_button(ctx,ui.id(ctx,"projects_refresh"),.Refresh,30,"field","Refresh projects and sync",disabled=busy).clicked {
+        cooling:=projects_refresh_cooling(p)
+        if ui.icon_button(ctx,ui.id(ctx,"projects_refresh"),.Refresh,30,"field","Refresh projects and sync",disabled=busy || cooling).clicked {
+            p.refreshed_at=time.tick_now()
             kai_team_refresh(s)
         }
         search:=ui.id(ctx,"projects_search")

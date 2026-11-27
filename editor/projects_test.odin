@@ -373,4 +373,10 @@ projects_list_refreshes_and_publishes_linked_workspaces :: proc(t:^testing.T) {
 
     kai_team_refresh(&s)
     testing.expect(t,p.rows[0].linked && p.rows[0].needs_publish && p.rows[0].can_publish,"Refresh reflects new unpublished changes")
+
+    testing.expect(t,!projects_refresh_cooling(p),"Refresh starts ready")
+    p.refreshed_at=time.tick_now()
+    testing.expect(t,projects_refresh_cooling(p),"Refresh cools down right after click")
+    p.refreshed_at=time.Tick{_nsec=time.tick_now()._nsec-i64(PROJECTS_REFRESH_COOLDOWN+time.Millisecond)}
+    testing.expect(t,!projects_refresh_cooling(p),"Refresh is ready again after 1 second")
 }
