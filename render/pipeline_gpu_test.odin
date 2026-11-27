@@ -151,13 +151,16 @@ pipeline_passes_run_between_stages_over_the_resources_they_declare :: proc(t: ^t
 	testing.expect_value(t, half_to_f32(counted[0]), f32(frames))
 
 	// The display of a view lives within its frame, and views of one size share
-	// it: a frame that draws one of them alone leaves it to be read.
+	// it: a frame that draws one of them alone leaves it to be read. The third
+	// view stays, disabled: another count of views makes each view anew, and
+	// the first frames of a view grant the pages of its maps in the order the
+	// GPU takes them.
 	size := int(standard.targets.width * standard.targets.height * 4)
 	plain := make([]u16, size, context.temp_allocator)
 	scaled := make([]u16, size, context.temp_allocator)
 	for alone, at in ([][]u16{plain, scaled}) {
 		own_pipeline, _ := renderer_pipeline(r, desc)
-		views := []Frame_View{{camera = camera, rect = {0, 0, 64, 64}, disabled = at != 0}, {camera = camera, rect = {64, 0, 64, 64}, pipeline = own_pipeline, disabled = at != 1}}
+		views := []Frame_View{{camera = camera, rect = {0, 0, 64, 64}, disabled = at != 0}, {camera = camera, rect = {64, 0, 64, 64}, pipeline = own_pipeline, disabled = at != 1}, {camera = camera, rect = {0, 0, 64, 64}, disabled = true}}
 		testing.expect(t, renderer_frame(r, {camera = camera, views = views}), r.error)
 		rhi.device_wait_idle(device)
 		if !read(t, device, r.views[at].targets.display, alone) {return}
