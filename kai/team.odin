@@ -331,6 +331,14 @@ team_link :: proc(t:^Team,l:Link) -> Error {
     return store_error(store.commit(t.store))
 }
 
+// Ends the link of the local repository to a repository of an org, as its
+// last workspace leaves this machine; nothing when it had none.
+team_unlink :: proc(t:^Team,local:Repo_Id) -> Error {
+    name:[len(LINK_PREFIX)+32]u8
+    if e:=store.ref_remove(t.store,MACHINE_NAMESPACE,link_name(local,&name));e!=.None && e!=.Missing {return team_fail(t,store_error(e),"the store refused to drop the link: give this user access to the store")}
+    return store_error(store.commit(t.store))
+}
+
 // The repository of an org the local repository is a workspace of.
 team_link_of :: proc(t:^Team,local:Repo_Id) -> (l:Link,ok:bool) {
     name:[len(LINK_PREFIX)+32]u8

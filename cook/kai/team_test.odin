@@ -302,3 +302,140 @@ a_workspace_leaves_out_the_checkouts_of_plugins_from_git :: proc(t:^testing.T) {
     testing.expect(t,!tracked_path(&p.tracked,"plugins/unreal") && !tracked_path(&p.tracked,"plugins/unreal/runtime/unreal.odin"))
     testing.expect(t,tracked_path(&p.tracked,"plugins") && tracked_path(&p.tracked,"plugins/mine/plugin.mirai"))
 }
+
+// A workspace the org's main moved past is told so without its lock, and an
+// update takes main into it: its local change and its edit not committed stay,
+// a file both sides changed apart becomes a conflict value, main's edits
+// arrive, and a workspace with nothing of its own goes onto main as it is.
+@(test)
+a_workspace_behind_main_updates_and_keeps_its_work :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-team-update")
+    if folder=="" {return}
+    mac:Team_Machine
+    if !team_open(t,&mac,folder,"Ana") {return}
+    defer team_close(&mac)
+    a_root:=strings.concatenate({mac.folder,"/a"},context.temp_allocator)
+    write(t,a_root,"project.mirai","{\"name\": \"Lighthouse\"}\n")
+    write(t,a_root,"assets/shared.txt","one\ntwo\nthree\n")
+    write(t,a_root,"assets/clash.txt","base\n")
+    a:Project
+    if !testing.expect_value(t,project_create(&a,a_root,&mac.s),vcs.Error.None) {return}
+    defer project_close(&a)
+    org,_:=vcs.team_org_create(&mac.team,"studio")
+    link,je:=project_join(&a,&mac.team,org,false)
+    testing.expect_value(t,je,vcs.Error.None)
+    _,pe:=publish(&a,&mac.team,BOOKMARK_DEFAULT,"first",nil)
+    if !testing.expectf(t,pe==.None,"publish: %s",mac.team.why) {return}
+
+    // Two more workspaces of the repository on main: b works on it, c does not.
+    pulled :: proc(t:^testing.T,mac:^Team_Machine,root:string,org:vcs.Org_Id,repo:vcs.Repo_Id) -> bool {
+        q:Project
+        if !testing.expectf(t,project_clone(&q,&mac.team,root,&mac.s,org,repo)==.None,"clone: %s",mac.team.why) {return false}
+        defer project_close(&q)
+        _,e:=clone_checkout(&q,&mac.team)
+        return testing.expectf(t,e==.None,"checkout: %s",mac.team.why)
+    }
+    b_root:=strings.concatenate({mac.folder,"/b"},context.temp_allocator)
+    c_root:=strings.concatenate({mac.folder,"/c"},context.temp_allocator)
+    if !pulled(t,&mac,b_root,org,link.repo) || !pulled(t,&mac,c_root,org,link.repo) {return}
+    b:Project
+    if !testing.expect_value(t,project_open(&b,b_root,&mac.s),vcs.Error.None) {return}
+    write(t,b_root,"assets/local.txt","committed here\n")
+    _,ne:=new_change(&b.workspace,nil,"",nil,closing="local commit")
+    testing.expect_value(t,ne,vcs.Error.None)
+    write(t,b_root,"assets/edit.txt","not committed\n")
+    write(t,b_root,"assets/clash.txt","ours, on b\n")
+    _,se:=snapshot(&b.workspace)
+    testing.expect_value(t,se,vcs.Error.None)
+    project_close(&b)
+
+    state:=project_sync_state(&mac.s,&mac.team,b_root)
+    testing.expectf(t,state.linked && state.needs_publish && !state.behind_main,"b is ahead of main and not behind it: %v",state)
+    state=project_sync_state(&mac.s,&mac.team,c_root)
+    testing.expectf(t,state.linked && !state.needs_publish && !state.behind_main,"c is on main: %v",state)
+
+    write(t,a_root,"assets/shared.txt","one\ntwo\nthree\nfour\n")
+    write(t,a_root,"assets/clash.txt","theirs, on a\n")
+    _,pe=publish(&a,&mac.team,BOOKMARK_DEFAULT,"second",nil)
+    if !testing.expectf(t,pe==.None,"publish: %s",mac.team.why) {return}
+
+    state=project_sync_state(&mac.s,&mac.team,b_root)
+    testing.expectf(t,state.behind_main && state.main_here && state.needs_publish,"b is behind main and still has its own: %v",state)
+    state=project_sync_state(&mac.s,&mac.team,c_root)
+    testing.expectf(t,state.behind_main && state.main_here && !state.needs_publish,"c is only behind main: %v",state)
+
+    result,ue:=project_update_folder(&mac.s,&mac.team,b_root)
+    if !testing.expectf(t,ue==.None,"update: %v %s",ue,mac.team.why) {return}
+    testing.expectf(t,!result.up_to_date && result.conflicts==1,"the file both changed is the one conflict: %v",result)
+    expect_text :: proc(t:^testing.T,root,path,want:string,loc:=#caller_location) {
+        text,ok:=read(root,path)
+        testing.expectf(t,ok && text==want,"%s holds %q, not %q",path,text,want,loc=loc)
+    }
+    expect_text(t,b_root,"assets/shared.txt","one\ntwo\nthree\nfour\n")
+    expect_text(t,b_root,"assets/local.txt","committed here\n")
+    expect_text(t,b_root,"assets/edit.txt","not committed\n")
+    clash,_:=read(b_root,"assets/clash.txt")
+    testing.expectf(t,strings.contains(clash,"ours, on b") && strings.contains(clash,"theirs, on a"),"the conflict keeps both sides: %q",clash)
+    if testing.expect_value(t,project_open(&b,b_root,&mac.s),vcs.Error.None) {
+        rows:=make([dynamic]Log_Row,context.temp_allocator)
+        testing.expect_value(t,log(&b.workspace,0,&rows),vcs.Error.None)
+        described:=make([dynamic]string,context.temp_allocator)
+        for row in rows {append(&described,row.change.description)}
+        testing.expectf(t,slice.contains(described[:],"local commit") && slice.contains(described[:],"second"),"the local commit and main are both in the history: %v",described)
+        project_close(&b)
+    }
+    state=project_sync_state(&mac.s,&mac.team,b_root)
+    testing.expectf(t,!state.behind_main && state.needs_publish,"b holds main now and has its own still: %v",state)
+    result,ue=project_update_folder(&mac.s,&mac.team,b_root)
+    testing.expectf(t,ue==.None && result.up_to_date,"a second update has nothing to take: %v %v",ue,result)
+
+    result,ue=project_update_folder(&mac.s,&mac.team,c_root)
+    testing.expectf(t,ue==.None && !result.up_to_date && result.conflicts==0,"c updates cleanly: %v %v %s",ue,result,mac.team.why)
+    expect_text(t,c_root,"assets/clash.txt","theirs, on a\n")
+    state=project_sync_state(&mac.s,&mac.team,c_root)
+    testing.expectf(t,!state.behind_main && !state.needs_publish,"c is on main again, synced: %v",state)
+}
+
+// Restoring the pins of the packages takes back packages.mirai and the manifests of
+// packages/ as the working copy's parent has them, removes one it added, and leaves
+// every other edit of the working copy as it is.
+@(test)
+restoring_the_package_pins_leaves_every_other_edit :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-packages-restore")
+    if folder=="" {return}
+    mac:Team_Machine
+    if !team_open(t,&mac,folder,"Ana") {return}
+    defer team_close(&mac)
+    root:=strings.concatenate({mac.folder,"/game"},context.temp_allocator)
+    write(t,root,"project.mirai","{\"name\": \"Lighthouse\"}\n")
+    write(t,root,"packages.mirai","pins one\n")
+    write(t,root,"packages/aa.mirai","manifest one\n")
+    write(t,root,"assets/a.txt","first\n")
+    p:Project
+    if !testing.expect_value(t,project_create(&p,root,&mac.s),vcs.Error.None) {return}
+    _,ne:=new_change(&p.workspace,nil,"",nil,closing="first")
+    testing.expect_value(t,ne,vcs.Error.None)
+    project_close(&p)
+    testing.expect(t,!project_packages_dirty(&mac.s,root),"nothing changed yet")
+
+    write(t,root,"packages.mirai","pins two, longer\n")
+    write(t,root,"packages/aa.mirai","manifest two, longer\n")
+    write(t,root,"packages/bb.mirai","added\n")
+    write(t,root,"packages/notes/cc.mirai","not a pin\n")
+    write(t,root,"assets/a.txt","second, longer\n")
+    write(t,root,"assets/b.txt","added\n")
+    testing.expect(t,project_packages_dirty(&mac.s,root),"the pins changed")
+    changed,re:=project_packages_restore(&mac.s,root)
+    testing.expect_value(t,re,vcs.Error.None)
+    slice.sort(changed)
+    testing.expectf(t,slice.equal(changed,[]string{"packages.mirai","packages/aa.mirai","packages/bb.mirai"}),"only the pins are written: %v",changed)
+    for x in ([][2]string{{"packages.mirai","pins one\n"},{"packages/aa.mirai","manifest one\n"},{"packages/notes/cc.mirai","not a pin\n"},{"assets/a.txt","second, longer\n"},{"assets/b.txt","added\n"}}) {
+        text,ok:=read(root,x[0])
+        testing.expectf(t,ok && text==x[1],"%s holds %q",x[0],text)
+    }
+    testing.expect(t,!os.exists(strings.concatenate({root,"/packages/bb.mirai"},context.temp_allocator)),"the pin added is removed")
+    testing.expect(t,!project_packages_dirty(&mac.s,root),"the pins are as the parent has them")
+    for x in ([]struct{path:string,pin:bool}{{"packages.mirai",true},{"packages/aa.mirai",true},{"packages/notes/cc.mirai",false},{"packages/.mirai",false},{"packages",false},{"assets/packages.mirai",false},{"packages.mirai.bak",false}}) {
+        testing.expectf(t,packages_path(x.path)==x.pin,"%s is a pin: %v",x.path,x.pin)
+    }
+}

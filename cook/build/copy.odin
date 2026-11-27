@@ -3,6 +3,7 @@ package build
 import "core:os"
 import "core:strings"
 import "mirai:project"
+import "mirai:std/base"
 
 // Whether a copy of a project takes a path of its generated folder (relative
 // to it, with forward slashes) as what a build of the project left: the
@@ -57,4 +58,31 @@ build_state_rebase :: proc(source,copy:string) -> bool {
         if _,error:=os.walker_error(&walker);error!=nil {return false}
     }
     return true
+}
+
+// What of a project's generated folder a build, a refresh of its assets and
+// its shaders make again: the folders cache_clean removes, beside the
+// libraries of every target but the game. Its Kai workspace (kai), its locks
+// and what an editor keeps for a person (chats, thumbnails, the session) are
+// not among them.
+CACHE_FOLDERS :: [?]string{"build","gen","plugins","shaders","shader-cache","cache"}
+
+// Removes what a build of the project at root left (CACHE_FOLDERS and the
+// libraries), so its next opening makes them all again: how many it removed,
+// or the error of the first that could not be removed.
+cache_clean :: proc(root:string) -> (removed:int,error:os.Error) {
+    generated:=project.folder_path(root,.Generated,context.temp_allocator)
+    entries:=make([dynamic]string,context.temp_allocator)
+    for folder in CACHE_FOLDERS {append(&entries,folder)}
+    names:=TARGET_NAMES
+    for name,target in names {
+        if target!=.Game {append(&entries,project.library_file(name,context.temp_allocator))}
+    }
+    for entry in entries {
+        path:=project.path(generated,entry,allocator=context.temp_allocator)
+        if !os.exists(path) {continue}
+        base.remove_all(path) or_return
+        removed+=1
+    }
+    return
 }

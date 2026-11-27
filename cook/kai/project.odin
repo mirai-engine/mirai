@@ -336,3 +336,79 @@ conflict_sides :: proc(w:^vcs.Workspace,path:string,allocator:=context.temp_allo
     }
     return
 }
+
+// Whether relative, with forward slashes, is a file of the packages a project
+// pins: their list (asset.PACKAGES_FILE) or a manifest of their folder.
+packages_path :: proc(relative:string) -> bool {
+    if relative==asset.PACKAGES_FILE {return true}
+    folder:=asset.PACKAGE_FILES
+    if len(relative)<=len(folder)+1 || relative[len(folder)]!='/' || relative[:len(folder)]!=folder {return false}
+    name:=relative[len(folder)+1:]
+    PACKAGE_EXTENSION :: ".mirai" // of a manifest of the folder (asset.package_file)
+    return strings.index_byte(name,'/')<0 && strings.has_suffix(name,PACKAGE_EXTENSION) && len(name)>len(PACKAGE_EXTENSION)
+}
+
+// What the working copy changed of the files of its pinned packages
+// (packages_path) from its parents, after a snapshot; paths in allocator.
+packages_changed :: proc(w:^vcs.Workspace,out:^[dynamic]vcs.Diff,allocator:=context.temp_allocator) -> vcs.Error {
+    snapshot(w) or_return
+    r:=&w.repo
+    c:=vcs.change_get(r.s,vcs.repo_working(r),context.temp_allocator) or_return
+    before:=vcs.parents_tree(r,c.parents) or_return
+    diffs:=make([dynamic]vcs.Diff,context.temp_allocator)
+    vcs.tree_diff(r.s,before,c.tree,&diffs,allocator) or_return
+    for d in diffs {
+        if !packages_path(d.path) {continue}
+        if _,e:=append(out,d);e!=nil {return .Out_Of_Memory}
+    }
+    return .None
+}
+
+// Writes the files of the pinned packages as the working copy's parents hold
+// them and removes those they do not hold, then snapshots: every other file
+// and every change stays as it is. A file in conflict in the parents is left
+// as it is. What files it wrote, in allocator.
+packages_restore :: proc(w:^vcs.Workspace,changed:^[dynamic]string,allocator:=context.temp_allocator) -> vcs.Error {
+    diffs:=make([dynamic]vcs.Diff,context.temp_allocator)
+    packages_changed(w,&diffs,allocator) or_return
+    for d in diffs {
+        file:=project.path(w.root,d.path,allocator=context.temp_allocator)
+        switch {
+        case d.before.address=={}:
+            if e:=os.remove(file);e!=nil && e!=.Not_Exist {return .Io}
+        case d.before.kind==.Conflict: continue
+        case:
+            bytes:=vcs.file_bytes(w.repo.s,d.before.address,context.temp_allocator) or_return
+            if dir,_:=os.split_path(file);dir!="" {_=os.make_directory_all(dir)}
+            if os.write_entire_file(file,bytes)!=nil {return .Io}
+        }
+        if changed!=nil {
+            if _,e:=append(changed,d.path);e!=nil {return .Out_Of_Memory}
+        }
+    }
+    if len(diffs)>0 {snapshot(w) or_return}
+    return .None
+}
+
+// Whether the workspace at root changed a file of its pinned packages; false
+// when root is no workspace or an editor holds it.
+project_packages_dirty :: proc(s:^store.Store,root:string,types:^asset.Types=nil) -> bool {
+    if s==nil || s.root=="" || !project_exists(root) {return false}
+    p:=new(Project,context.temp_allocator)
+    if p==nil || project_open(p,root,s,types)!=.None {return false}
+    defer project_close(p)
+    diffs:=make([dynamic]vcs.Diff,context.temp_allocator)
+    return packages_changed(&p.workspace,&diffs)==.None && len(diffs)>0
+}
+
+// Opens the workspace at root, restores the files of its pinned packages
+// (packages_restore) and closes it: what files it wrote, in the temp allocator.
+project_packages_restore :: proc(s:^store.Store,root:string,types:^asset.Types=nil) -> (changed:[]string,error:vcs.Error) {
+    p:=new(Project,context.temp_allocator)
+    if p==nil {return nil,.Out_Of_Memory}
+    project_open(p,root,s,types) or_return
+    defer project_close(p)
+    list:=make([dynamic]string,context.temp_allocator)
+    packages_restore(&p.workspace,&list) or_return
+    return list[:],.None
+}

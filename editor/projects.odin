@@ -80,8 +80,10 @@ Projects_Row :: struct {
     missing:bool,       // the folder or its project.mirai is gone
     kai:[64]u8,         // what its workspace is on: a bookmark or the working change
     linked:bool,        // its Kai workspace is linked to an org repository
-    needs_publish:bool, // unpublished working changes or parent differs from shared main
+    needs_publish:bool, // the working copy has what shared main lacks
     can_publish:bool,   // this machine has write permission in its linked org
+    behind_main:bool,   // shared main has what the working copy lacks: Update takes it
+    main_here:bool,     // every object of shared main is in the store, so Update can start
     opened:[32]u8,      // when an editor last opened it, as the list says it
     bytes:i64,          // project content bytes (excluding .mirai and .git)
     has_size:bool,      // bytes is ready (immediately for Kai projects, off-thread otherwise)
@@ -147,6 +149,12 @@ Projects :: struct {
     error:[1024]u8,
     error_length:int,
     error_copied:f64,   // ui.Context.time its banner last copied it (error_banner)
+    failed_opening:[project.RECENT_PATH]u8, // the project whose opening failed, which the banner retries
+    error_packages_dirty:bool, // its Kai working copy changed packages.mirai or packages/*.mirai
+    menu:[project.RECENT_PATH]u8,     // the folder of the row whose right-click menu is open
+    removing:[project.RECENT_PATH]u8, // the folder Remove local copy asks to confirm; empty: none
+    removing_kai:bool,         // it is a Kai workspace, snapshotted before the question
+    removing_unpublished:bool, // no org has all it holds
     next:bool,          // built: this editor starts it when it ends
     next_launcher:bool, // next starts the standalone launcher (--launcher) instead of a project
     started:subprocess.Process, // the editor started on it, which this process waits for once it closes
@@ -313,6 +321,7 @@ projects_row_fill :: proc(s:^Session,folder:string,opened:i64,recent_index:int,n
         sync:=ka.project_sync_state(&s.store,team,folder)
         base.text_set(row.kai[:],sync.kai)
         row.linked,row.needs_publish,row.can_publish=sync.linked,sync.needs_publish,sync.can_publish
+        row.behind_main,row.main_here=sync.behind_main,sync.main_here
         if sync.has_size {
             row.bytes,row.has_size=sync.bytes,true
             base.text_set(row.size[:],base.bytes_text(row.bytes))
@@ -589,7 +598,7 @@ projects_open :: proc(s:^Session,folder:string,steps:[]install.Step={}) -> strin
     }
     if !os.is_file(project.path(absolute,project.PROJECT_FILE,allocator=context.temp_allocator)) {return fmt.tprintf("%s is not a project: it has no %s",absolute,project.PROJECT_FILE)}
     base.text_set(p.opening[:],absolute)
-    p.error_length=0
+    p.error_length,p.failed_opening[0],p.error_packages_dirty=0,0,false
     p.cancelling=false
     p.from_git=len(steps)>0 || install.sync_needed(absolute)
     if p.from_git {
@@ -675,6 +684,7 @@ projects_poll :: proc(s:^Session) {
     if !r.opened {
         text:=r.open_error if r.open_error!="" else fmt.tprintf("%s could not be opened",base.text_get(p.opening[:]))
         projects_error_add(p,text)
+        projects_open_failed(s)
         notify(s,text)
         return
     }
@@ -687,6 +697,7 @@ projects_poll :: proc(s:^Session) {
         }
         if text=="" {text=fmt.tprintf("The build failed: %v",result.failure)}
         projects_error_add(p,text)
+        projects_open_failed(s)
         log.errorf("%s could not be built: %s",base.text_get(p.opening[:]),text)
         return
     }
@@ -699,6 +710,7 @@ projects_poll :: proc(s:^Session) {
         }
         text:=fmt.tprintf("The shaders of the project could not be built: %s",why if why!="" else "the generation failed")
         projects_error_add(p,text)
+        projects_open_failed(s)
         log.errorf("%s: %s",base.text_get(p.opening[:]),text)
         return
     }
@@ -709,6 +721,17 @@ projects_poll :: proc(s:^Session) {
     // The editor of a project ends as the others do.
     p.next,p.shown=true,false
     quit_request(s)
+}
+
+// The project being opened failed to build, refresh its assets or build its
+// shaders: the banner offers to retry it, after restoring the package pins
+// its Kai working copy changed.
+@(private)
+projects_open_failed :: proc(s:^Session) {
+    p:=s.projects
+    folder:=base.text_get(p.opening[:])
+    base.text_set(p.failed_opening[:],folder)
+    p.error_packages_dirty=ka.project_packages_dirty(&s.store,folder,kai_types(s))
 }
 
 // Starts the editor on the project built. False when it could not.
@@ -952,6 +975,7 @@ projects_build :: proc(s:^Session) {
     }
     // A project of the list shows its opening in its row; a folder chosen or created, in a dialog.
     if projects_opening(p) && projects_opening_row(p)<0 {projects_loading_build(s)}
+    projects_remove_build(s)
     modal_build(s)
     toast_build(s)
     window_outline(s)
@@ -974,6 +998,7 @@ projects_popup_build :: proc(s:^Session) {
             projects_body(s,true)
         }
     }
+    projects_remove_build(s)
 }
 
 // The side with the mark and what makes or opens a project, and the list or the new project.
@@ -1137,7 +1162,7 @@ projects_content :: proc(s:^Session,popup:bool) {
     }
     if p.team {
         projects_team_build(s,projects_content_width(s,popup))
-        projects_error_build(ctx,p)
+        projects_error_build(s)
         return
     }
     if ui.scroll_area(ctx,ui.id(ctx,"projects_list"),&p.scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=2}) {
@@ -1177,7 +1202,8 @@ projects_content :: proc(s:^Session,popup:bool) {
     if chosen:=projects_chosen(p);open && !busy && chosen>=0 {
         if message:=projects_open(s,base.text_get(p.rows[chosen].path[:]));message!="" {notify(s,message)}
     }
-    projects_error_build(ctx,p)
+    projects_error_build(s)
+    projects_row_menu(s)
     if p.template_count==0 {return}
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=10,layer={enabled=busy,opacity=PROJECTS_FADED}}) {
         ui.label(ctx,"START FROM A TEMPLATE",ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_caption"),font=ui.FONT_SEMIBOLD)
@@ -1197,11 +1223,25 @@ projects_section_head :: proc(ctx:^ui.Context,title:string) {
     }
 }
 
-// Wrapped error banner in the launcher so long compiler/pull errors are never truncated.
+// Wrapped error banner in the launcher so long compiler/pull errors are never truncated, with
+// the retries of an opening that failed: after restoring the package pins its Kai working copy
+// changed, or after cleaning its build cache.
 @(private)
-projects_error_build :: proc(ctx:^ui.Context,p:^Projects) {
+projects_error_build :: proc(s:^Session) {
+    p:=s.projects
+    ctx:=s.gui.ctx
     if p.error_length<=0 {return}
-    if error_banner(ctx,ui.id(ctx,"projects_error"),p.error[:],&p.error_length,&p.error_copied,dismiss=true) {p.error_length=0}
+    if error_banner(ctx,ui.id(ctx,"projects_error"),p.error[:],&p.error_length,&p.error_copied,dismiss=true) {
+        p.error_length,p.failed_opening[0],p.error_packages_dirty=0,0,false
+        return
+    }
+    failed:=base.text_get(p.failed_opening[:])
+    if failed=="" || !os.is_file(project.path(failed,project.PROJECT_FILE,allocator=context.temp_allocator)) {return}
+    busy:=projects_opening(p) || p.next
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),gap=8,align_y=.Center}) {
+        if p.error_packages_dirty && ui.button(ctx,ui.id(ctx,"projects_error_packages"),{label="Restore package pins & retry",icon=ui.icon_user(u8(User_Icon.Retry)),variant="field",height=26,size=ui.metric(ctx,"font_small"),disabled=busy,tip="Restores packages.mirai and packages/*.mirai from the last change; every other edit stays"}).clicked {projects_retry_packages(s)}
+        if ui.button(ctx,ui.id(ctx,"projects_error_clean"),{label="Clean cache & retry",icon=.Refresh,variant="field",height=26,size=ui.metric(ctx,"font_small"),disabled=busy,tip="Removes the generated build, shader and asset caches in .mirai, never its Kai workspace"}).clicked {projects_retry_clean(s)}
+    }
 }
 
 ERROR_COPIED_SHOWN :: 1.5 // seconds the Copy of an error banner shows that it copied
@@ -1259,8 +1299,9 @@ projects_row :: proc(s:^Session,index:int,row:^Projects_Row,folder:string,busy,o
     p:=s.projects
     id:=ui.id(ctx,"project_row",index)
     usable:=!busy && !row.missing
-    it:=ui.interact(ctx,id,ui.Widget_Flags{.Focusable} if usable else {.Passive})
+    it:=ui.interact(ctx,id,ui.Widget_Flags{.Focusable} if !busy else {.Passive})
     if (it.clicked || it.double) && usable {p.selected=index+1}
+    if it.right && !busy {projects_menu_open(s,folder)}
     open=it.double && usable
     fill,stroke:ui.Color
     if opening || p.selected==index+1 {fill,stroke=ui.tone(ctx,"accent_soft"),ui.tone(ctx,"accent")} else if it.hot && usable {fill=ui.tone(ctx,"card")}
@@ -1269,7 +1310,12 @@ projects_row :: proc(s:^Session,index:int,row:^Projects_Row,folder:string,busy,o
         projects_tile(ctx,name,PROJECTS_TILE,row.missing,thumbnail_image_quad(s,row.thumbnail_slot,row.thumbnail))
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=3}) {
             ui.label(ctx,name,ui.metric(ctx,"font"),row.missing?ui.tone(ctx,"text_muted"):ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
-            ui.label(ctx,projects_path_shown(s.projects,folder),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0,fade=true)
+            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,align_y=.Center}) {
+                if row.linked && row.behind_main && !row.missing {
+                    ui.label(ctx,row.main_here?"Update available":"Update on its way",ui.metric(ctx,"font_small"),ui.tone(ctx,"accent"),font=ui.FONT_SEMIBOLD)
+                }
+                ui.label(ctx,projects_path_shown(s.projects,folder),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0,fade=true)
+            }
         }
         if opening {
             pulse_dot(ctx,MARK_ARM,true)
@@ -1286,7 +1332,11 @@ projects_row :: proc(s:^Session,index:int,row:^Projects_Row,folder:string,busy,o
                     ui.label(ctx,on,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
                 }
                 if row.linked {
-                    if row.needs_publish && row.can_publish {
+                    if row.behind_main {
+                        if row.main_here && ui.button(ctx,ui.id(ctx,"project_update",index),{label="Update",icon=ui.icon_user(u8(User_Icon.Down)),icon_size=12,variant="field",height=24,size=ui.metric(ctx,"font_small"),disabled=busy,tip="Takes main into this copy; local edits and commits stay"}).clicked {
+                            projects_update(s,folder)
+                        }
+                    } else if row.needs_publish && row.can_publish {
                         if ui.button(ctx,ui.id(ctx,"project_publish",index),{label="Publish",variant="field",height=24,size=ui.metric(ctx,"font_small"),disabled=busy}).clicked {
                             kai_launcher_publish(s,folder)
                         }

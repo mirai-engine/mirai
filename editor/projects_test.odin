@@ -514,3 +514,196 @@ the_launcher_team_view_scrolls_with_the_wheel :: proc(t:^testing.T) {
     testing.expect(t,has_dismiss && dismiss_rect.w>0,"wrapped error banner has dismiss button")
     p.error_length=0
 }
+
+// Remove local copy snapshots a Kai workspace before its folder goes to the Trash: what its
+// working copy held stays in the store, the folder leaves the recent projects and its org's
+// repository is offered to pull again. The open project, one being opened, the engine, a project
+// of the engine, the folder of the store and a folder that is no project are refused.
+@(test)
+removing_a_local_copy_snapshots_it_and_refuses_unsafe_folders :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"projects-remove")
+    if folder=="" {return}
+    root:=project.path_absolute(folder,context.temp_allocator)
+    join :: proc(parts:..string) -> string {return project.path(..parts,allocator=context.temp_allocator)}
+    manifest :: proc(t:^testing.T,at,name:string) {
+        testing.expect(t,base.make_directory_all(at)==nil)
+        m:=project.manifest_default(name)
+        testing.expect_value(t,project.manifest_write(join(at,project.PROJECT_FILE),&m).code,project.Error_Code.None)
+    }
+    proj:=join(root,"game")
+    manifest(t,proj,"Game")
+    engine:=join(root,"engine")
+    manifest(t,join(engine,"demo"),"Demo")
+    plain:=join(root,"plain")
+    testing.expect(t,base.make_directory_all(plain)==nil)
+
+    opened,se:=store.open(join(root,"store"))
+    if !testing.expect_value(t,se,store.Error.None) {return}
+    defer store.close(&opened)
+    p:=new(Projects);defer free(p)
+    p.shown,p.launcher=true,true
+    project.recent_add(&p.recent,proj,100)
+    k:Kai
+    k.mesh_loopback=true
+    s:=Session{projects=p,store=opened,kai=&k,engine_root=engine}
+    defer projects_cancel(&s)
+    defer kai_team_close(&s)
+    kai_team_open(&s)
+    if !testing.expect(t,s.kai.team!=nil && s.kai.team.opened) {return}
+    team:=&s.kai.team.team
+    testing.expect_value(t,vcs.team_profile_set(team,"ana","mac"),vcs.Error.None)
+    org,oe:=vcs.team_org_create(team,"studio")
+    if !testing.expect_value(t,oe,vcs.Error.None) {return}
+    kp:ka.Project
+    if !testing.expect_value(t,ka.project_create(&kp,proj,&s.store),vcs.Error.None) {return}
+    _,je:=ka.project_join(&kp,team,org,false)
+    testing.expect_value(t,je,vcs.Error.None)
+    _,pe:=ka.publish(&kp,team,ka.BOOKMARK_DEFAULT,"first",nil)
+    testing.expectf(t,pe==.None,"publish: %s",team.why)
+    ka.project_close(&kp)
+    testing.expect(t,os.write_entire_file(join(proj,"notes.txt"),transmute([]u8)string("not published\n"))==nil)
+    kai_team_wrote(&s)
+    projects_rows_read(&s)
+    testing.expect_value(t,projects_unpulled_count(&s),0)
+
+    for x in ([]struct{folder,why:string}{{engine,"holds the engine"},{root,"holds the engine"},{join(engine,"demo"),"part of the engine"},{join(root,"store"),"Kai store"},{plain,"not a Mirai project"},{join(root,"nowhere"),"not a folder"}}) {
+        refusal:=projects_remove_refusal(&s,x.folder)
+        testing.expectf(t,strings.contains(refusal,x.why),"%s is refused as %q: %q",x.folder,x.why,refusal)
+    }
+    p.next=true
+    testing.expect(t,strings.contains(projects_remove_refusal(&s,proj),"being opened"),"a project being opened stays")
+    p.next=false
+    s.has_project,s.project_root,p.launcher=true,proj,false
+    testing.expect(t,strings.contains(projects_remove_refusal(&s,proj),"open in this editor"),"the open project stays")
+    s.has_project,s.project_root,p.launcher=false,"",true
+    testing.expect_value(t,projects_remove_refusal(&s,proj),"")
+
+    projects_remove_ask(&s,proj)
+    testing.expect(t,project.path_same(base.text_get(p.removing[:]),proj) && p.removing_kai && p.removing_unpublished,"the question names the folder and warns of what no org has")
+    _,working,_,_,ok:=vcs.workspace_working_info(&s.store,proj)
+    if !testing.expect(t,ok,"the workspace is read") {return}
+    held :: proc(s:^store.Store,working:vcs.Revision) -> string {
+        c,e:=vcs.change_get(s,working,context.temp_allocator)
+        if e!=.None {return ""}
+        files:=make([dynamic]vcs.File,context.temp_allocator)
+        if vcs.tree_files(s,c.tree,&files,context.temp_allocator)!=.None {return ""}
+        for f in files {
+            if f.path!="notes.txt" {continue}
+            bytes,be:=vcs.file_bytes(s,f.address,context.temp_allocator)
+            if be==.None {return string(bytes)}
+        }
+        return ""
+    }
+    testing.expect_value(t,held(&s.store,working),"not published\n")
+
+    testing.expect_value(t,projects_remove_local(&s,proj),"")
+    testing.expect(t,!os.exists(proj),"the folder is gone")
+    testing.expect_value(t,project.recent_count(&p.recent),0)
+    testing.expect_value(t,base.text_get(p.removing[:]),"")
+    testing.expect_value(t,held(&s.store,working),"not published\n")
+    testing.expect_value(t,projects_unpulled_count(&s),1)
+    testing.expect(t,strings.contains(projects_remove_refusal(&s,proj),"not a folder"),"a folder removed is not removed twice")
+}
+
+// A linked project the org's main moved past shows Update available and an Update button that
+// takes main into it; an opening that failed offers to restore the package pins its working copy
+// changed and to clean its build cache; a right click on a row opens its menu, whose Remove local
+// copy asks to confirm.
+@(test)
+the_launcher_offers_update_recovery_and_a_row_menu :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    if !prefab_fixture_init(t,f,"projects-update") {return}
+    defer prefab_fixture_destroy(f)
+    s:=&f.s
+    opened,se:=store.open(project.path(f.root,"store",allocator=context.temp_allocator))
+    if !testing.expect_value(t,se,store.Error.None) {return}
+    defer store.close(&opened)
+    s.store=opened
+    k:Kai
+    k.mesh_loopback=true
+    s.kai=&k
+    defer kai_team_close(s)
+    kai_team_open(s)
+    if !testing.expect(t,s.kai.team!=nil && s.kai.team.opened) {return}
+    team:=&s.kai.team.team
+    testing.expect_value(t,vcs.team_profile_set(team,"ana","mac"),vcs.Error.None)
+    org,_:=vcs.team_org_create(team,"studio")
+
+    first:=project.path(f.root,"first",allocator=context.temp_allocator)
+    second:=project.path(f.root,"second",allocator=context.temp_allocator)
+    testing.expect(t,base.make_directory_all(first)==nil)
+    m:=project.manifest_default("Game")
+    testing.expect_value(t,project.manifest_write(project.path(first,project.PROJECT_FILE,allocator=context.temp_allocator),&m).code,project.Error_Code.None)
+    a:ka.Project
+    if !testing.expect_value(t,ka.project_create(&a,first,&s.store),vcs.Error.None) {return}
+    defer ka.project_close(&a)
+    link,_:=ka.project_join(&a,team,org,false)
+    _,pe:=ka.publish(&a,team,ka.BOOKMARK_DEFAULT,"first",nil)
+    testing.expectf(t,pe==.None,"publish: %s",team.why)
+    b:ka.Project
+    if !testing.expect_value(t,ka.project_clone(&b,team,second,&s.store,org,link.repo),vcs.Error.None) {return}
+    _,ce:=ka.clone_checkout(&b,team)
+    ka.project_close(&b)
+    testing.expectf(t,ce==.None,"checkout: %s",team.why)
+    testing.expect(t,os.write_entire_file(project.path(first,"notes.txt",allocator=context.temp_allocator),transmute([]u8)string("from main\n"))==nil)
+    _,pe=ka.publish(&a,team,ka.BOOKMARK_DEFAULT,"second",nil)
+    testing.expectf(t,pe==.None,"publish: %s",team.why)
+
+    ctx:ui.Context
+    if !testing.expect(t,test_ui_init(&ctx,{})) {return}
+    defer ui.context_destroy(&ctx)
+    f.gui.ctx,f.gui.begun=&ctx,true
+    p:=new(Projects);defer free(p)
+    p.shown,p.launcher=true,true
+    s.projects=p
+    s.headless=true
+    defer s.projects=nil
+    defer projects_cancel(s)
+    project.recent_add(&p.recent,second,100)
+    projects_rows_read(s)
+    if !testing.expect_value(t,p.row_count,1) {return}
+    testing.expect(t,p.rows[0].behind_main && p.rows[0].main_here,"the row is behind main, which is here")
+    size:=[2]f32{f32(PROJECTS_WINDOW.x),f32(PROJECTS_WINDOW.y)}
+    frame :: proc(t:^testing.T,ctx:^ui.Context,s:^Session,input:ui.Input) {
+        ui.frame_begin(ctx,input)
+        projects_build(s)
+        out:=ui.frame_end(ctx)
+        testing.expect(t,!out.overflow && ctx.stats.layout_errors==0,"the launcher lays out cleanly")
+    }
+    for _ in 0..<2 {frame(t,&ctx,s,{size=size,pointer_absent=true})}
+    update,has_update:=ui.widget_rect(&ctx,ui.id(&ctx,"project_update",0))
+    if !testing.expect(t,has_update && update.w>0,"the row shows Update") {return}
+    frame(t,&ctx,s,{size=size,pointer=ui.rect_center(update),down={.Left},pressed={.Left}})
+    frame(t,&ctx,s,{size=size,pointer=ui.rect_center(update),released={.Left}})
+    text,read_error:=os.read_entire_file(project.path(second,"notes.txt",allocator=context.temp_allocator),context.temp_allocator)
+    testing.expect(t,read_error==nil && string(text)=="from main\n","Update wrote main's files")
+    testing.expect(t,!p.rows[0].behind_main && !p.rows[0].needs_publish,"the row is synced after Update")
+
+    // An opening that failed with changed pins offers both retries.
+    p.error_length=copy(p.error[:],"The build failed: packages")
+    base.text_set(p.failed_opening[:],second)
+    p.error_packages_dirty=true
+    for _ in 0..<2 {frame(t,&ctx,s,{size=size,pointer_absent=true})}
+    _,has_pins:=ui.widget_rect(&ctx,ui.id(&ctx,"projects_error_packages"))
+    _,has_clean:=ui.widget_rect(&ctx,ui.id(&ctx,"projects_error_clean"))
+    testing.expect(t,has_pins && has_clean,"the banner offers Restore package pins & retry and Clean cache & retry")
+    p.error_packages_dirty=false
+    frame(t,&ctx,s,{size=size,pointer_absent=true})
+    _,has_pins=ui.widget_rect(&ctx,ui.id(&ctx,"projects_error_packages"))
+    testing.expect(t,!has_pins,"no pins changed: no restore")
+    p.error_length,p.failed_opening[0]=0,0
+
+    // A right click opens the row's menu.
+    frame(t,&ctx,s,{size=size,pointer_absent=true})
+    row,has_row:=ui.widget_rect(&ctx,ui.id(&ctx,"project_row",0))
+    if !testing.expect(t,has_row,"the row is laid out") {return}
+    frame(t,&ctx,s,{size=size,pointer=ui.rect_center(row),down={.Right},pressed={.Right}})
+    frame(t,&ctx,s,{size=size,pointer=ui.rect_center(row),released={.Right}})
+    testing.expect(t,ui.popup_is_open(&ctx,projects_menu_id(s)),"the right click opens the row menu")
+    projects_remove_ask(s,second)
+    testing.expect(t,project.path_same(base.text_get(p.removing[:]),second) && p.removing_kai && !p.removing_unpublished,"a synced workspace asks without the warning")
+    for _ in 0..<2 {frame(t,&ctx,s,{size=size,pointer_absent=true})}
+    _,has_confirm:=ui.widget_rect(&ctx,shell_id(s.gui,"projects_remove_confirm"))
+    testing.expect(t,has_confirm,"the confirmation shows")
+    p.removing[0]=0
+}

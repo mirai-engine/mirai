@@ -165,8 +165,11 @@ agent_transfer :: proc(a:^Agent,p:^Peer,direction:Transfer_Direction,root:Transf
             if x==nil || y.last<x.last {x=&y}
         }
         x^={used=true,direction=direction,root=root,peer=key,started=now,bucket=now/i64(TRANSFER_BUCKET)}
-        x.label,x.label_length=label,label_length
-        x.peer_name,x.peer_name_length=peer_name,peer_name_length
+        // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+        x.label=label
+        x.label_length=label_length
+        x.peer_name=peer_name
+        x.peer_name_length=peer_name_length
     }
     transfer_roll(x,now)
     x.window[x.bucket%TRANSFER_BUCKETS]+=bytes

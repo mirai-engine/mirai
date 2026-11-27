@@ -385,11 +385,18 @@ org_view :: proc(t:^vcs.Team,id:vcs.Org_Id,v:^Org_View,allocator:=context.temp_a
 Project_Sync_State :: struct {
     kai:string,
     linked:bool,
-    needs_publish:bool,
+    needs_publish:bool, // the working copy has what main lacks, or nobody published main
     can_publish:bool,
+    behind_main:bool,   // main has what the working copy lacks: update_from_main takes it
+    main_here:bool,     // every object main reaches is here, so an update can start
     bytes:i64,
     has_size:bool,
 }
+
+// Changes a list of projects walks from a working copy or main to tell which
+// holds the other; past it a working copy counts as behind and unpublished,
+// which an update or a publish then finds is not so.
+SYNC_WALK_MAX :: 1024
 
 project_sync_state :: proc(s:^store.Store,t:^vcs.Team,root:string,allocator:=context.temp_allocator) -> (state:Project_Sync_State) {
     if s==nil || s.root=="" {return}
@@ -412,7 +419,8 @@ project_sync_state :: proc(s:^store.Store,t:^vcs.Team,root:string,allocator:=con
     if ce!=.None {return}
     main_target:vcs.Revision
     has_main:=false
-    if org_s,se:=vcs.team_store(t,l.org);se==.None {
+    org_s,se:=vcs.team_store(t,l.org)
+    if se==.None {
         if refs,_,re:=vcs.repo_refs_head(org_s,l.org,l.repo,context.temp_allocator);re==.None {
             for b in refs.bookmarks {
                 if b.name==BOOKMARK_DEFAULT {
@@ -422,14 +430,156 @@ project_sync_state :: proc(s:^store.Store,t:^vcs.Team,root:string,allocator:=con
             }
         }
     }
-    if c.description!="" || len(c.parents)!=1 || !has_main || c.parents[0]!=main_target {
+    if !has_main {
         state.needs_publish=true
         return
     }
-    if parent,pe:=vcs.change_get(s,c.parents[0],context.temp_allocator);pe==.None && c.tree!=parent.tree {
-        state.needs_publish=true
+    ours:=working_ours(s,working,&c)
+    state.behind_main=!reaches(s,ours,main_target)
+    if !state.behind_main {
+        // What holds main and is not main is ahead of it.
+        for o in ours {state.needs_publish||=o!=main_target}
+        return
     }
+    for o in ours {state.needs_publish||=!reaches(s,{main_target},o)}
+    missing:=make([dynamic]store.Hash,context.temp_allocator)
+    vcs.closure_walk(org_s,{main_target},nil,&missing)
+    state.main_here=len(missing)==0
     return
+}
+
+// What of a working copy is this machine's: the working change when it
+// changed a file of its one parent, has a description or merges, else its
+// parent. Read without a repository, so a merge counts as changed.
+@(private)
+working_ours :: proc(s:^store.Store,working:vcs.Revision,c:^vcs.Change) -> []vcs.Revision {
+    if c.description=="" && len(c.parents)==1 {
+        if parent,e:=vcs.change_get(s,c.parents[0],context.temp_allocator);e==.None && parent.tree==c.tree {return c.parents}
+    }
+    ours:=make([]vcs.Revision,1,context.temp_allocator)
+    ours[0]=working
+    return ours
+}
+
+// Whether target is one of from or their ancestors, within SYNC_WALK_MAX changes.
+@(private)
+reaches :: proc(s:^store.Store,from:[]vcs.Revision,target:vcs.Revision) -> bool {
+    stack:=make([dynamic]vcs.Revision,context.temp_allocator)
+    seen:=make(map[vcs.Revision]struct{},allocator=context.temp_allocator)
+    append(&stack,..from)
+    for len(stack)>0 && len(seen)<SYNC_WALK_MAX {
+        r:=pop(&stack)
+        if r==target {return true}
+        if r in seen {continue}
+        seen[r]={}
+        c,e:=vcs.change_get(s,r,context.temp_allocator)
+        if e!=.None {continue}
+        append(&stack,..c.parents)
+    }
+    return false
+}
+
+// What an update of a working copy from main did.
+Update_Result :: struct {
+    revision:vcs.Revision, // the working change, made or kept
+    conflicts:u32,         // files in conflict in its tree
+    up_to_date:bool,       // main was in the working copy already: nothing changed
+}
+
+// Takes the repository's shared main into the working copy: a new working
+// change on main and on what of the working copy main lacks (working_ours,
+// with the merge of its parents' trees standing for one parent), whose trees
+// merge. Every local change and edit stays: the edits of the working copy
+// close as they are, and a file both sides changed apart is a conflict value.
+// Missing, with t.why, while nobody published main or its objects are not all
+// here yet.
+update_from_main :: proc(p:^Project,t:^vcs.Team,changed:^[dynamic]string) -> (result:Update_Result,error:vcs.Error) {
+    list:=make([dynamic]Shared_Bookmark,context.temp_allocator)
+    bookmarks_shared(p,t,&list) or_return
+    main:=-1
+    for b,i in list {
+        if b.name==BOOKMARK_DEFAULT {main=i}
+    }
+    if main<0 {
+        t.why="nobody published main yet: Publish to main from a machine that has the project"
+        return {},.Missing
+    }
+    target:=list[main].target
+    if !list[main].here {
+        t.why=fmt.tprintf("%s is not all here yet: the agent pulls it from the org's machines",BOOKMARK_DEFAULT)
+        return {},.Missing
+    }
+    w:=&p.workspace
+    r:=&w.repo
+    snapshot(w) or_return
+    working:=vcs.repo_working(r)
+    c:=vcs.change_get(r.s,working,context.temp_allocator) or_return
+    vcs.graph_extend(&r.graph,r.s,{working,target}) or_return
+    if vcs.graph_is_ancestor(&r.graph,target,working) {return {revision=working,up_to_date=true},.None}
+    ours:=[]vcs.Revision{working}
+    if c.description=="" && len(c.parents)>0 {
+        if tree,e:=vcs.parents_tree(r,c.parents);e==.None && tree==c.tree {ours=c.parents}
+    }
+    parents:=make([dynamic]vcs.Revision,context.temp_allocator)
+    for o in ours {
+        if vcs.graph_is_ancestor(&r.graph,o,target) {continue}
+        if len(parents)==vcs.PARENTS_MAX-1 {
+            t.why="the working copy merges as many changes as a change may: publish or describe it first"
+            return {},.Too_Large
+        }
+        append(&parents,o)
+    }
+    append(&parents,target)
+    result.revision=new_change(w,parents[:],"",changed) or_return
+    made:=vcs.change_get(r.s,result.revision,context.temp_allocator) or_return
+    totals:=vcs.tree_totals(r.s,made.tree) or_return
+    result.conflicts=totals.conflicts
+    return
+}
+
+// Opens the workspace at root, takes main into it and closes it: an update
+// from the Launcher, without opening the 3D editor.
+project_update_folder :: proc(s:^store.Store,t:^vcs.Team,root:string,types:^asset.Types=nil) -> (result:Update_Result,error:vcs.Error) {
+    p:=new(Project,context.temp_allocator)
+    if p==nil {return {},.Out_Of_Memory}
+    if e:=project_open(p,root,s,types);e!=.None {
+        if e==.Locked {t.why="another editor holds this project: update it from that editor's Kai tab"}
+        return {},e
+    }
+    defer project_close(p)
+    if _,e:=project_of(p,t);e!=.None {return {},e}
+    return update_from_main(p,t,nil)
+}
+
+// What a workspace leaving its folder keeps: its working copy snapshotted
+// into the store, where its changes stay as a head of its repository.
+Set_Aside :: struct {
+    revision:vcs.Revision, // the working change, snapshotted
+    repo:vcs.Repo_Id,
+    linked:bool,           // it is a workspace of an org's repository
+    unpublished:bool,      // no org has all it holds: linked with changes main lacks, or in no org
+    alone:bool,            // no other workspace of its repository is in its view
+}
+
+// Snapshots the workspace at root and says what of it no org has, before its
+// folder goes. Locked, with t.why, while an editor holds it.
+project_set_aside :: proc(s:^store.Store,t:^vcs.Team,root:string,types:^asset.Types=nil) -> (aside:Set_Aside,error:vcs.Error) {
+    p:=new(Project,context.temp_allocator)
+    if p==nil {return {},.Out_Of_Memory}
+    if e:=project_open(p,root,s,types);e!=.None {
+        if e==.Locked && t!=nil {t.why="another editor holds this project: close it first"}
+        return {},e
+    }
+    report,se:=snapshot(&p.workspace)
+    aside.revision,aside.repo=report.revision,p.workspace.repo.id
+    aside.alone=true
+    for x in p.workspace.repo.view.workspaces {aside.alone&&=x.id==p.workspace.state.id}
+    project_close(p)
+    if se!=.None {return aside,se}
+    state:=project_sync_state(s,t,root)
+    aside.linked=state.linked
+    aside.unpublished=!state.linked || state.needs_publish
+    return aside,.None
 }
 
 // Opens the workspace at root, snapshots and publishes to main, then closes it:

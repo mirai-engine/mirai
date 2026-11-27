@@ -100,10 +100,22 @@ pulls what the shared bookmarks reach.
 - BOOKMARKS shows a New branch action (creating a bookmark on `@`), the workspace's bookmarks, and
   the repository's shared ones (clickable to start a change on one, with no move arrow).
 - The projects screen header includes a Refresh icon button (`kai_team_refresh`). Linked local
-  project rows show a direct Publish button (`kai_launcher_publish`) when ahead of shared main or
-  a calm Synced badge when up to date. All projects also lists unpulled org repositories (counted
-  in its tab), pulled with one click (`kai.clone`). Team beside the tabs opens the Launcher Team
-  view.
+  project rows show Update available and an Update button when shared main has what the working
+  copy lacks and is here (`ka.project_update_folder`: a new working change merging main with what
+  main lacks, so local edits and commits stay and a clash is a conflict value), else a direct
+  Publish button (`kai_launcher_publish`) when ahead of shared main, or a calm Synced badge. All
+  projects also lists unpulled org repositories (counted in its tab), pulled with one click
+  (`kai.clone`). Team beside the tabs opens the Launcher Team view.
+- A right click on a local row opens Open, Update from main, Clean build cache
+  (`build.cache_clean`, never `.mirai/kai`) and Remove local copy (`editor/projects_local.odin`).
+  Removal is refused for the open or opening project, the engine and its projects, the home, the
+  store's folder and a folder that is no project; a Kai workspace is snapshotted first
+  (`ka.project_set_aside`), the confirmation names the folder and warns when no org has all it
+  holds, and the folder goes to the Trash, so files Kai does not track can come back. A last
+  workspace drops its link, so its repository is offered to pull again.
+- When an opening fails, the error banner offers Clean cache & retry, and Restore package pins &
+  retry when the Kai working copy changed `packages.mirai` or `packages/*.mirai`
+  (`ka.packages_restore`: only those files, from the working copy's parents).
 - `kai.peers` gives where the agent listens, the machines connected and each repository's pull.
 - The imports of the editor take derived data the org's machines built on a miss and publish what
   they build (`ka.peers_open`), when the project is a workspace of an org's repository.
@@ -153,6 +165,10 @@ pulls what the shared bookmarks reach.
 - `projects_list_refreshes_and_publishes_linked_workspaces` and
   `the_launcher_keeps_its_tabs_below_the_bar_that_drags_the_window` (`editor/projects_test.odin`):
   Refresh icon button below bar height and direct Publish -> Synced transitions.
+- `removing_a_local_copy_snapshots_it_and_refuses_unsafe_folders` and
+  `the_launcher_offers_update_recovery_and_a_row_menu` (`editor/projects_test.odin`), with
+  `a_workspace_behind_main_updates_and_keeps_its_work` and
+  `restoring_the_package_pins_leaves_every_other_edit` (`cook/kai`).
 - In a session: `kai.status`, `kai.new`, `kai.split`, `kai.conflicts`, `kai.resolve` and
   `kai.undo` once each, and `capture` with `ui` of the Kai tab in each of its views. The rest of
   Kai is verified by [its skill](../../mirai-kai/SKILL.md#verification).
