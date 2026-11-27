@@ -319,6 +319,40 @@ writing_a_widget_follows_its_parameters_in_the_files_that_use_it :: proc(t:^test
     testing.expect(t,strings.contains(string(serial.writer_bytes(&out)),`"label":"Hits"`),string(serial.writer_bytes(&out)))
 }
 
+// A document of many entities, each with a component, writes them all: what
+// reading a component needs besides the document is the same room for each.
+@(test)
+a_scene_document_of_many_entities_writes_them_all :: proc(t:^testing.T) {
+    root,engine,copied:=template_copy(t,"scene")
+    if !copied {return}
+    info,described:=test_info(t,Game_World)
+    if !described {return}
+    defer test_info_destroy(&info)
+    p:Project
+    if problem:=project_open(&p,root,engine,false);!testing.expect(t,problem=="",problem) {return}
+    defer project_close(&p)
+    p.info=&info
+    COUNT :: 1024
+    document:=strings.builder_make(context.temp_allocator)
+    strings.write_string(&document,`{"entities":[`)
+    for i in 0..<COUNT {
+        if i>0 {strings.write_byte(&document,',')}
+        fmt.sbprintf(&document,`{{"name":"Crate %d","position":[%d,0,0],"components":{{"Status":{{"hits":%d}}}}}}`,i,i,i)
+    }
+    strings.write_string(&document,`]}`)
+    made,problem:=scene_write(&p,"arena/crowd.scene",strings.to_string(document))
+    if !testing.expect(t,problem=="" && made.made==COUNT,problem) {return}
+    crowd:asset.Scene
+    if !testing.expect_value(t,asset.scene_load(&crowd,&p.types,project.path(p.assets_root,"arena/crowd.scene",allocator=context.temp_allocator),context.temp_allocator),asset.Error.None) {return}
+    testing.expect_value(t,asset.scene_entity_count(&crowd),COUNT)
+    hits:=0
+    for &name,row in asset.scene_names(&crowd) {
+        status,has:=asset.scene_get(&crowd,asset.scene_ids(&crowd)[row],"Status",Game_Status)
+        hits+=int(has && fmt.tprintf("Crate %d",status.hits)==base.text_get(name[:]))
+    }
+    testing.expect_value(t,hits,COUNT)
+}
+
 // A rotation a document gives whole (rotation, the quaternion) is kept to
 // the last bit, where its angles in degrees round it; one that is no
 // rotation is brought to one, and a document that gives both ways, or a

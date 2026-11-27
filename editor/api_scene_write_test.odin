@@ -465,6 +465,45 @@ a_merge_changes_what_the_document_names_and_leaves_the_rest :: proc(t:^testing.T
 // The same document written to the file with no editor gives the bytes the
 // method and the write of the document give. The entities a document makes take their ids from
 // the sequence of whoever makes them, so these documents make none.
+// A document of two thousand entities with a component each is written within
+// the scratch the server lends a request: what it reads of each entity is
+// sized to what the entity says, and a component takes no room of its own.
+@(test)
+a_write_of_many_entities_fits_the_scratch_of_a_request :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    state:Api_State
+    if !write_fixture_init(t,f,&state,"write-many") {return}
+    defer prefab_fixture_destroy(f)
+    defer api_schema_free(&state)
+    COUNT :: 2048
+    document:=strings.builder_make(context.temp_allocator)
+    strings.write_string(&document,`{"entities":[`)
+    for i in 0..<COUNT {
+        if i>0 {strings.write_byte(&document,',')}
+        fmt.sbprintf(&document,`{{"name":"Lamp %d","components":{{"Prefab_Test_Lamp":{{"intensity":%d}}}}}}`,i,i)
+    }
+    strings.write_string(&document,`]}`)
+    // What the server lends a request by default (api.server_init).
+    scratch,memory:=make([]u8,2<<20)
+    if !testing.expect(t,memory==nil) {return}
+    defer delete(scratch)
+    lent:base.Arena
+    base.arena_init_buffer(&lent,scratch)
+    method:=api.Method{params_id=Api_Scene_Write_Params,result_id=Api_Write_Result}
+    params:Api_Scene_Write_Params
+    written:Api_Write_Result
+    call:=api.Call{method=&method,raw=strings.to_string(document),params=&params,result=&written,allocator=base.arena_allocator(&lent)}
+    api_scene_write(&f.s,&call)
+    if !testing.expect(t,!call.failed,call.error.message) {return}
+    testing.expect_value(t,written.made,COUNT)
+    w:=edited_world(&f.s)
+    lamps:=0
+    for row in 0..<core.count(&f.world.lamps) {
+        lamps+=int(fmt.tprintf("Lamp %d",int(f.world.lamps.values[row].intensity))==entity_name(w,core.entity_at(&f.world.lamps,row)))
+    }
+    testing.expect_value(t,lamps,COUNT)
+}
+
 @(test)
 a_document_written_to_a_file_gives_the_bytes_the_method_and_the_editor_write :: proc(t:^testing.T) {
     f:=new(Prefab_Fixture);defer free(f)

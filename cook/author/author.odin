@@ -37,13 +37,16 @@ Reading :: struct {
     internal:bool,             // what failed is not of the document: memory, the types of the build
 }
 
+// What a reading says when its allocator has no room left for what failed.
+READING_MEMORY :: "the document could not be read: memory ran out"
+
 reading_fail :: proc(reading:^Reading,message:string) {
-    reading.failed,reading.internal=true,false
-    reading.problem=fmt.aprintf("%s",message,allocator=reading.allocator)
+    reading_failf(reading,"%s",message)
 }
 reading_failf :: proc(reading:^Reading,format:string,args:..any) {
     reading.failed,reading.internal=true,false
     reading.problem=fmt.aprintf(format,..args,allocator=reading.allocator)
+    if reading.problem=="" {reading.problem,reading.internal=READING_MEMORY,true}
 }
 reading_broke :: proc(reading:^Reading,message:string) {
     reading_fail(reading,message)

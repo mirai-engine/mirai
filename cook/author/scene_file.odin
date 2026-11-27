@@ -31,6 +31,7 @@ Scene_File :: struct {
     children:map[base.Entity_Id][dynamic]base.Entity_Id, // by parent, 0 the top, in order
     stale:bool, // children is behind what the file holds
     fresh:bool, // the file is being made: its entities take the ids the document gives
+    scratch:[]u8, // two values of the largest component: what a document gives one, and what it had
 }
 
 // The path of the scene a name gives, and whether its file exists.
@@ -55,6 +56,10 @@ scene_path :: proc(p:^Project,named:string) -> (path:string,exists:bool,problem:
 scene_open :: proc(p:^Project,f:^Scene_File,path:string,exists:bool) -> (problem:string) {
     if p.info==nil || p.info.schema==nil {return "the types of the game are needed to read its components"}
     f.p,f.info,f.ws=p,p.info,p.info.schema
+    largest:=1
+    for &t in f.info.tables {largest=max(largest,t.info.size)}
+    memory:runtime.Allocator_Error
+    if f.scratch,memory=make([]u8,2*largest,context.temp_allocator);memory!=nil {return "the scene could not be read: memory ran out"}
     if exists {
         bytes,error:=asset.registry_read(&p.registry,path,context.temp_allocator)
         if error==.None {error=asset.scene_read(&f.scene,&p.types,bytes,context.temp_allocator)}
@@ -178,11 +183,11 @@ scene_component_apply :: proc(f:^Scene_File,reading:^Reading,id:base.Entity_Id,t
     v:=scene_schema(f,t)
     start:=scene_start(t,v)
     size:=t.info.size
-    bytes:=make([]u8,max(size,1),reading.allocator)[:size]
+    bytes,before:=f.scratch[:size],f.scratch[len(f.scratch)/2:][:size]
     current,has:=scene_value(f,t,v,id,start)
     copy(bytes,current if merge && has else from if from!=nil else start)
     if has {fields_kept(&f.ws.schema,v.type,bytes,current)}
-    before:=slice.clone(bytes,reading.allocator)
+    copy(before,bytes)
     r:serial.Text_Reader
     reading_reader(reading,&r,text)
     if !serial.text_read(&r,&f.ws.schema,v.type,bytes) {

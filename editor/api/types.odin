@@ -315,9 +315,13 @@ call_given :: proc(call:^Call,name:string) -> bool {
 call_image :: proc(call:^Call,path:string) {call.image=clone_text(call.allocator,path)}
 
 // message is copied; data is JSON text or "".
+// What a call that fails says when the scratch of its request has no room for its message.
+CALL_SCRATCH_SPENT :: "the request spent the scratch memory the server lends it before it could say why it failed; send what it asks in smaller calls"
+
 call_fail :: proc(call:^Call,code:int,message:string,data:="") {
     call.failed=true
     call.error={code,clone_text(call.allocator,message),clone_text(call.allocator,data)}
+    if call.error.message=="" && message!="" {call.error.message=CALL_SCRATCH_SPENT}
 }
 // The state of the editor does not allow the method now: no game plays, or one
 // does. fix names the method that changes that, which the error carries in
@@ -329,4 +333,5 @@ call_not_now :: proc(call:^Call,message,fix:string) {
 call_failf :: proc(call:^Call,code:int,format:string,args:..any) {
     call.failed=true
     call.error={code,format_text(call.allocator,format,..args),""}
+    if call.error.message=="" && format!="" {call.error.message=CALL_SCRATCH_SPENT}
 }
