@@ -181,6 +181,9 @@ struct Mirai_Vfx_Bone {
     float4 rotation;
     float3 scale;
     float3 velocity;   // m/s
+    // rad/s about each axis of the world: a point the bone carries at offset
+    // from it moves at velocity + cross(angular_velocity, offset).
+    float3 angular_velocity;
     uint parent;
     bool valid;
 };

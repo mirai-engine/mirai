@@ -155,7 +155,7 @@ struct Particle_Event {
 #define PARTICLE_RESOURCE_GRID 3u
 #define PARTICLE_RESOURCE_BONES 4u
 #define PARTICLE_RESOURCE_TRANSFORM 5u
-#define PARTICLE_BONE_BYTES 64u // vfx.Gpu_Bone: position+parent, rotation (xyzw), scale, velocity
+#define PARTICLE_BONE_BYTES 80u // vfx.Gpu_Bone: position+parent, rotation (xyzw), scale, velocity, angular velocity
 // The stages of an emitter after its resources (vfx.Gpu_Stage).
 #define PARTICLE_STAGES 32u
 #define PARTICLE_STAGE_BYTES 32u

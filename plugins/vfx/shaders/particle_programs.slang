@@ -385,10 +385,12 @@ Mirai_Vfx_Bone mirai_vfx_bone(Mirai_Vfx_Context ctx, uint resource, uint index) 
     float4 rot = particle_frame_row(at + 16u);
     float4 scl = particle_frame_row(at + 32u);
     float4 vel = particle_frame_row(at + 48u);
+    float4 angular = particle_frame_row(at + 64u);
     bone.position = pos_parent.xyz;
     bone.rotation = rot;
     bone.scale = scl.xyz;
     bone.velocity = vel.xyz;
+    bone.angular_velocity = angular.xyz;
     bone.parent = asuint(pos_parent.w);
     bone.valid = true;
     return bone;

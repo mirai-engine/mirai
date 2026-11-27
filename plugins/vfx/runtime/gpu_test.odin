@@ -1334,7 +1334,8 @@ particle_programs_read_the_bones_of_a_skeleton :: proc(t: ^testing.T) {
 		{{1, 1, 0}, 1, {2, -2.5, -3}},
 	}
 	for frame in 0 ..< 2 {
-		if frame == 1 {pose[2].position.y += 2}
+		// The spine turns 0.5 rad more about z in the 0.5 s: 1 rad/s.
+		if frame == 1 {pose[2].position.y += 2;pose[1].rotation = mm.quat_axis_angle({0, 0, 1}, 1)}
 		bones_begin(&bones)
 		parents := bones_publish(&bones, rig, pose[:], 0.5)
 		if !testing.expect_value(t, len(parents), 3) {return}
@@ -1385,6 +1386,7 @@ particle_programs_read_the_bones_of_a_skeleton :: proc(t: ^testing.T) {
 	testing.expect_value(t, seen, [3]bool{true, true, true})
 	testing.expect_value(t, missing, 3)
 	testing.expect(t, linalg.length(f.sync.bones[2].velocity - {0, 4, 0}) < 1e-4)
+	testing.expectf(t, linalg.length(f.sync.bones[1].angular - {0, 0, 1}) < 1e-4 && f.sync.bones[2].angular == {}, "the spine turns at %v rad/s, the hand at %v", f.sync.bones[1].angular, f.sync.bones[2].angular)
 	expect_clean(t, f.device)
 }
 

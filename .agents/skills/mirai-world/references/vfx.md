@@ -144,15 +144,15 @@ surface|channel|grid|bones|transform` in declaration order.
   Triangle area CDF is built on GPU (`particle_surface.comp`, level-0 clusters via `geometry.slang`)
   once and rebuilt on `erender.vertices_made`.
 - **Bones**: the world pose of the skeleton the bound entity shows (`mirai_vfx_bone`, `_count`,
-  `_sample`: position, turn, signed scale, velocity, parent; `valid` false past the bones or
-  unbound). `vfx_animation_bones` (render, after `animation_skin`) publishes into `Particle_Bones`,
-  only for entities a `Particle_Binding` names, non-owning slices of `anim.animation_shown_pose`
-  (the drawn skin pose, else the rig's last tick; every bone, sockets included, not the skinning
-  deltas) without the pose's entity, with velocity from the previous pose (discrete tick poses keep
-  smooth velocity across sub-tick render frames via pose tick epoch); `particles_sync` gathers each
-  skeleton once into `Particle_Sync.bones`, uploaded once per frame in `particle_frame` as direct
-  TRS + velocity + parent (`Gpu_Bone`, 64 bytes). Steady frames allocate nothing; entries go after
-  two idle frames.
+  `_sample`: position, turn, signed scale, velocity, angular velocity, parent; `valid` false past
+  the bones or unbound). `vfx_animation_bones` (render, after `animation_skin`) publishes into
+  `Particle_Bones`, only for entities a `Particle_Binding` names, non-owning slices of
+  `anim.animation_shown_pose` (the drawn skin pose, else the rig's last tick; every bone, sockets
+  included, not the skinning deltas) without the pose's entity, with velocities from the previous
+  pose (discrete tick poses keep smooth velocity across sub-tick render frames via pose tick
+  epoch); `particles_sync` gathers each skeleton once into `Particle_Sync.bones`, uploaded once per
+  frame in `particle_frame` as direct TRS + velocity + angular velocity + parent (`Gpu_Bone`, 80
+  bytes). Steady frames allocate nothing; entries go after two idle frames.
 - **Transform**: the world transform of any bound entity (including `Bone_Attachment` entities),
   with previous-frame history (`mirai_vfx_transform`, `mirai_vfx_transform_at(ctx, resource, t)`
   interpolating position, scale, and shortest-hemisphere rotation from `previous` at `t=0` to

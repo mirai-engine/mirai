@@ -2,6 +2,7 @@ package vfx
 
 import "mirai:core"
 import "mirai:std/base"
+import "core:math"
 import mm "mirai:std/math"
 
 // The skeletons a Vfx program reads (`//! resource name bones`): the plugin
@@ -22,6 +23,8 @@ Bones_Entry :: struct {
     parents:[dynamic]u32,     // of bone i; max(u32): a root
     previous:[dynamic][3]f32, // where each bone was in the pose before
     velocity:[dynamic][3]f32, // m/s of each bone since the pose before
+    previous_turn:[dynamic]mm.Quat, // how each bone was turned in the pose before
+    angular:[dynamic][3]f32,  // rad/s about each axis of the world of each bone since the pose before
     frame:u64,                // the last frame it was given in
     epoch:u64,                // non-zero: the pose tick of previous/velocity; 0: per-frame
 }
@@ -32,8 +35,9 @@ Gpu_Bone :: struct {
     rotation:[4]f32,             // unit quaternion (xyzw)
     scale:[3]f32,    pad0:u32,   // signed scale
     velocity:[3]f32, pad1:u32,   // m/s
+    angular:[3]f32,  pad2:u32,   // rad/s about each axis of the world: a point a bone carries moves at velocity + angular x its offset
 }
-#assert(size_of(Gpu_Bone)==64)
+#assert(size_of(Gpu_Bone)==80)
 
 // Where the bones of an entity are among those of a frame (Particle_Sync.bones).
 @(private)
@@ -51,6 +55,7 @@ particle_bones_free :: proc(bones:^Particle_Bones) {
 @(private)
 bones_entry_free :: proc(entry:^Bones_Entry) {
     delete(entry.parents);delete(entry.previous);delete(entry.velocity)
+    delete(entry.previous_turn);delete(entry.angular)
 }
 
 // Begins the bones of a frame: those given in no frame of the last two go.
@@ -64,6 +69,18 @@ bones_begin :: proc(bones:^Particle_Bones) {
         kept+=1
     }
     base.truncate(&bones.entries,kept)
+}
+
+// The angular velocity that turns from into to in span seconds, along the
+// shortest arc: its axis in the world, its length in rad/s.
+@(private)
+turn_rate :: proc "contextless" (from,to:mm.Quat,span:f32) -> [3]f32 {
+    delta:=to*conj(from)
+    if real(delta)<0 {delta=-delta}
+    axis:=[3]f32{imag(delta),jmag(delta),kmag(delta)}
+    s:=math.sqrt(axis.x*axis.x+axis.y*axis.y+axis.z*axis.z)
+    if !(s>1e-12) || !(span>0) {return {}}
+    return axis*(2*math.atan2(s,real(delta))/(s*span))
 }
 
 // Gives the bones of an entity for this frame: bone i where world[i] is in the
@@ -95,13 +112,16 @@ bones_publish :: proc(bones:^Particle_Bones,e:core.Entity,world:[]mm.Transform,d
             span=f32(epoch-entry.epoch)*dt
         }
     }
-    if resize(&entry.parents,count)!=nil || resize(&entry.previous,count)!=nil || resize(&entry.velocity,count)!=nil {
+    if resize(&entry.parents,count)!=nil || resize(&entry.previous,count)!=nil || resize(&entry.velocity,count)!=nil ||
+        resize(&entry.previous_turn,count)!=nil || resize(&entry.angular,count)!=nil {
         entry.world,entry.frame,entry.epoch=nil,0,0
         return nil
     }
     for bone,i in world {
         entry.velocity[i]=(bone.position-entry.previous[i])/span if span>0 else {}
+        entry.angular[i]=turn_rate(entry.previous_turn[i],bone.rotation,span) if span>0 else {}
         entry.previous[i]=bone.position
+        entry.previous_turn[i]=bone.rotation
     }
     entry.world,entry.frame,entry.epoch=world,bones.frame,epoch
     return entry.parents[:]
@@ -135,7 +155,7 @@ bones_resource :: proc(sync:^Particle_Sync,bones:^Particle_Bones,e:core.Entity) 
         append(&sync.bones,Gpu_Bone{
             position=bone.position,parent=entry.parents[i],
             rotation={bone.rotation.x,bone.rotation.y,bone.rotation.z,bone.rotation.w},
-            scale=bone.scale,velocity=entry.velocity[i],
+            scale=bone.scale,velocity=entry.velocity[i],angular=entry.angular[i],
         })
     }
     resource.kind,resource.first,resource.count=.Bones,u32(first),u32(len(entry.world))
