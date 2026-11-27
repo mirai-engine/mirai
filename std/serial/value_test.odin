@@ -844,3 +844,25 @@ schema_persistent_lays_types_out_without_their_transient_fields :: proc(t:^testi
     schema_write(&again,&read)
     testing.expect(t,slice.equal(writer_bytes(&w),writer_bytes(&again)))
 }
+
+// A number out of the range of an angle says so, for the caller to name its
+// bound in radians and degrees; that of another field does not.
+@(test)
+value_check_says_when_a_number_out_of_range_is_an_angle :: proc(t:^testing.T) {
+    Lens :: struct {fov:f32 `mirai:"angle,min=0,max=3"`,near:f32 `mirai:"min=0,max=3"`}
+    s:Schema;schema_init(&s);defer schema_destroy(&s)
+    type,_:=schema_add(&s,Lens)
+    Case :: struct {value:Lens,fault:Value_Fault,path:string,angle:bool}
+    cases:=[]Case{
+        {{1,1},.None,"",false},
+        {{68,1},.Above_Max,"fov",true},
+        {{-1,1},.Below_Min,"fov",true},
+        {{1,68},.Above_Max,"near",false},
+    }
+    path:[64]u8
+    for c in cases {
+        value:=c.value
+        problem:=value_check(&s,type,bytes_of(&value),path[:])
+        testing.expectf(t,problem.fault==c.fault && problem.path==c.path && problem.angle==c.angle,"%v: %v",c.value,problem)
+    }
+}

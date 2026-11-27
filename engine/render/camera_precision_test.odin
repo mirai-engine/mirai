@@ -100,3 +100,25 @@ camera_carried_uses_live_camera_transform :: proc(t:^testing.T) {
     expected:=mm.transform_compose({rotation=live.rotation,scale={1,1,1}},{position={0,0,-0.4},rotation=1,scale={1,1,1}})
     testing.expect(t,linalg.length(carried.position-expected.position)<1e-5)
 }
+
+// A Camera.fov the schema refuses (degrees given as radians, from pi, below 0,
+// NaN) is drawn at the default 60° rather than as a view that shows nothing;
+// one inside the range is drawn as it is and 0 is the default.
+@(test)
+a_camera_draws_only_a_field_of_view_inside_its_range :: proc(t:^testing.T) {
+    cases:=[]struct{fov,drawn:f32}{
+        {1.187,1.187},
+        {CAMERA_FOV_MAX,CAMERA_FOV_MAX},
+        {0,CAMERA_DEFAULT.fov},
+        {68,CAMERA_DEFAULT.fov},
+        {math.PI,CAMERA_DEFAULT.fov},
+        {-0.5,CAMERA_DEFAULT.fov},
+        {math.nan_f32(),CAMERA_DEFAULT.fov},
+        {math.inf_f32(1),CAMERA_DEFAULT.fov},
+    }
+    for c in cases {
+        pose:=camera_pose(Camera{fov=c.fov},mm.TRANSFORM_IDENTITY)
+        testing.expectf(t,pose.fov==c.drawn,"%v: drawn at %v",c.fov,pose.fov)
+        testing.expectf(t,camera_fov_valid(c.fov)==(c.fov==c.drawn || c.fov==0),"%v: valid is %v",c.fov,camera_fov_valid(c.fov))
+    }
+}

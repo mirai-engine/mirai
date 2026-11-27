@@ -14,9 +14,8 @@ import render "mirai:engine/render"
 
 CAMERA_MODIFIERS :: 8
 // The vertical field of view, radians, that a perspective lens keeps with what shakes and modifiers
-// add: render.Camera takes 0 as its default and needs less than pi.
+// add, up to render.CAMERA_FOV_MAX: render.Camera takes 0 as its default.
 CAMERA_FOV_MIN :: 0.05
-CAMERA_FOV_MAX :: math.PI-0.05
 
 Camera_Modifier :: struct {
     id:u32,               // given by the game: asked again by its id, it changes its slot
@@ -132,7 +131,7 @@ modifiers_on :: proc "contextless" (follow:Camera_Follow,add:Camera_Modifier) ->
 }
 
 // Gives a perspective camera its field of view without what the shakes and modifiers add (that of
-// its setup or override) plus widen, within CAMERA_FOV_MIN..CAMERA_FOV_MAX. What it had without
+// its setup or override) plus widen, within CAMERA_FOV_MIN..render.CAMERA_FOV_MAX. What it had without
 // them is kept in state, so what one frame adds never adds to the last; an orthographic one keeps
 // its own.
 @(private)
@@ -141,7 +140,7 @@ lens_widen :: proc "contextless" (camera:^render.Camera,state:^Camera_Follow_Sta
     if camera.projection!=.Perspective || widen==0 {return}
     state.fov_own,state.widened=camera.fov,true
     lens:=camera.fov if camera.fov>0 else render.CAMERA_DEFAULT.fov
-    camera.fov=clamp(lens+widen,CAMERA_FOV_MIN,CAMERA_FOV_MAX)
+    camera.fov=clamp(lens+widen,CAMERA_FOV_MIN,render.CAMERA_FOV_MAX)
 }
 
 // Puts back the field of view a camera had without what the shakes and modifiers add.

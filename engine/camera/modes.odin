@@ -142,8 +142,8 @@ setup_invalid :: proc "contextless" (setup:Camera_Setup) -> string {
         return "each side of dead_zone is 0 or more"
     case f.min_pitch>f.max_pitch:
         return "min_pitch is not above max_pitch"
-    case lens.fov<0 || lens.fov>=3.14159 || lens.near<0:
-        return "the lens has a fov from 0 to pi and a near of 0 or more"
+    case !render.camera_fov_valid(lens.fov) || lens.near<0:
+        return "the lens has a fov in radians from 0 to 175° (render.CAMERA_FOV_MAX) and a near of 0 or more"
     case lens.projection==.Orthographic && lens.height<=0:
         return "an orthographic lens has a height above 0"
     }

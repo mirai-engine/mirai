@@ -88,7 +88,7 @@ Nav_Class :: struct {
     radius:f32 `mirai:"min=0,unit=m"`,
     height:f32 `mirai:"min=0,unit=m"`,
     climb:f32 `mirai:"min=0,unit=m"`,
-    max_slope:f32 `mirai:"angle,min=0"`,
+    max_slope:f32 `mirai:"angle,min=0,max=1.5707963"`, // under 90°
     jump_up:f32 `mirai:"min=0,unit=m"`,
     jump_across:f32 `mirai:"min=0,unit=m"`,
     drop:f32 `mirai:"min=0,unit=m"`,

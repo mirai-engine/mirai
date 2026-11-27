@@ -179,7 +179,7 @@ Camera_Projection :: enum u8 {Perspective,Orthographic}
 // active one.
 @(component,description="Defines a game view. The camera the player sees through is chosen by its seat and body; without one, the last active camera.")
 Camera :: struct {
-    fov:f32 `mirai:"angle,min=0"`, // vertical
+    fov:f32 `mirai:"angle,min=0,max=3.0543262"`, // vertical, up to 175° (CAMERA_FOV_MAX); 0: 60°
     near:f32 `mirai:"min=0,unit=m"`,
     active:bool,                    // the view of the game when no library chooses one
     projection:Camera_Projection,
@@ -199,7 +199,7 @@ Camera :: struct {
 // players of other machines) they are drawn as other meshes.
 @(component,description="Draws the weapon and arms under the camera of a local player near the eye, with their own field of view, so they never go into walls.")
 Viewmodel :: struct {
-    fov:f32 `mirai:"angle,min=0"`, // vertical
+    fov:f32 `mirai:"angle,min=0,max=3.0543262"`, // vertical, up to 175°
 }
 
 VIEWMODEL_DEFAULT :: Viewmodel{fov=55*mm.RAD_PER_DEG}
@@ -224,6 +224,14 @@ Layers :: struct {
 LAYERS_DEFAULT :: Layers{mask=1}
 
 CAMERA_DEFAULT :: Camera{fov=60*mm.RAD_PER_DEG,near=0.1,active=true}
+
+// The widest vertical field of view of a perspective lens, radians: 175°, at
+// or under the max of Camera.fov once rounded to f32.
+CAMERA_FOV_MAX :: 3.054326
+
+// Whether fov is the vertical field of view of a perspective Camera: from 0
+// (its default) to CAMERA_FOV_MAX radians.
+camera_fov_valid :: proc "contextless" (fov:f32) -> bool {return fov>=0 && fov<=CAMERA_FOV_MAX}
 
 Exposure_Mode :: enum u8 {Auto,Manual}
 
@@ -541,7 +549,7 @@ View_Bodies :: struct {
 // The camera of the game becomes its view.
 @(step="late",loops="game",stage="end")
 camera_view :: proc(
-    cameras:^core.Table(Camera,.Read),exposures:^core.Table(Exposure,.Read),worlds:^core.Table(core.World_Transform,.Read),chosen:core.Ref(View_Camera),view:^core.View,app:^host.App,
+    cameras:^core.Table(Camera,.Read),exposures:^core.Table(Exposure,.Read),worlds:^core.Table(core.World_Transform,.Read),chosen:core.Ref(View_Camera),view:^core.View,app:^host.App,problems:^core.Problems,
 ) {
     // .ptr spelled out: a field reached through using in a ternary is loaded before its nil check (see ODIN_WORKAROUNDS).
     best:=chosen.ptr!=nil?chosen.ptr.entity:core.NONE
@@ -550,6 +558,9 @@ camera_view :: proc(
         for row in 0..<core.count(cameras) {
             if core.at(cameras,row).active && core.has(worlds,core.entity_at(cameras,row)) {best=core.entity_at(cameras,row)}
         }
+    }
+    if c,found:=core.get(cameras,best);found && !camera_fov_valid(c.fov) {
+        core.report(problems,best,"render.camera_fov","Camera.fov is %v, outside 0 to %v radians (175°), and is drawn at 60°: give the vertical field of view in radians (degrees times pi/180), or 0 for 60°",c.fov,CAMERA_FOV_MAX)
     }
     posed:=chosen.ptr!=nil && best==chosen.entity && chosen.posed
     view_of_camera(view,cameras,exposures,worlds,best,host.app_scene_size(app),posed?&chosen.pose:nil,chosen.ptr!=nil && chosen.cut)
@@ -561,7 +572,7 @@ camera_pose :: proc "contextless" (c:Camera,world:mm.Transform) -> View_Pose {
     return {
         position=world.position,rotation=world.rotation,
         projection=c.projection==.Orthographic && c.height>0?.Orthographic:.Perspective,
-        fov=c.fov>0?c.fov:60*mm.RAD_PER_DEG,near=c.near>0?c.near:0.1,far=0,height=c.height,shift=c.shift,layers=c.layers,own_hidden=c.own_hidden,
+        fov=c.fov>0 && camera_fov_valid(c.fov)?c.fov:CAMERA_DEFAULT.fov,near=c.near>0?c.near:0.1,far=0,height=c.height,shift=c.shift,layers=c.layers,own_hidden=c.own_hidden,
     }
 }
 

@@ -245,7 +245,7 @@ override_chosen :: proc(cameras_state:core.Ref(Cameras),cameras:^core.Table(rend
 @(private)
 camera_valid :: proc(cameras:^core.Table(render.Camera,$A),e:core.Entity) -> bool {
     camera,ok:=core.get(cameras,e)
-    return ok && camera.fov>=0 && camera.fov<3.14159 && camera.near>=0
+    return ok && render.camera_fov_valid(camera.fov) && camera.near>=0
 }
 
 // The overrides as they were asked, and those of the activations whose action is held: with who
@@ -269,7 +269,7 @@ camera_select :: proc(
         case !core.alive(es.ptr,r.seat):
             core.report(problems,r.owner,"camera.override_seat","a camera override for seat 0x%016x was refused: that seat is not alive; ask for one of a live seat",u64(r.seat))
         case !camera_valid(cameras,r.camera):
-            core.report(problems,r.owner,"camera.override_invalid","a camera override through entity 0x%016x was refused: it has no render.Camera with a fov from 0 to pi and a near of 0 or more; give it one or pass another camera",u64(r.camera))
+            core.report(problems,r.owner,"camera.override_invalid","a camera override through entity 0x%016x was refused: it has no render.Camera with a fov from 0 to %v radians (175°) and a near of 0 or more; give it one or pass another camera",u64(r.camera),render.CAMERA_FOV_MAX)
         case r.blend.seconds<0:
             core.report(problems,r.owner,"camera.override_blend","a camera override through entity 0x%016x was refused: its blend lasts %v seconds; give it 0 or more",u64(r.camera),r.blend.seconds)
         case !override_set(cameras_state,r):

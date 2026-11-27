@@ -404,6 +404,19 @@ a_scene_document_keeps_a_rotation_given_whole :: proc(t:^testing.T) {
     }
 }
 
+// A value of a component out of its range names the bound; that of an angle
+// in radians and degrees, as a field of view given in degrees is refused.
+@(test)
+a_value_out_of_range_says_its_bound_and_an_angle_its_units :: proc(t:^testing.T) {
+    cases:=[]struct{problem:serial.Value_Problem,says:string}{
+        {{fault=.Above_Max,path="fov",number=68,limit=3.0543262,angle=true},"Camera.fov is 68, above its max 3.0543262 radians (175°): give angles in radians (degrees times pi/180)"},
+        {{fault=.Below_Min,path="fov",number=-1,limit=0,angle=true},"Camera.fov is -1, below its min 0 radians (0°): give angles in radians (degrees times pi/180)"},
+        {{fault=.Below_Min,path="near",number=-1,limit=0},"Camera.near is -1, below its min 0: give a number inside the range of the field"},
+        {{fault=.Not_Finite,path="fov"},"Camera.fov: Not_Finite; give a finite number, or a member of its enum"},
+    }
+    for c in cases {testing.expect_value(t,value_problem_text(c.problem,"Camera"),c.says)}
+}
+
 @(test)
 the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:^testing.T) {
     root,engine,copied:=template_copy(t,"scene")

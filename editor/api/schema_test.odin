@@ -1,5 +1,6 @@
 package api
 
+import "core:math"
 import "core:strings"
 import "core:testing"
 import "mirai:std/base"
@@ -204,6 +205,30 @@ a_value_of_another_schema_is_checked_like_the_params_of_a_method :: proc(t:^test
     value.flags=transmute(Flags)u8(0x80)
     message,ok=value_check(&schema,type,bytes,"x",context.temp_allocator)
     testing.expect_value(t,message,"x.flags has bits that are not members of its set")
+}
+
+// A value in degrees where its schema asks radians is refused with both units of the bound.
+@(test)
+an_angle_out_of_its_range_is_said_in_radians_and_degrees :: proc(t:^testing.T) {
+    Lens :: struct {fov:f32 `mirai:"angle,min=0,max=3.0543262"`}
+    schema:serial.Schema
+    serial.schema_init(&schema)
+    defer serial.schema_destroy(&schema)
+    type,added:=serial.schema_add(&schema,Lens)
+    testing.expect(t,added)
+    cases:=[]struct{fov:f32,says:string}{
+        {1.187,""},
+        {0,""},
+        {68,"Camera.fov must be at most 3.0543262 radians (175°): angles are in radians"},
+        {math.PI,"Camera.fov must be at most 3.0543262 radians (175°): angles are in radians"},
+        {-0.5,"Camera.fov must be at least 0 radians (0°): angles are in radians"},
+        {math.nan_f32(),"Camera.fov must be finite"},
+    }
+    for c in cases {
+        value:=Lens{c.fov}
+        message,ok:=value_check(&schema,type,(cast([^]u8)&value)[:size_of(Lens)],"Camera",context.temp_allocator)
+        testing.expectf(t,ok==(c.says=="") && message==c.says,"%v: %s",c.fov,message)
+    }
 }
 
 Open_Part :: struct {name:string,weights:[]f32 `mirai:"min=0,max=1"`}

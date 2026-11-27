@@ -477,7 +477,7 @@ a_camera_plays_sequence_shakes_over_its_view_until_they_end :: proc(t:^testing.T
         if p.sequence.keys[0].value.w>0 {p.sequence.scale=100}
     }
     shake_test_look(f,camera,body,0.1)
-    testing.expect(t,lens.fov==CAMERA_FOV_MAX,"and a perspective one stays below pi")
+    testing.expect(t,lens.fov==render.CAMERA_FOV_MAX,"and a perspective one stays below pi")
     shake_test_look(f,camera,body,1)
     testing.expect(t,lens.fov==1.2,"ended: the lens is its own again")
 }
@@ -631,7 +631,7 @@ camera_modifiers_add_up_with_their_own_blends :: proc(t:^testing.T) {
     // The lens stays within its limits and the arm is 0 or more.
     camera_modifier(&f.modifiers,camera,{id=3,fov=10,distance=-100})
     seen:=frame(f,camera,body,0.1,&problems)
-    testing.expectf(t,seen.fov==CAMERA_FOV_MAX && close(seen.arm,0),"the widest lens and no arm: %v",seen)
+    testing.expectf(t,seen.fov==render.CAMERA_FOV_MAX && close(seen.arm,0),"the widest lens and no arm: %v",seen)
     camera_modifier(&f.modifiers,camera,{id=3,fov=-10})
     seen=frame(f,camera,body,0.1,&problems)
     testing.expectf(t,seen.fov==CAMERA_FOV_MIN && close(seen.arm,6),"the narrowest lens: %v",seen)

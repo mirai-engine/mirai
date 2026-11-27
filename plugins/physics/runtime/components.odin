@@ -137,7 +137,7 @@ collider_character :: proc "contextless" (radius:f32=0.3,height:f32=1.8) -> Coll
 @(component,replicated,locks="core.Transform",description="A physical character that stands on walkable ground, steps and pushes, moved by its Character_Move.")
 Character :: struct {
     mass:f32 `mirai:"min=0,unit=kg"`, // 0: from the density of the capsule
-    max_slope:f32 `mirai:"angle,min=0"`,
+    max_slope:f32 `mirai:"angle,min=0,max=1.5707963"`, // under 90°
     step_height:f32 `mirai:"min=0,unit=m"`,
     traction_force:f32 `mirai:"min=0,unit=N"`,
     adhesion_force:f32 `mirai:"min=0,unit=N"`,

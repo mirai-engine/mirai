@@ -2,6 +2,7 @@ package author
 
 import "base:runtime"
 import "core:fmt"
+import "core:math"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
@@ -201,7 +202,7 @@ scene_component_apply :: proc(f:^Scene_File,reading:^Reading,id:base.Entity_Id,t
     }
     place:[serial.TEXT_PATH_BYTES]u8
     if problem:=serial.value_check(&f.ws.schema,v.type,bytes,place[:]);problem.fault!=.None {
-        reading_failf(reading,"%s.%s: %v; give a finite number inside the range of the field, or a member of its enum",path,problem.path,problem.fault)
+        reading_failf(reading,"%s",value_problem_text(problem,path))
         return
     }
     for offset in v.entities {
@@ -497,6 +498,22 @@ scene_stored :: proc(p:^Project,path:string) -> []escene.Stored {
     defer asset.asset_close(&file)
     escene.stored_collect(core.world_ref(nil,p.info),&file,&p.types,&stored)
     return stored[:]
+}
+
+// What is wrong with the value of a component at path and how to fix it. An
+// angle out of range is said in radians and degrees, as a value in degrees is
+// the usual mistake.
+@(private)
+value_problem_text :: proc(problem:serial.Value_Problem,path:string) -> string {
+    #partial switch problem.fault {
+    case .Below_Min,.Above_Max:
+        side,bound:=problem.fault==.Below_Min?"below":"above",problem.fault==.Below_Min?"min":"max"
+        if problem.angle {
+            return fmt.tprintf("%s.%s is %v, %s its %s %v radians (%.4g°): give angles in radians (degrees times pi/180)",path,problem.path,problem.number,side,bound,problem.limit,math.to_degrees(problem.limit))
+        }
+        return fmt.tprintf("%s.%s is %v, %s its %s %v: give a number inside the range of the field",path,problem.path,problem.number,side,bound,problem.limit)
+    }
+    return fmt.tprintf("%s.%s: %v; give a finite number, or a member of its enum",path,problem.path,problem.fault)
 }
 
 // Whether the document of a scene reads and writes it back

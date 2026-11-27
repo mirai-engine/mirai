@@ -173,11 +173,18 @@ load_f64 :: proc(bytes:[]u8) -> f64 {
 }
 
 // An integer tagged clamp comes with its bytes: past its max it takes the max.
+// The bound of an angle is said in radians and degrees, as a value in degrees
+// is the usual mistake.
 @(private)
 check_bounds :: proc(c:^Checker,value:f64,field:^serial.Field,clamp:[]u8=nil) -> bool {
     if field==nil {return true}
-    if field.has_min && value<field.min {return check_fail(c,"must be at least %v",field.min)}
+    angle:=.Angle in field.flags
+    if field.has_min && value<field.min {
+        if angle {return check_fail(c,"must be at least %v radians (%.4g°): angles are in radians",field.min,math.to_degrees(field.min))}
+        return check_fail(c,"must be at least %v",field.min)
+    }
     if field.has_max && value>field.max {
+        if angle {return check_fail(c,"must be at most %v radians (%.4g°): angles are in radians",field.max,math.to_degrees(field.max))}
         if clamp==nil {return check_fail(c,"must be at most %v",field.max)}
         serial.scalar_store(clamp,transmute(u64)i64(field.max),field.max<0)
         c.clamped=format_text(c.allocator,`%s%s%q:{{"asked":%v,"used":%v}}`,c.clamped,c.clamped!=""?",":"",string(c.path[:c.path_len]),i64(value),i64(field.max))

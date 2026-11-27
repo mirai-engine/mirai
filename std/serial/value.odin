@@ -633,6 +633,7 @@ Value_Problem :: struct {
     kind:Type_Kind, // of the part
     number:f64,     // the number, or the value of the choice
     limit:f64,      // Below_Min and Above_Max: the bound it broke
+    angle:bool,     // Below_Min and Above_Max: the field is an angle, in radians
 }
 
 // Whether a reference of a value is acceptable: an Entity, Entity_Id or Asset
@@ -670,7 +671,7 @@ value_path_add :: proc(c:^Value_Check,parts:..string) {
 
 @(private="file")
 value_fail :: proc(c:^Value_Check,fault:Value_Fault,offset:u32,kind:Type_Kind,number:f64=0,limit:f64=0) -> bool {
-    c.problem={fault,string(c.path[:c.length]),offset,kind,number,limit}
+    c.problem={fault=fault,path=string(c.path[:c.length]),offset=offset,kind=kind,number=number,limit=limit}
     return false
 }
 
@@ -729,9 +730,13 @@ value_check_part :: proc(c:^Value_Check,index:Type_Index,offset:u32,field:^Field
 @(private="file")
 value_range :: proc(c:^Value_Check,field:^Field,offset:u32,kind:Type_Kind,number:f64) -> bool {
     if field==nil {return true}
-    if field.has_min && number<field.min {return value_fail(c,.Below_Min,offset,kind,number,field.min)}
-    if field.has_max && number>field.max {return value_fail(c,.Above_Max,offset,kind,number,field.max)}
-    return true
+    switch {
+    case field.has_min && number<field.min: value_fail(c,.Below_Min,offset,kind,number,field.min)
+    case field.has_max && number>field.max: value_fail(c,.Above_Max,offset,kind,number,field.max)
+    case: return true
+    }
+    c.problem.angle=.Angle in field.flags
+    return false
 }
 
 @(private="file")
