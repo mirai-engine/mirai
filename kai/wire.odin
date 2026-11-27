@@ -3,6 +3,7 @@ package kai
 import "base:runtime"
 import "core:crypto"
 import "core:net"
+import "core:slice"
 import "core:sync"
 import "core:time"
 import wire "mirai:net"
@@ -22,6 +23,7 @@ KAI_PORT :: 7350 // TCP of the agent, UDP of its beacon
 FRAME_MAX :: 1<<20+64<<10 // a message: a reply of chunks fills up to FRAME_FILL
 FRAME_FILL :: 1<<20
 WANT_MAX :: 4096 // addresses one want names
+GOSSIP_MAX :: 1024 // entries one Peers message names
 
 // The kinds of messages, each a byte and its body (agent.odin reads them).
 Msg :: enum u8 {
@@ -39,6 +41,7 @@ Msg :: enum u8 {
     Server_Info,   // empty request; answered by Server_Info(name, device, public) or Bye
     Org_Register,  // org, count u16 × (u32 len, org record) oldest-to-newest: an admin attaches a server to its org
     Invite_Grant,  // Invite_Grant bytes: an admin registers a 1-use offline invite on its org's server
+    Peers,         // count u16 × Gossip_Entry: where this end and the members it is connected to listen
 }
 
 // A head one end holds: an org's record, a repository's shared bookmarks,
@@ -51,6 +54,33 @@ Tell_Entry :: struct #packed {
     org:Org_Id,
     id:store.Hash,      // a repository's id in its first 16 bytes, a derived data key, or an admission's secret_hash
     address:store.Hash,
+}
+
+// Where a machine listens: an IPv4 address and a TCP port.
+Peer_At :: struct #packed {
+    ip:[4]u8,
+    port:u16le,
+}
+
+// A member of an org both ends share, and one address it listens at: what it
+// says of itself, or where the sending end sees it. The handshake proves the
+// key at that address, so an entry proves nothing.
+Gossip_Entry :: struct #packed {
+    key:Key,
+    at:Peer_At,
+}
+
+// The entries of a Peers message: ok false when its count passes GOSSIP_MAX,
+// its length is not that of count entries or an entry names port zero.
+gossip_parse :: proc(body:[]u8) -> (entries:[]Gossip_Entry,ok:bool) {
+    if len(body)<2 {return}
+    count:=int(body[0])|int(body[1])<<8
+    if count>GOSSIP_MAX || len(body)!=2+count*size_of(Gossip_Entry) {return}
+    entries=slice.reinterpret([]Gossip_Entry,body[2:])
+    for e in entries {
+        if e.at.port==0 {return nil,false}
+    }
+    return entries,true
 }
 
 Conn :: struct {

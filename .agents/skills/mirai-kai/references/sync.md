@@ -9,7 +9,8 @@ a sync; `mirai:net` gives only the
 ## The handshake
 
 - Noise NNhfs (the KEM extension for hybrid forward secrecy) with X25519 and ML-KEM-768,
-  ChaChaPoly and SHA-256 (`NOISE_PROTOCOL`), prologue `kai/2`:
+  ChaChaPoly and SHA-256 (`NOISE_PROTOCOL`), prologue `kai/3` (raised with each change of the
+  messages, so machines of two versions refuse each other at the handshake):
   `-> e, e1`; `<- e, ee, ekem1` with the responder's key and its signature of the handshake hash;
   `->` the initiator's key, its signature and an invite proof (zero when it joins by none).
 - The session keys come from both the X25519 and the ML-KEM secret, so a recording of the stream
@@ -41,11 +42,15 @@ a sync; `mirai:net` gives only the
   as the store keeps them, up to `FRAME_FILL`), `Lack`, `Ddc_Ask`, `Join` (with optional signed
   `Invite_Claim`) and `Welcome` (org head and optional `Admission` address,
   [invites](org.md#invites)), first-message control RPCs (`Web_Login`, `Server_Info`,
-  `Org_Register`, `Invite_Grant`) and `Bye` with why. A peer that keeps more than
+  `Org_Register`, `Invite_Grant`), `Peers` (up to `GOSSIP_MAX` fixed `Gossip_Entry`s: a member's
+  key, IPv4 address and port; [gossip](#how-machines-reach-each-other)) and `Bye` with why. A
+  `Peers` whose length is not exactly its count's, past `GOSSIP_MAX` or naming port zero ends the
+  connection (`gossip_parse`). A peer that keeps more than
   `REQUESTS_BYTES_MAX` of wants and asks waiting, or tells of more than `TOLD_MAX` heads, ends its
   connection.
 - Of two connections between the same keys, both ends keep the one whose dialing end has the
-  lower key (`peer_unique`).
+  lower key (`peer_unique`); the choice is made under the agent's lock, so two members that dial
+  each other at once (both learned the other's address) keep one.
 
 ## The agent
 
@@ -66,6 +71,15 @@ a sync; `mirai:net` gives only the
   machine keeps: those a workspace links, or all of them on a node. A pull walks a level of the
   trees at a time (`walk_missing`) with up to `FETCH_WINDOW` chunks in flight; a fetch with nothing
   answered for `FETCH_SECONDS` gives up on that peer.
+- Many sources: every peer that told of a repository's shared bookmarks (a server and members,
+  `agent_sources`) pulls it at once, and the agent's `claims` (under its lock) keep which fetch
+  asked each chunk, so no chunk is asked of two peers. A fetch leaves a chunk another claimed to
+  it and takes it back, from the store or by asking it, once the claim goes: when that chunk
+  arrives, is lacked (`Lack`), or that fetch fails, times out or its peer leaves. Each fetch
+  claims at most its share (`ceil(queue / sources)`) per round, so a level of few chunks splits
+  among the peers and a faster one takes what is left. A test proves both serve, no chunk comes
+  twice, and what one lacks the other brings
+  (`a_pull_splits_among_peers_and_takes_what_one_lacks_from_another`).
 - A pull is whole only when every chunk of every object it reaches is here (`object_whole`, with
   `whole` in the walk of `kai/reach.odin`), never when a root alone is: a pull cut midway never
   reads as complete (`a_closure_is_whole_only_when_every_chunk_is_here`).
@@ -73,13 +87,16 @@ a sync; `mirai:net` gives only the
   for newly discovered members; one another process of the machine wrote reaches them within
   `LOOK_SECONDS`. `agent_sync_now` clears dial throttling and forces an immediate sync pass.
   `agent_join` and `agent_admit` save the peer's dialed or listening address (`team_peer_seen`)
-  after membership holds so peers reconnect across restarts without beacons. Nothing else polls.
+  after membership holds so peers reconnect across restarts without beacons. When an org's
+  record or admissions move, each peer is told every head it reads (a peer a record lists only
+  now was told nothing of that org at its `Hello`). Nothing else polls.
 
 ## Who reads what
 
 - A peer is served the heads of the orgs whose member its key is (`agent_heads`) and the chunks of
-  those orgs, asked by address in the org's store. A `Want` for an org it is no member of ends the
-  connection.
+  those orgs, asked by address in the org's store. A `Want` from a member of another org for one
+  it is no member of ends the connection; one from a device no record here lists yet is answered
+  `Lack` (it may bring the record that lists it, and reads nothing until then).
 - On a server each org has its own store ([server](server.md#the-server)), so an address of
   another org is never there to serve.
 - A peer takes from another only what that one's role lets it sign: org versions by the rules of
@@ -97,6 +114,16 @@ a sync; `mirai:net` gives only the
   invite carries. A UPnP mapping the router already forwards to this machine serves and is never
   deleted. `agent_reach` says Local, Connecting or Online; an invite made while the router has not
   answered waits for it up to 1.5 s (`agent_reach_wait`), and the views move when it does.
+- Gossip (`Peers`): when a peer connects or first sends `Peers`, when an org's members move and
+  when the router answers, each agent tells every peer where it listens (`agent_addresses`, an
+  IPv4 `--public`) and where its other connected peers that share an org with that one listen,
+  as each said and as this end sees it (address and `Hello` port). Never in answer to every
+  `Peers`, so it ends. The receiver keeps the last `DIAL_ADDRESSES` of each member (`heard`, at
+  most `HEARD_MAX` members) and wakes `agent_dial_members`: two members connected to a server
+  connect to each other and pull from both (`members_that_know_only_the_server_meet_through_it`).
+  An address proves nothing: the dial expects the member's key and the handshake proves it. A
+  loopback address holds only from a peer on this machine, and a loopback agent (tests,
+  `mesh_loopback`) keeps no other.
 - Without a router that maps and without a server, a machine on another network is reached only
   at a host:port someone forwarded (`--at` of an invite). A central server (`DEFAULT_SERVER`,
   overridden or disabled with `MIRAI_KAI_SERVER=""`) is the usual way.
@@ -107,8 +134,10 @@ a sync; `mirai:net` gives only the
   (`a_pull_over_loopback_runs_at_tcp_speed` with `KAI_BENCH_MB=113`), where the UDP mesh it
   replaced moved about 1.5 MB/s.
 - `agent_pulls` and zero-alloc `agent_pull_of` give per repository the chunks and bytes that
-  arrived, those left and whether it is whole: what `mirai kai pull`, the launcher and `kai.peers`
-  show.
+  arrived from every peer, those left in every fetch of it and whether it is whole: true only when
+  a pass finds every chunk of every object here, false from a pass only when no chunk arrived
+  from another peer meanwhile (`agent_pull_end`). What `mirai kai pull`, the launcher and
+  `kai.peers` show.
 
 ## Derived data
 

@@ -1,6 +1,7 @@
 package kai
 
 import "core:fmt"
+import "core:math/rand"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -110,4 +111,29 @@ an_unreadable_device_secret_is_kept :: proc(t:^testing.T) {
     testing.expect(t,slice.equal(before,after),"the secret is the one made first")
     second,se:=machine_identity(&s)
     testing.expect(t,se==.None && second.key==first.key)
+}
+
+// gossip_parse takes only a count of at most GOSSIP_MAX entries, exactly
+// that many, none with port zero; random bytes never pass as more than they
+// hold.
+@(test)
+peers_messages_parse_only_whole_and_bounded :: proc(t:^testing.T) {
+    entry:=Gossip_Entry{at={{10,0,0,2},7350}}
+    good:=make([dynamic]u8,context.temp_allocator)
+    append(&good,1,0)
+    append(&good,..slice.to_bytes([]Gossip_Entry{entry}))
+    entries,ok:=gossip_parse(good[:])
+    testing.expect(t,ok && len(entries)==1 && entries[0].at==entry.at,"one good entry")
+    _,ok=gossip_parse(good[:len(good)-1])
+    testing.expect(t,!ok,"a short entry")
+    _,ok=gossip_parse([]u8{0xff,0xff})
+    testing.expect(t,!ok,"a count past GOSSIP_MAX")
+    random:=make([]u8,200,context.temp_allocator)
+    for _ in 0..<2000 {
+        n:=int(rand.uint32()%200)
+        for &x in random[:n] {x=u8(rand.uint32())}
+        if rand.uint32()%2==0 && n>=2 {random[0],random[1]=u8((n-2)/size_of(Gossip_Entry)),0}
+        parsed,parsed_ok:=gossip_parse(random[:n])
+        if parsed_ok {testing.expect(t,2+len(parsed)*size_of(Gossip_Entry)==n,"what parses is exactly its entries")}
+    }
 }

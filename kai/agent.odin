@@ -43,6 +43,7 @@ BEACON_MAGIC :: "KAI2"
 PEERS_MAX :: 256
 REQUESTS_BYTES_MAX :: 1<<20 // of wants and asks a peer keeps waiting: past it its connection ends
 TOLD_MAX :: 1<<16   // heads a peer may tell this end of
+HEARD_MAX :: 1024   // members whose addresses peers told of that the agent keeps
 
 Agent_Options :: struct {
     port:int,       // TCP port to listen at: 0 for KAI_PORT, or any free port if it is taken; -1 listens at none
@@ -58,14 +59,14 @@ Agent_Options :: struct {
     web_data:rawptr,
 }
 
-// How far a repository's pull is.
+// How far a repository's pull is, from every peer it comes from.
 Pull :: struct {
     org:Org_Id,
     repo:Repo_Id,
     chunks:int,  // arrived since the agent started
     left:int,    // asked or found and not here yet
     bytes:i64,   // arrived since the agent started
-    whole:bool,  // every object its shared bookmarks reach is here
+    whole:bool,  // every chunk of every object its shared bookmarks reach is here
 }
 
 Peer_Info :: struct {
@@ -96,14 +97,30 @@ Agent :: struct {
     mapping_on:bool,
     pulls:[dynamic]Pull,
     waits:[dynamic]^Ddc_Wait,
+    fetches:[dynamic]^Fetch,  // every fetch running, of every peer
+    claims:map[Claim]^Fetch,  // the chunk each fetch asked and has not had answered: no two fetches ask one
+    heard:map[Key]Heard,      // where peers said members listen (Peers)
+    loopback:bool,            // listens and dials on loopback alone (tests): other addresses peers tell are ignored
+    served:int,               // chunks sent to peers, atomic
     changed:bool,
     redial:bool,
+    gossip:bool,              // the peers are told where the members listen again
     generation:u64, // one more each time what agent_peers, agent_pulls, agent_events or the heads give changes
     allocator:runtime.Allocator,
 }
 
 @(private)
 Tell_Key :: struct {kind:Tell_Kind,org:Org_Id,id:store.Hash}
+
+@(private)
+Claim :: struct {s:^store.Store,address:store.Hash}
+
+// The last DIAL_ADDRESSES addresses peers said a member listens at.
+@(private)
+Heard :: struct {
+    at:[DIAL_ADDRESSES]Peer_At,
+    count,next:int,
+}
 
 @(private)
 Peer :: struct {
@@ -126,6 +143,8 @@ Peer :: struct {
     welcome_admission:store.Hash,
     ready:bool,             // its handshake held
     done:bool,              // its reader ended
+    gossiped:bool,          // a Peers message came from it
+    kept:bool,              // under the agent's lock: the one connection kept to its key (peer_unique)
     reader,server,puller:^thread.Thread,
     refs:int,               // under the agent's lock: callers holding it, which the reaper waits for
 }
@@ -133,9 +152,15 @@ Peer :: struct {
 @(private)
 Fetch :: struct {
     s:^store.Store,
-    pending:map[store.Hash]struct{},
-    arrived:[dynamic]Arrival,
+    org:Org_Id,
+    repo:Repo_Id,                    // the repository whose pull counts what arrives; zero when none
+    left:int,                        // under the agent's lock: chunks it queued or asked and has not had
+    pending:map[store.Hash]struct{}, // under its peer's lock: asked and not answered
+    arrived:[dynamic]Arrival,        // under its peer's lock
 }
+
+@(private)
+Fetch_Want :: struct {address:store.Hash,node:bool}
 
 @(private)
 Arrival :: struct {address:store.Hash,lacked:bool,bytes:int}
@@ -165,6 +190,10 @@ agent_start :: proc(a:^Agent,team:^Team,options:Agent_Options,allocator:=context
     a.told=make(map[Tell_Key]store.Hash,allocator)
     a.peers=make([dynamic]^Peer,allocator)
     a.threads=make([dynamic]^thread.Thread,allocator)
+    a.fetches=make([dynamic]^Fetch,allocator)
+    a.claims=make(map[Claim]^Fetch,allocator)
+    a.heard=make(map[Key]Heard,allocator)
+    if address,ok:=net.parse_ip4_address(options.host);ok {a.loopback=address[0]==127}
     if options.port>=0 {
         host:=net.IP4_Any
         if options.host!="" {
@@ -276,6 +305,9 @@ agent_free :: proc(a:^Agent) {
     delete(a.threads)
     delete(a.pulls)
     delete(a.waits)
+    delete(a.fetches)
+    delete(a.claims)
+    delete(a.heard)
     delete(a.team.name,a.allocator)
     delete(a.team.device,a.allocator)
     a.team={}
@@ -773,6 +805,11 @@ peer_read_run :: proc(p:^Peer) {
     sync.mutex_unlock(&p.lock)
     if !started {return}
     agent_moved(a)
+    // The other peers learn where it listens, and it where they do.
+    sync.mutex_lock(&a.lock)
+    a.gossip=true
+    sync.cond_broadcast(&a.wake)
+    sync.mutex_unlock(&a.lock)
     raw,re:=make([]u8,store.CHUNK_MAX)
     if re!=nil {return}
     defer delete(raw)
@@ -864,6 +901,10 @@ peer_read_run :: proc(p:^Peer) {
         case .Bye:
             agent_event(a,"%s left: %s",peer_text(p),string(body[:min(len(body),300)]))
             return
+        case .Peers:
+            entries,ok:=gossip_parse(body)
+            if !ok {return}
+            if vouched || agent_knows(a,c.peer) {agent_heard(a,p,entries)}
         case .Web_Login,.Server_Info,.Org_Register,.Invite_Grant:
             return // only as an initiator's first message
         }
@@ -884,7 +925,9 @@ hello_names_an_org :: proc(a:^Agent,r:^Reader) -> bool {
 }
 
 // Whether p is the one connection kept to its key: of two, the one whose
-// dialing end has the lower key, which both ends choose alike.
+// dialing end has the lower key, which both ends choose alike. Two readers
+// that run it at once (both ends dialed each other) see each other's choice:
+// it is made under the agent's lock.
 @(private)
 peer_unique :: proc(a:^Agent,p:^Peer) -> bool {
     sync.mutex_lock(&a.lock)
@@ -892,15 +935,16 @@ peer_unique :: proc(a:^Agent,p:^Peer) -> bool {
     own:=a.team.identity.key
     key:=p.conn.peer // set before this reader runs it, by its own thread
     for q in a.peers {
-        if q==p {continue}
+        if q==p || !q.kept {continue}
         sync.mutex_lock(&q.lock)
-        live:=q.ready && !q.done && q.conn!=nil && q.conn.peer==key
+        live:=!q.done && q.conn!=nil && q.conn.peer==key
         sync.mutex_unlock(&q.lock)
         if !live {continue}
         initiator :: proc(x:^Peer,own,key:Key) -> Key {return x.dialed!=""?own:key}
         if key_less(initiator(q,own,key),initiator(p,own,key)) {return false}
         peer_end(q)
     }
+    p.kept=true
     return true
 }
 
@@ -1026,9 +1070,12 @@ peer_serve_run :: proc(p:^Peer) {
         r:=Reader{data=request[1:]}
         org:=read_value(&r,Org_Id)
         if r.short {return}
+        // A device no record here lists yet may bring the one that does
+        // (peer_read_run): it reads nothing until then. A member of another
+        // org that asks this one's is cut off.
         _,member:=agent_role(a,org,p.conn.peer)
         s,se:=team_store(&a.team,org)
-        if !member || se!=.None {
+        if se!=.None || !member && agent_knows(a,p.conn.peer) {
             conn_send(p.conn,.Bye,transmute([]u8)string("this device is no member of that org here"))
             peer_end(p)
             return
@@ -1039,7 +1086,7 @@ peer_serve_run :: proc(p:^Peer) {
             entry:=Tell_Entry{kind=.Ddc,org=org,id=key}
             ns:[len(DDC_PREFIX)+32]u8
             name:[64]u8
-            entry.address,_=store.ref_get(s,ddc_namespace(org,&ns),store.hex(key,&name))
+            if member {entry.address,_=store.ref_get(s,ddc_namespace(org,&ns),store.hex(key,&name))}
             if !peer_tell(p,{entry}) {return}
             continue
         }
@@ -1049,6 +1096,10 @@ peer_serve_run :: proc(p:^Peer) {
         at,n:=2,0
         for _ in 0..<count {
             address:=read_value(&r,store.Hash)
+            if !member {
+                append(&lacking,address)
+                continue
+            }
             bytes,codec,size,e:=store.chunk_read_frame(s,address,chunk)
             if e!=.None {
                 append(&lacking,address)
@@ -1065,6 +1116,7 @@ peer_serve_run :: proc(p:^Peer) {
             copy(buffer[at+41:],bytes)
             at+=41+len(bytes)
             n+=1
+            sync.atomic_add(&a.served,1)
         }
         if n>0 && !serve_flush(p,buffer,at,n) {return}
         for k:=0;k<len(lacking);k+=1000 {
@@ -1125,7 +1177,7 @@ peer_pull :: proc(p:^Peer,told:[]Tell_Entry) -> (changed:bool) {
         if se!=.None {continue}
         o,_,oe:=org_head(s,e.org,context.temp_allocator)
         if oe!=.None {continue}
-        if !peer_fetch(p,e.org,s,{e.address},nil) {continue}
+        if !peer_fetch(p,e.org,s,{e.address}) {continue}
         moved,ae:=admission_accept(s,&o,e.address)
         if ae==.None && moved {
             store.commit(s)
@@ -1146,7 +1198,7 @@ peer_pull :: proc(p:^Peer,told:[]Tell_Entry) -> (changed:bool) {
         switch e.kind {
         case .Org,.Admit:
         case .Repo:
-            if !peer_fetch(p,e.org,s,{e.address},nil) {continue}
+            if !peer_fetch(p,e.org,s,{e.address}) {continue}
             moved,_:=repo_refs_accept(s,&o,e.address)
             changed||=moved
         case .Ddc:
@@ -1171,14 +1223,14 @@ peer_pull :: proc(p:^Peer,told:[]Tell_Entry) -> (changed:bool) {
                         if b.name!="main" {continue}
                         c,ce:=change_get(s,b.target,context.temp_allocator)
                         if ce!=.None {
-                            if !peer_fetch(p,id,s,{b.target},nil) {continue}
+                            if !peer_fetch(p,id,s,{b.target}) {continue}
                             changed=true
                             c,ce=change_get(s,b.target,context.temp_allocator)
                             if ce!=.None {continue}
                         }
                         if c.tree!={} {
                             if _,te:=tree_totals(s,c.tree);te!=.None {
-                                if peer_fetch(p,id,s,{c.tree},nil) {changed=true}
+                                if peer_fetch(p,id,s,{c.tree}) {changed=true}
                             }
                         }
                     }
@@ -1189,11 +1241,16 @@ peer_pull :: proc(p:^Peer,told:[]Tell_Entry) -> (changed:bool) {
             if re!=.None {continue}
             roots:=make([dynamic]Walk_Item,context.temp_allocator)
             for b in refs.bookmarks {append(&roots,Walk_Item{b.target,.Change})}
-            pull:=agent_pull_get(a,id,r.id)
-            before:=pull.chunks
-            whole:=peer_whole(p,id,s,roots[:],&pull)
-            pull.whole,pull.left=whole,whole?0:pull.left
-            agent_pull_set(a,pull)
+            before:=agent_pull_end(a,id,r.id,false,-1).chunks
+            whole:=peer_whole(p,id,s,roots[:],r.id,agent_sources(a,id,r.id))
+            seen:=agent_pull_end(a,id,r.id,false,-1).chunks
+            if !whole {
+                // What this peer lacked another may have brought.
+                missing:=make([dynamic]store.Hash,context.temp_allocator)
+                walk_missing(s,roots[:],nil,&missing)
+                whole=len(missing)==0
+            }
+            pull:=agent_pull_end(a,id,r.id,whole,seen)
             if whole && pull.chunks>before {
                 agent_event(a,"pulled %s from %s: %d chunks, %d bytes",r.name,peer_text(p),pull.chunks,pull.bytes)
                 changed=true
@@ -1208,52 +1265,93 @@ peer_pull :: proc(p:^Peer,told:[]Tell_Entry) -> (changed:bool) {
 // whole when they are here, changed when the ref moved.
 @(private)
 peer_ddc_take :: proc(p:^Peer,org:^Org,s:^store.Store,key,address:store.Hash) -> (whole,changed:bool) {
-    if !peer_fetch(p,org.id,s,{address},nil) {return}
+    if !peer_fetch(p,org.id,s,{address}) {return}
     records:=make([dynamic][]u8,context.temp_allocator)
     if ddc_set_read(s,address,&records)!=.None {return}
     roots:=make([dynamic]Walk_Item,context.temp_allocator)
     for record in records {
         if d,ok:=ddc_record_allowed(org,key,record);ok {append(&roots,Walk_Item{d.output_root,.Output})}
     }
-    if len(roots)==0 || !peer_whole(p,org.id,s,roots[:],nil) {return}
+    if len(roots)==0 || !peer_whole(p,org.id,s,roots[:]) {return}
     moved,_,e:=ddc_accept(s,org,key,address) // its ref_set commits
     return e==.None,moved
 }
 
 // Fetches from p every object roots reach that is not whole in s, a level at
-// a time; whole when nothing is missing any more.
+// a time; whole when nothing is missing any more. repo and sources are
+// peer_fetch's.
 @(private)
-peer_whole :: proc(p:^Peer,org:Org_Id,s:^store.Store,roots:[]Walk_Item,pull:^Pull) -> bool {
+peer_whole :: proc(p:^Peer,org:Org_Id,s:^store.Store,roots:[]Walk_Item,repo:Repo_Id={},sources:=1) -> bool {
     for {
         missing:=make([dynamic]store.Hash,context.temp_allocator)
         walk_missing(s,roots,nil,&missing)
         if len(missing)==0 {return true}
-        if !peer_fetch(p,org,s,missing[:],pull) {return false}
+        if !peer_fetch(p,org,s,missing[:],repo,sources) {return false}
     }
 }
 
+// How many connected peers told of the repository's shared bookmarks: those a
+// pull of it splits among.
 @(private)
-agent_pull_get :: proc(a:^Agent,org:Org_Id,repo:Repo_Id) -> Pull {
+agent_sources :: proc(a:^Agent,org:Org_Id,repo:Repo_Id) -> int {
+    k:=Tell_Key{kind=.Repo,org=org}
+    id:=repo
+    copy(k.id[:16],id[:])
     sync.mutex_lock(&a.lock)
     defer sync.mutex_unlock(&a.lock)
-    for x in a.pulls {
-        if x.org==org && x.repo==repo {return x}
+    n:=0
+    for p in a.peers {
+        sync.mutex_lock(&p.lock)
+        if p.ready && !p.done && k in p.told {n+=1}
+        sync.mutex_unlock(&p.lock)
     }
-    return {org=org,repo=repo}
+    return max(n,1)
 }
 
+// The pull of a repository, made when there is none; nil when memory ran
+// out. Under the agent's lock.
 @(private)
-agent_pull_set :: proc(a:^Agent,pull:Pull) {
-    agent_moved(a)
-    sync.mutex_lock(&a.lock)
-    defer sync.mutex_unlock(&a.lock)
+pull_locked :: proc(a:^Agent,org:Org_Id,repo:Repo_Id) -> ^Pull {
     for &x in a.pulls {
-        if x.org==pull.org && x.repo==pull.repo {
-            x=pull
-            return
-        }
+        if x.org==org && x.repo==repo {return &x}
     }
-    append(&a.pulls,pull)
+    if _,e:=append(&a.pulls,Pull{org=org,repo=repo});e!=nil {return nil}
+    return &a.pulls[len(a.pulls)-1]
+}
+
+// Says whether the pull of a repository is whole, as a pass of one peer found
+// it, and gives it. A pass that finds it not whole says so only when no chunk
+// arrived since seen (the pull's chunks when it looked): one that came from
+// another peer meanwhile is that peer's pass to judge. seen -1 only reads.
+@(private)
+agent_pull_end :: proc(a:^Agent,org:Org_Id,repo:Repo_Id,whole:bool,seen:int) -> Pull {
+    sync.mutex_lock(&a.lock)
+    defer sync.mutex_unlock(&a.lock)
+    x:=pull_locked(a,org,repo)
+    if x==nil {return {org=org,repo=repo}}
+    if whole {
+        x.whole,x.left=true,0
+    } else if seen>=0 && x.chunks==seen {
+        x.whole=false
+    }
+    if whole || seen>=0 {agent_moved(a)}
+    return x^
+}
+
+// Counts what a fetch of a repository's pull took and what every fetch of it
+// has left. Under the agent's lock.
+@(private)
+pull_count_locked :: proc(a:^Agent,f:^Fetch,chunks:int,bytes:i64) {
+    x:=pull_locked(a,f.org,f.repo)
+    if x==nil {return}
+    x.chunks+=chunks
+    x.bytes+=bytes
+    if chunks>0 {x.whole=false}
+    x.left=0
+    for g in a.fetches {
+        if g.org==f.org && g.repo==f.repo {x.left+=g.left}
+    }
+    agent_moved(a)
 }
 
 // Fetches the org's records from p back to one held, then takes the newest.
@@ -1267,24 +1365,34 @@ agent_org_pull :: proc(a:^Agent,p:^Peer,org:Org_Id,address:store.Hash,create:=fa
             store.commit(s)
             return moved,e
         }
-        if !peer_fetch(p,org,s,{need},nil) {return false,.Missing}
+        if !peer_fetch(p,org,s,{need}) {return false,.Missing}
     }
     return false,.Too_Large
 }
 
 // Fetches every chunk of the objects at roots that s lacks from p, many in
-// flight; ok when all came. pull, when given, counts what arrived.
+// flight; ok when all came. A chunk another fetch of the agent asked (another
+// peer's) is left to it: once that fetch has it, lacks it, fails or ends, the
+// claim goes (fetch_release) and this one takes the chunk or asks it itself.
+// repo, when not zero, is the repository whose pull counts what arrives;
+// sources, how many peers hold it: each takes its share of a level of few
+// chunks, and a fast one takes what is left.
 @(private)
-peer_fetch :: proc(p:^Peer,org:Org_Id,s:^store.Store,roots:[]store.Hash,pull:^Pull) -> (ok:bool) {
+peer_fetch :: proc(p:^Peer,org:Org_Id,s:^store.Store,roots:[]store.Hash,repo:Repo_Id={},sources:=1) -> (ok:bool) {
+    a:=p.agent
     f,fe:=new(Fetch)
     if fe!=nil {return false}
     defer free(f)
-    f.s=s
+    f.s,f.org,f.repo=s,org,repo
     f.pending=make(map[store.Hash]struct{})
     defer delete(f.pending)
     defer delete(f.arrived)
+    sync.mutex_lock(&a.lock)
+    _,ae:=append(&a.fetches,f)
+    sync.mutex_unlock(&a.lock)
+    if ae!=nil {return false}
     sync.mutex_lock(&p.lock)
-    append(&p.fetches,f)
+    _,pe:=append(&p.fetches,f)
     sync.mutex_unlock(&p.lock)
     defer {
         sync.mutex_lock(&p.lock)
@@ -1295,45 +1403,78 @@ peer_fetch :: proc(p:^Peer,org:Org_Id,s:^store.Store,roots:[]store.Hash,pull:^Pu
             }
         }
         sync.mutex_unlock(&p.lock)
+        // The reader finds it no more: what it asked and did not have goes to the other fetches.
+        sync.mutex_lock(&a.lock)
+        for address in f.pending {fetch_release(a,f,address)}
+        for x in f.arrived {fetch_release(a,f,x.address)}
+        for x,k in a.fetches {
+            if x==f {
+                unordered_remove(&a.fetches,k)
+                break
+            }
+        }
+        if repo!={} {pull_count_locked(a,f,0,0)}
+        sync.cond_broadcast(&a.wake)
+        sync.mutex_unlock(&a.lock)
         store.commit(s)
     }
-    Want :: struct {address:store.Hash,node:bool}
-    queue:=make([dynamic]Want,context.temp_allocator)
+    if pe!=nil {return false}
+    queue:=make([dynamic]Fetch_Want,context.temp_allocator)
+    deferred:=make([dynamic]Fetch_Want,context.temp_allocator) // asked by another fetch
     nodes:=make(map[store.Hash]bool,context.temp_allocator)
-    for r in roots {append(&queue,Want{r,true})}
+    for r in roots {append(&queue,Fetch_Want{r,true})}
     buffer,be:=make([]u8,store.CHUNK_MAX)
     if be!=nil {return false}
     defer delete(buffer)
     inflight:=0
     lacked:=false
     batch:=make([dynamic]store.Hash,context.temp_allocator)
-    for len(queue)>0 || inflight>0 {
-        for len(queue)>0 && inflight<FETCH_WINDOW {
+    for len(queue)>0 || inflight>0 || len(deferred)>0 {
+        budget:=max(int)
+        if sources>1 {budget=max(1,(len(queue)+sources-1)/sources)}
+        for len(queue)>0 && inflight<FETCH_WINDOW && budget>0 {
             clear(&batch)
-            sync.mutex_lock(&p.lock)
-            for len(queue)>0 && len(batch)<WANT_MAX && inflight+len(batch)<FETCH_WINDOW {
+            sync.mutex_lock(&a.lock)
+            for len(queue)>0 && len(batch)<min(WANT_MAX,budget) && inflight+len(batch)<FETCH_WINDOW {
                 w:=pop(&queue)
                 if w.address in nodes || store.chunk_here(s,w.address) && !w.node {continue}
                 if w.node && store.chunk_here(s,w.address) {
                     // A node here: its children may not be.
                     nodes[w.address]=true
-                    sync.mutex_unlock(&p.lock)
+                    sync.mutex_unlock(&a.lock)
                     fetch_children(s,w.address,buffer,&queue)
-                    sync.mutex_lock(&p.lock)
+                    sync.mutex_lock(&a.lock)
                     continue
                 }
+                claim:=Claim{s,w.address}
+                if owner,claimed:=a.claims[claim];claimed && owner!=f {
+                    append(&deferred,w)
+                    continue
+                }
+                if _,ce:=map_insert(&a.claims,claim,f);ce!=nil {
+                    sync.mutex_unlock(&a.lock)
+                    return false
+                }
                 nodes[w.address]=w.node
-                f.pending[w.address]={}
                 append(&batch,w.address)
             }
-            sync.mutex_unlock(&p.lock)
+            sync.mutex_unlock(&a.lock)
             if len(batch)==0 {break}
+            sync.mutex_lock(&p.lock)
+            for address in batch {f.pending[address]={}}
+            sync.mutex_unlock(&p.lock)
             head:=[2]u8{u8(len(batch)),u8(len(batch)>>8)}
             o:=org
             if !conn_send(p.conn,.Want,o[:],head[:],slice.to_bytes(batch[:])) {return false}
             inflight+=len(batch)
+            budget-=len(batch)
         }
-        if inflight==0 {break}
+        if inflight==0 {
+            // The queue is empty: what is left another fetch asked.
+            if len(deferred)==0 {break}
+            if !fetch_wait(p,f,&deferred,&queue) {return false}
+            continue
+        }
         sync.mutex_lock(&p.lock)
         deadline:=time.tick_now()
         for len(f.arrived)==0 && !p.done {
@@ -1351,36 +1492,75 @@ peer_fetch :: proc(p:^Peer,org:Org_Id,s:^store.Store,roots:[]store.Hash,pull:^Pu
         copy(arrived,f.arrived[:])
         clear(&f.arrived)
         sync.mutex_unlock(&p.lock)
+        chunks,bytes:=0,i64(0)
+        sync.mutex_lock(&a.lock)
         for x in arrived {
-            inflight-=1
+            fetch_release(a,f,x.address)
+            if !x.lacked {
+                chunks+=1
+                bytes+=i64(x.bytes)
+            }
+        }
+        inflight-=len(arrived)
+        f.left=len(queue)+inflight
+        if repo!={} {pull_count_locked(a,f,chunks,bytes)}
+        sync.cond_broadcast(&a.wake)
+        sync.mutex_unlock(&a.lock)
+        for x in arrived {
             if x.lacked {
                 lacked=true
                 continue
             }
-            if pull!=nil {
-                pull.chunks+=1
-                pull.bytes+=i64(x.bytes)
-                pull.left=len(queue)+inflight
-            }
             if nodes[x.address] {fetch_children(s,x.address,buffer,&queue)}
         }
-        if pull!=nil {agent_pull_set(p.agent,pull^)}
     }
     return !lacked
 }
 
+// Lets go of a chunk f asked, so another fetch may ask it. Under the agent's lock.
+@(private)
+fetch_release :: proc(a:^Agent,f:^Fetch,address:store.Hash) {
+    claim:=Claim{f.s,address}
+    if owner,ok:=a.claims[claim];ok && owner==f {delete_key(&a.claims,claim)}
+}
+
+// Waits until another fetch lets go of a chunk f left to it, which goes back
+// to the queue; false when the peer or the agent ends meanwhile.
+@(private)
+fetch_wait :: proc(p:^Peer,f:^Fetch,deferred,queue:^[dynamic]Fetch_Want) -> bool {
+    a:=p.agent
+    sync.mutex_lock(&a.lock)
+    defer sync.mutex_unlock(&a.lock)
+    for {
+        for k:=0;k<len(deferred); {
+            if owner,claimed:=a.claims[Claim{f.s,deferred[k].address}];claimed && owner!=f {
+                k+=1
+                continue
+            }
+            append(queue,deferred[k])
+            unordered_remove(deferred,k)
+        }
+        if len(queue)>0 {return true}
+        sync.mutex_lock(&p.lock)
+        done:=p.done
+        sync.mutex_unlock(&p.lock)
+        if done || a.stopping {return false}
+        sync.cond_wait_with_timeout(&a.wake,&a.lock,100*time.Millisecond)
+    }
+}
+
 // Queues the children of the node at address that s lacks.
 @(private)
-fetch_children :: proc(s:^store.Store,address:store.Hash,buffer:[]u8,queue:^[dynamic]$W) {
+fetch_children :: proc(s:^store.Store,address:store.Hash,buffer:[]u8,queue:^[dynamic]Fetch_Want) {
     bytes,e:=store.chunk_read(s,address,buffer)
     if e!=.None {return}
     n,pe:=store.node_parse(bytes)
     if pe!=.None {return}
     for entry in n.entries {
         if n.level>0 {
-            append(queue,W{entry.address,true})
+            append(queue,Fetch_Want{entry.address,true})
         } else if !store.chunk_here(s,entry.address) {
-            append(queue,W{entry.address,false})
+            append(queue,Fetch_Want{entry.address,false})
         }
     }
 }
@@ -1438,7 +1618,7 @@ agent_join :: proc(a:^Agent,text:string) -> (org:Org_Id,error:Error) {
     if _,pe:=agent_org_pull(a,p,token.org,welcome,true);pe!=.None {return {},team_fail(&a.team,pe,"the org's record from the inviting machine does not hold: ask for a new invite")}
     if welcome_admission!={} {
         s,se:=team_store(&a.team,token.org)
-        if se!=.None || !peer_fetch(p,token.org,s,{welcome_admission},nil) {return {},team_fail(&a.team,.Missing,"the admission from the server did not arrive: ask for a new invite")}
+        if se!=.None || !peer_fetch(p,token.org,s,{welcome_admission}) {return {},team_fail(&a.team,.Missing,"the admission from the server did not arrive: ask for a new invite")}
         raw_org,_,oe:=org_head(s,token.org,context.temp_allocator)
         if oe!=.None {return {},team_fail(&a.team,oe,"the org's record does not read")}
         if _,ae:=admission_accept(s,&raw_org,welcome_admission);ae!=.None {return {},team_fail(&a.team,ae,"the admission from the server does not verify: ask for a new invite")}
@@ -1910,13 +2090,13 @@ agent_look_run :: proc(a:^Agent) {
     for {
         free_all(context.temp_allocator)
         sync.mutex_lock(&a.lock)
-        if !a.stopping && !a.changed && !a.redial {sync.cond_wait_with_timeout(&a.wake,&a.lock,LOOK_SECONDS*time.Second)}
+        if !a.stopping && !a.changed && !a.redial && !a.gossip {sync.cond_wait_with_timeout(&a.wake,&a.lock,LOOK_SECONDS*time.Second)}
         if a.stopping {
             sync.mutex_unlock(&a.lock)
             return
         }
-        changed,redial:=a.changed,a.redial
-        a.changed,a.redial=false,false
+        changed,redial,gossip:=a.changed,a.redial,a.gossip
+        a.changed,a.redial,a.gossip=false,false,false
         // Reap the peers whose reader ended and that no caller holds.
         dead:=make([dynamic]^Peer,context.temp_allocator)
         for k:=0;k<len(a.peers); {
@@ -1936,14 +2116,17 @@ agent_look_run :: proc(a:^Agent) {
             peer_end(p)
             peer_free(p)
         }
-        agent_tell_changes(a)
-        // The router's answer changes what an invite carries.
+        // Who is a member changes whom the peers are told of.
+        if agent_tell_changes(a) {gossip=true}
+        // The router's answer changes what an invite carries and where this machine is reached.
         if a.mapping_on {
             if phase:=wire.mapping_poll(&a.mapping).phase;phase!=mapped {
                 mapped=phase
+                gossip=true
                 agent_moved(a)
             }
         }
+        if gossip {agent_gossip(a)}
         now:=time.now()._nsec
         if redial || now-last_dial>=REDIAL_SECONDS*i64(time.Second) {
             last_dial=now
@@ -1954,9 +2137,10 @@ agent_look_run :: proc(a:^Agent) {
     }
 }
 
-// Tells each peer the heads that moved since it was told last.
+// Tells each peer the heads that moved since it was told last; members when
+// an org's record or admissions moved.
 @(private)
-agent_tell_changes :: proc(a:^Agent) {
+agent_tell_changes :: proc(a:^Agent) -> (members:bool) {
     heads:=make([dynamic]Tell_Entry,context.temp_allocator)
     agent_heads(a,{},&heads)
     moved:=make([dynamic]Tell_Entry,context.temp_allocator)
@@ -1966,6 +2150,7 @@ agent_tell_changes :: proc(a:^Agent) {
         if held,ok:=a.told[k];ok && held==h.address {continue}
         a.told[k]=h.address
         append(&moved,h)
+        members||=h.kind==.Org || h.kind==.Admit
     }
     sync.mutex_unlock(&a.lock)
     if len(moved)==0 {return}
@@ -1974,12 +2159,128 @@ agent_tell_changes :: proc(a:^Agent) {
     defer peers_unpin(a,peers)
     for p in peers {
         theirs:=make([dynamic]Tell_Entry,context.temp_allocator)
-        for m in moved {
-            // Derived data goes to the org's servers alone: a member asks for what it needs.
-            if role,ok:=agent_role(a,m.org,p.conn.peer);ok && (m.kind!=.Ddc || role==.Node) {append(&theirs,m)}
+        if members {
+            // A peer a record lists now was told nothing of that org at its
+            // Hello: it is told every head it reads.
+            agent_heads(a,p.conn.peer,&theirs)
+        } else {
+            for m in moved {
+                // Derived data goes to the org's servers alone: a member asks for what it needs.
+                if role,ok:=agent_role(a,m.org,p.conn.peer);ok && (m.kind!=.Ddc || role==.Node) {append(&theirs,m)}
+            }
         }
         if len(theirs)>0 {peer_tell(p,theirs[:])}
     }
+    return
+}
+
+// Tells each peer where this machine listens (agent_addresses, --public) and
+// where the peers it is connected to that share an org with it listen: as
+// each said (Peers) and as this end sees it (its address and the port of its
+// Hello). Sent when a peer connects or first tells, when who is a member
+// moves and when the router answers, never in answer to every Peers, so the
+// telling ends.
+@(private)
+agent_gossip :: proc(a:^Agent) {
+    peers:=peers_live(a)
+    defer peers_unpin(a,peers)
+    if len(peers)==0 {return}
+    ids:=team_org_ids(&a.team)
+    member:=make([]bool,len(peers)*len(ids),context.temp_allocator)
+    for id,k in ids {
+        s,e:=team_store(&a.team,id)
+        if e!=.None {continue}
+        o,_,he:=org_effective_head(s,id,context.temp_allocator)
+        if he!=.None {continue}
+        for p,i in peers {_,member[i*len(ids)+k]=org_role(&o,p.conn.peer)}
+    }
+    shares :: proc(member:[]bool,orgs,i,j:int) -> bool {
+        for k in 0..<orgs {if member[i*orgs+k] && member[j*orgs+k] {return true}}
+        return false
+    }
+    own:=make([dynamic]Peer_At,context.temp_allocator)
+    if a.listening {
+        texts:=make([dynamic]string,context.temp_allocator)
+        append(&texts,..agent_addresses(a,context.temp_allocator))
+        append(&texts,a.options.public)
+        for text in texts {
+            if at,ok:=peer_at(text);ok && !slice.contains(own[:],at) && len(own)<DIAL_ADDRESSES {append(&own,at)}
+        }
+    }
+    seen:=make([]Peer_At,len(peers),context.temp_allocator)
+    for p,i in peers {
+        sync.mutex_lock(&p.lock)
+        port:=p.port
+        sync.mutex_unlock(&p.lock)
+        if ip,ok:=p.remote.address.(net.IP4_Address);ok && port>0 && port<=65535 {seen[i]=Peer_At{cast([4]u8)ip,u16le(port)}}
+    }
+    entries:=make([dynamic]Gossip_Entry,context.temp_allocator)
+    for p,i in peers {
+        if !shares(member,len(ids),i,i) {continue}
+        clear(&entries)
+        for at in own {append(&entries,Gossip_Entry{a.team.identity.key,at})}
+        for q,j in peers {
+            if j==i || !shares(member,len(ids),i,j) {continue}
+            key:=q.conn.peer
+            if seen[j].port!=0 {append(&entries,Gossip_Entry{key,seen[j]})}
+            sync.mutex_lock(&a.lock)
+            if h,ok:=a.heard[key];ok {
+                for at in h.at[:h.count] {append(&entries,Gossip_Entry{key,at})}
+            }
+            sync.mutex_unlock(&a.lock)
+        }
+        n:=min(len(entries),GOSSIP_MAX)
+        if n==0 {continue}
+        head:=[2]u8{u8(n),u8(n>>8)}
+        conn_send(p.conn,.Peers,head[:],slice.to_bytes(entries[:n]))
+    }
+}
+
+// Keeps where the members a Peers message names listen, for
+// agent_dial_members, and wakes it. The handshake proves the key at each, so
+// an address proves nothing; a loopback one holds only from a peer on this
+// machine, and a loopback agent keeps no other. A peer's first Peers is told
+// on, since the other peers learn from it where it says it listens.
+@(private)
+agent_heard :: proc(a:^Agent,p:^Peer,entries:[]Gossip_Entry) {
+    near:=false
+    if ip,ok:=p.remote.address.(net.IP4_Address);ok {near=ip[0]==127}
+    sync.mutex_lock(&p.lock)
+    first:=!p.gossiped
+    p.gossiped=true
+    sync.mutex_unlock(&p.lock)
+    own:=a.team.identity.key
+    sync.mutex_lock(&a.lock)
+    defer sync.mutex_unlock(&a.lock)
+    if first {a.gossip=true}
+    for e in entries {
+        ip:=e.at.ip
+        if e.key==own || ip[0]==0 || ip[0]>=224 {continue}
+        if ip[0]==127 {
+            if !near {continue}
+        } else if a.loopback {
+            continue
+        }
+        h,held:=a.heard[e.key]
+        if !held && len(a.heard)>=HEARD_MAX {continue}
+        if slice.contains(h.at[:h.count],e.at) {continue}
+        h.at[h.next]=e.at
+        h.next=(h.next+1)%DIAL_ADDRESSES
+        h.count=min(h.count+1,DIAL_ADDRESSES)
+        a.heard[e.key]=h
+        delete_key(&a.dialing,e.key)
+        a.changed=true
+    }
+    sync.cond_broadcast(&a.wake)
+}
+
+// The IPv4 address and port of host:port; ok false for anything else.
+@(private)
+peer_at :: proc(text:string) -> (at:Peer_At,ok:bool) {
+    endpoint,parsed:=net.parse_endpoint(text)
+    ip,is_ip4:=endpoint.address.(net.IP4_Address)
+    if !parsed || !is_ip4 || endpoint.port<=0 || endpoint.port>65535 {return}
+    return Peer_At{cast([4]u8)ip,u16le(endpoint.port)},true
 }
 
 // Dials every member of its orgs that is not connected, at the addresses it
@@ -2004,6 +2305,11 @@ agent_dial_members :: proc(a:^Agent) {
             for address in team_peer_addresses(&a.team,m.key) {append(&targets,Target{m.key,m.key,address})}
             sync.mutex_lock(&a.lock)
             if b,ok:=a.beacons[m.key];ok {append(&targets,Target{m.key,m.key,strings.clone(b,context.temp_allocator)})}
+            if h,ok:=a.heard[m.key];ok {
+                for at in h.at[:h.count] {
+                    append(&targets,Target{m.key,m.key,fmt.tprintf("%d.%d.%d.%d:%d",at.ip[0],at.ip[1],at.ip[2],at.ip[3],at.port)})
+                }
+            }
             sync.mutex_unlock(&a.lock)
         }
     }

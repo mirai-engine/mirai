@@ -990,3 +990,246 @@ offline_invite_records_enforce_signatures :: proc(t:^testing.T) {
     expect_refused(t,cb,proc(b:[]u8) -> Error {_,e:=invite_claim_decode(b);return e},"invite claim")
     expect_refused(t,ab,proc(b:[]u8) -> Error {_,e:=admission_decode(b);return e},"offline admission")
 }
+
+// The chunks of the object at address in s: its root and, when it is a node,
+// every chunk under it.
+@(private="file")
+chunks_of :: proc(s:^store.Store,address:store.Hash) -> int {
+    buffer:=make([]u8,store.CHUNK_MAX,context.temp_allocator)
+    bytes,e:=store.chunk_read(s,address,buffer)
+    if e!=.None {return 0}
+    n,pe:=store.node_parse(bytes)
+    if pe!=.None {return 1}
+    entries:=slice.clone(n.entries,context.temp_allocator)
+    level:=n.level
+    total:=1
+    for entry in entries {total+=level>0?chunks_of(s,entry.address):1}
+    return total
+}
+
+// A puller connected to two peers that hold the same repository takes part
+// of its chunks from each, never one chunk from both: what the two served is
+// what arrived, every chunk the repository has that the puller lacked. One
+// peer holds only every other file: what it lacks goes to the other, and the
+// pull still ends whole.
+@(test)
+a_pull_splits_among_peers_and_takes_what_one_lacks_from_another :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-stripes")
+    if folder=="" {return}
+    mac,half,whole,puller:Machine
+    if !machine_open(t,&mac,folder,"Ana") || !machine_open(t,&half,folder,"Ben") || !machine_open(t,&whole,folder,"Cal") || !machine_open(t,&puller,folder,"Dee") {return}
+    defer machine_close(&mac)
+    defer machine_close(&half)
+    defer machine_close(&whole)
+    defer machine_close(&puller)
+    org,_:=vcs_org(t,&mac)
+    repo:=random_id(Repo_Id)
+    team_repo_set(&mac.team,org,{id=repo,name="game"})
+    files:=make([dynamic][2]string,context.temp_allocator)
+    for k in 0..<40 {
+        bytes:=make([]u8,256<<10,context.temp_allocator)
+        for &x in bytes {x=u8(rand.uint32())}
+        append(&files,[2]string{fmt.tprintf("file%02d.bin",k),string(bytes)})
+    }
+    revision:=change_of(t,&mac.s,&mac.team.identity,files[:])
+    team_publish(&mac.team,org,repo,{{"main",revision}})
+    if !machine_start(t,&mac,0) || !machine_start(t,&half,0) || !machine_start(t,&whole,0) || !machine_start(t,&puller,-1) {return}
+    mac_address:=fmt.tprintf("127.0.0.1:%d",agent_port(&mac.agent))
+    for m in ([]^Machine{&half,&whole,&puller}) {
+        invite,_:=team_invite(&mac.team,org,.Writer,"",{mac_address},context.temp_allocator)
+        if _,e:=agent_join(&m.agent,invite);!testing.expectf(t,e==.None,"%s joins: %v %s",m.team.name,e,m.agent.team.why) {return}
+    }
+    team_link(&whole.team,{local=random_id(Repo_Id),org=org,repo=repo})
+    agent_changed(&whole.agent)
+    Held :: struct {s:^store.Store,revision:Revision}
+    is_whole :: proc(data:rawptr) -> bool {
+        x:=(^Held)(data)
+        missing:=make([dynamic]store.Hash,context.temp_allocator)
+        if !object_present(x.s,x.revision) {return false}
+        closure_walk(x.s,{x.revision},nil,&missing)
+        return len(missing)==0
+    }
+    // Who keeps no link takes main's change and its root folder alone.
+    has_main :: proc(data:rawptr) -> bool {
+        x:=(^Held)(data)
+        c,ce:=change_get(x.s,x.revision,context.temp_allocator)
+        if ce!=.None {return false}
+        _,te:=tree_totals(x.s,c.tree)
+        return te==.None
+    }
+    held_whole,held_half,held_puller:=Held{&whole.s,revision},Held{&half.s,revision},Held{&puller.s,revision}
+    if !testing.expect(t,until(20,&held_whole,is_whole),"one peer holds the repository whole") {return}
+    if !testing.expect(t,until(20,&held_half,has_main) && until(20,&held_puller,has_main),"the others hold main's change and folder") {return}
+    expected:=0
+    for f,k in files {
+        address,_:=store.put(&mac.s,transmute([]u8)f[1])
+        expected+=chunks_of(&mac.s,address)
+        if k%2==0 {store.put(&half.s,transmute([]u8)f[1])}
+    }
+    store.commit(&half.s)
+    agent_stop(&mac.agent)
+    mac.running=false
+    // The puller comes back knowing where both listen, and links once both are connected.
+    agent_stop(&puller.agent)
+    puller.running=false
+    addresses:=[]string{fmt.tprintf("127.0.0.1:%d",agent_port(&half.agent)),fmt.tprintf("127.0.0.1:%d",agent_port(&whole.agent))}
+    puller.running=testing.expect_value(t,agent_start(&puller.agent,&puller.team,{port=-1,host="127.0.0.1",peers=addresses}),Error.None)
+    if !puller.running {return}
+    if !testing.expect(t,until(10,&puller.agent,proc(data:rawptr) -> bool {
+        peers:=make([dynamic]Peer_Info,context.temp_allocator)
+        agent_peers((^Agent)(data),&peers,context.temp_allocator)
+        return len(peers)==2
+    }),"the puller is connected to both peers") {return}
+    time.sleep(200*time.Millisecond) // their first passes, which take nothing
+    served_half,served_whole:=sync.atomic_load(&half.agent.served),sync.atomic_load(&whole.agent.served)
+    team_link(&puller.team,{local=random_id(Repo_Id),org=org,repo=repo})
+    agent_changed(&puller.agent)
+    if !testing.expect(t,until(30,&held_puller,is_whole),"the pull ends whole") {return}
+    Ends :: struct {a:^Agent,org:Org_Id,repo:Repo_Id}
+    ends:=Ends{&puller.agent,org,repo}
+    testing.expect(t,until(5,&ends,proc(data:rawptr) -> bool {
+        x:=(^Ends)(data)
+        pull,ok:=agent_pull_of(x.a,x.org,x.repo)
+        return ok && pull.whole && pull.left==0
+    }),"the pull says it is whole")
+    pull,_:=agent_pull_of(&puller.agent,org,repo)
+    from_half:=sync.atomic_load(&half.agent.served)-served_half
+    from_whole:=sync.atomic_load(&whole.agent.served)-served_whole
+    testing.expectf(t,from_half>0 && from_whole>0,"both peers serve: %d and %d chunks",from_half,from_whole)
+    testing.expectf(t,from_half+from_whole==pull.chunks && pull.chunks==expected,"no chunk comes twice: %d+%d served, %d arrived, %d in the files",from_half,from_whole,pull.chunks,expected)
+    testing.expectf(t,from_half<expected/2+expected/4,"the half peer serves only what it holds: %d of %d",from_half,expected)
+}
+
+// Two members that know only their org's server learn from it where each
+// other listens (Peers), connect to each other over TCP and pull from each
+// other with the server off.
+@(test)
+members_that_know_only_the_server_meet_through_it :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-gossip")
+    if folder=="" {return}
+    mac,server,pc:Machine
+    if !machine_open(t,&mac,folder,"Ana") || !machine_open(t,&server,folder,"cloud") || !machine_open(t,&pc,folder,"Ben") {return}
+    defer machine_close(&mac)
+    defer machine_close(&server)
+    defer machine_close(&pc)
+    server.running=testing.expect_value(t,agent_start(&server.agent,&server.team,{port=0,host="127.0.0.1",node=true,max_orgs=4}),Error.None)
+    if !server.running || !machine_start(t,&mac,0) || !machine_start(t,&pc,0) {return}
+    org,_:=vcs_org(t,&mac)
+    if !testing.expectf(t,agent_server_attach(&mac.agent,org,fmt.tprintf("127.0.0.1:%d",agent_port(&server.agent)))==.None,"the admin attaches the server: %s",mac.agent.team.why) {return}
+    invite,via_server,ie:=agent_invite(&mac.agent,org,.Writer,"",{},context.temp_allocator)
+    if !testing.expectf(t,ie==.None && via_server,"an invite through the server: %v %s",ie,mac.agent.team.why) {return}
+    if _,e:=agent_join(&pc.agent,invite);!testing.expectf(t,e==.None,"the member joins through the server: %v %s",e,pc.agent.team.why) {return}
+    o,_,_:=team_org(&mac.team,org)
+    for m in o.members {testing.expectf(t,m.role==.Node || m.address=="","the org lists where the server listens alone, not %s",m.name)}
+    Pair :: struct {a,b:^Machine,org:Org_Id}
+    pair:=Pair{&mac,&pc,org}
+    met:=until(20,&pair,proc(data:rawptr) -> bool {
+        x:=(^Pair)(data)
+        connected :: proc(a:^Agent,key:Key) -> bool {
+            peers:=make([dynamic]Peer_Info,context.temp_allocator)
+            agent_peers(a,&peers,context.temp_allocator)
+            for p in peers {if p.key==key {return true}}
+            return false
+        }
+        _,listed:=agent_role(&x.a.agent,x.org,x.b.team.identity.key)
+        return listed && connected(&x.a.agent,x.b.team.identity.key) && connected(&x.b.agent,x.a.team.identity.key)
+    })
+    if !testing.expect(t,met,"the two members connect to each other") {return}
+    sync.mutex_lock(&pc.agent.lock)
+    _,heard_mac:=pc.agent.heard[mac.team.identity.key]
+    sync.mutex_unlock(&pc.agent.lock)
+    sync.mutex_lock(&mac.agent.lock)
+    _,heard_pc:=mac.agent.heard[pc.team.identity.key]
+    sync.mutex_unlock(&mac.agent.lock)
+    testing.expect(t,heard_mac || heard_pc,"the server told them where the other listens")
+    agent_stop(&server.agent)
+    server.running=false
+    repo:=random_id(Repo_Id)
+    team_repo_set(&mac.team,org,{id=repo,name="game"})
+    revision:=change_of(t,&mac.s,&mac.team.identity,{{"a.txt","straight from the admin\n"}})
+    team_publish(&mac.team,org,repo,{{"main",revision}})
+    agent_changed(&mac.agent)
+    team_link(&pc.team,{local=random_id(Repo_Id),org=org,repo=repo})
+    agent_changed(&pc.agent)
+    Held :: struct {s:^store.Store,revision:Revision}
+    held:=Held{&pc.s,revision}
+    testing.expect(t,until(20,&held,proc(data:rawptr) -> bool {
+        x:=(^Held)(data)
+        missing:=make([dynamic]store.Hash,context.temp_allocator)
+        if !object_present(x.s,x.revision) {return false}
+        closure_walk(x.s,{x.revision},nil,&missing)
+        return len(missing)==0
+    }),"the member pulls from the admin with the server off")
+}
+
+// A Peers message whose count passes GOSSIP_MAX, whose length is not that of
+// its entries or that names port zero ends the connection; a good one does
+// not.
+@(test)
+a_malformed_peers_message_ends_the_connection :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-gossip-hostile")
+    if folder=="" {return}
+    mac,pc:Machine
+    if !machine_open(t,&mac,folder,"Ana") || !machine_open(t,&pc,folder,"Ben") {return}
+    defer machine_close(&mac)
+    defer machine_close(&pc)
+    org,_:=vcs_org(t,&mac)
+    if !machine_start(t,&mac,0) || !machine_start(t,&pc,-1) {return}
+    address:=fmt.tprintf("127.0.0.1:%d",agent_port(&mac.agent))
+    invite,_:=team_invite(&mac.team,org,.Reader,"",{address},context.temp_allocator)
+    if _,e:=agent_join(&pc.agent,invite);!testing.expect_value(t,e,Error.None) {return}
+    agent_stop(&pc.agent)
+    pc.running=false
+    entry:=Gossip_Entry{key=mac.team.identity.key,at={{127,0,0,1},7350}}
+    message :: proc(count:int,entries:[]Gossip_Entry,extra:[]u8={}) -> []u8 {
+        out:=make([dynamic]u8,context.temp_allocator)
+        append(&out,u8(count),u8(count>>8))
+        append(&out,..slice.to_bytes(entries))
+        append(&out,..extra)
+        return out[:]
+    }
+    many:=make([]Gossip_Entry,GOSSIP_MAX+1,context.temp_allocator)
+    for &e in many {e=entry}
+    zero:=entry
+    zero.at.port=0
+    bad:=[][]u8{
+        {},
+        {1},
+        message(1,{}),
+        message(1,{entry},{0}),
+        message(2,{entry}),
+        message(GOSSIP_MAX+1,many),
+        message(1,{zero}),
+    }
+    buffer:=make([]u8,FRAME_MAX+NOISE_TAG,context.temp_allocator)
+    for body,k in bad {
+        c,e:=conn_dial(address,pc.team.identity,mac.team.identity.key)
+        if !testing.expect_value(t,e,Error.None) {return}
+        conn_send(c,.Peers,body)
+        net.set_option(c.socket,.Receive_Timeout,5*time.Second)
+        started:=time.tick_now()
+        for {
+            if _,_,ok:=conn_receive(c,buffer);!ok {break}
+        }
+        testing.expectf(t,time.tick_since(started)<4*time.Second,"malformed Peers %d ends the connection",k)
+        conn_free(c)
+    }
+    // A good one keeps it: an ask after it is answered.
+    c,e:=conn_dial(address,pc.team.identity,mac.team.identity.key)
+    if !testing.expect_value(t,e,Error.None) {return}
+    defer conn_free(c)
+    key:store.Hash
+    crypto.rand_bytes(key[:])
+    o:=org
+    conn_send(c,.Peers,message(1,{entry}))
+    conn_send(c,.Ddc_Ask,o[:],key[:])
+    net.set_option(c.socket,.Receive_Timeout,5*time.Second)
+    answered:=false
+    for !answered {
+        kind,body,ok:=conn_receive(c,buffer)
+        if !ok {break}
+        if kind!=.Tell || len(body)<2 {continue}
+        for x in slice.reinterpret([]Tell_Entry,body[2:]) {answered||=x.kind==.Ddc && x.id==key}
+    }
+    testing.expect(t,answered,"a good Peers keeps the connection")
+}
