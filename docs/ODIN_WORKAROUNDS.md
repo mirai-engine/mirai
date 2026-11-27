@@ -11,6 +11,7 @@ Entries are for Odin `dev-2026-11`.
 
 | Marker in code | Upstream | Remove when |
 | --- | --- | --- |
+| `fchtimes_whole_nanoseconds` (`cook/workspace/gpu.odin`): `text_write` sets the time of a file through its handle (`os.fchange_times`); on macOS and the BSDs `os.change_times` calls `utimes`, which keeps only microseconds | none | on macOS, `os.change_times(p, t, t)` with `t` of 123456789 ns past a second gives `os.stat(p).modification_time == t`; then run `mirai test cook/workspace a_holder_raises_its_charge_to_what_it_held` |
 | `inner_procs_odin` (`cook/build/declare.odin`): writes the procedure types of a `foreign` block as `proc "odin"` | none | `@(default_calling_convention="odin") foreign x { f :: proc(cb:proc()) --- }` compiles with an Odin procedure passed as `cb` |
 | `job_plugin_name` (`cook/build/build.odin`): names the output of a plugin library by its index, so the objects of `-use-separate-modules` stay under `MAX_PATH` on Windows | none | `odin build pkg -build-mode:dll -use-separate-modules` of a package that imports another links with an output folder of about 250 characters |
 | `schema_push` (`std/serial/schema.odin`): never takes a key back out of a `map[typeid]T` | none | `delete_key` on a `map[typeid]u32` builds at `-o:speed` (a `main` that puts `typeid_of(int)` in it and takes it out) |

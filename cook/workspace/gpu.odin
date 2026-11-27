@@ -188,8 +188,7 @@ gpu_turn_owner :: proc(root:string,pid:int,turn:int) -> (at:int,owner,holder:str
 @(private)
 gpu_owner_rewrite :: proc(owner,text:string) {
     info,stated:=os.stat(owner,context.temp_allocator)
-    text_write(owner,text)
-    if stated==nil {_=os.change_times(owner,info.access_time,info.modification_time)}
+    text_write(owner,text,stated==nil?info.modification_time:nil)
 }
 
 // What the holder of a turn says while it runs: the most it held, which
@@ -659,11 +658,17 @@ number_read :: proc(path:string) -> (value:i64,known:bool) {
     return value,known && value>0
 }
 
-// Written whole and renamed into place: a reader never sees half of it.
+// Written whole and renamed into place: a reader never sees half of it, nor
+// another time than modified when one is given.
 @(private)
-text_write :: proc(path,text:string) {
+text_write :: proc(path,text:string,modified:Maybe(time.Time)=nil) {
     if os.make_directory_all(os.dir(path))!=nil && !os.is_dir(os.dir(path)) {return}
     staged:=fmt.tprintf("%s.%d.tmp",path,os.get_pid())
-    if os.write_entire_file(staged,transmute([]u8)text)!=nil {return}
-    if os.rename(staged,path)!=nil {_=os.remove(staged)}
+    file,opened:=os.open(staged,{.Write,.Create,.Trunc},os.Permissions_Read_All+{.Write_User})
+    if opened!=nil {return}
+    _,error:=os.write(file,transmute([]u8)text)
+    // fchtimes_whole_nanoseconds: os.change_times keeps only microseconds on macOS.
+    if at,given:=modified.?;given && error==nil {error=os.fchange_times(file,at,at)}
+    if closed:=os.close(file);error==nil {error=closed}
+    if error!=nil || os.rename(staged,path)!=nil {_=os.remove(staged)}
 }
