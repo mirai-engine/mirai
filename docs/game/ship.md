@@ -38,11 +38,11 @@ says how to fix each finding.
   project at the `build.optimization` of `project.mirai`. `package engine` is always `--release`.
 - `play` compiles the project and reads assets and shaders from the project: nothing is cooked,
   so it starts fast.
-- `build game` generates the shaders, cooks the assets that every scene and `cook.mirai`
-  reach and writes `.mirai/game` (or `--out`): the executable, `project.mirai`,
-  `settings.mirai`, `assets/` and `shaders/`. It alone shows what the built game lacks.
-  Dev builds reuse Fast texture imports. Release builds require Final textures and use the
-  optimized importer to encode them when needed.
+- `build game` generates the shaders, cooks the assets that every scene, the asset paths the
+  game code writes and `cook.mirai` reach and writes `.mirai/game` (or `--out`): the
+  executable, `project.mirai`, `settings.mirai`, `assets/` and `shaders/`. It alone shows what
+  the built game lacks. Dev builds reuse Fast texture imports. Release builds require Final
+  textures and use the optimized importer to encode them when needed.
 - `build server` is the same executable without what is only seen or heard; run it with
   `--dedicated` (no window, renderer or local players).
 - `package` belongs to the engine's own checkout and release; a game never runs it. A game is

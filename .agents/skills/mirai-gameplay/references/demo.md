@@ -22,7 +22,7 @@ mirai content my_game
 [`demo/`](../../../../demo) holds `project.mirai` (start scene `control/control.scene`, plugins
 including `spawn`, `cinematics`, `physics`, `destruct`, `multiplayer`, `paint`, `terrain`,
 `animation`, `previews`, `navigation`, `behavior`; `destruct_multiplayer` auto-activates),
-`settings.mirai` (en/es, `prompts_kenney`, no player prefab), `cook.mirai`, `render_check.mirai`
+`settings.mirai` (en/es, `prompts_kenney`, no player prefab), `render_check.mirai`
 ([render check](../../mirai-rendering/references/verification.md#render-check)),
 `captures.mirai`, `tests/flights/`
 ([profiling](../../mirai-agent-api/references/methods.md#profiling)), `game/`, and `assets/`.

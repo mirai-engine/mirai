@@ -533,7 +533,7 @@ build_tools :: proc(s:^Session) {
 
 FAILURE_TEXTS :: [build.Failure]string{
     .None="",.Engine_Missing="The root of the engine is not known",
-    .Engine_Incomplete="The installed engine lacks some of its binaries: unpack its package again",.Engine_Defines="The editor runs engine binaries built with other defines than the project's",.Generate="The attributes of the packages are wrong",
+    .Engine_Incomplete="The installed engine lacks some of its binaries: unpack its package again",.Engine_Defines="The editor runs engine binaries built with other defines than the project's",.Generate="The attributes of the packages are wrong",.Asset_Paths="The code names assets the project does not have",
     .Compiler_Missing="No Odin compiler in MIRAI_ODIN or PATH",.Shaders="The shaders of the engine could not be generated",
     .Compiler_Failed="The compiler could not run",
     .Write_Failed="A generated file could not be written",.Compile="The code does not compile",

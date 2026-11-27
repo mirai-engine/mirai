@@ -148,6 +148,7 @@ cmd_doctor :: proc(root:string,args:[]string) -> int {
     out:=build.world_generate(&p,context.temp_allocator)
     for e in out.errors {report(&errors,false,e,"fix the attributes; mirai generate lists them")}
     if len(out.errors)==0 {report(&errors,true,"the world of the project generates","")}
+    for e in build.asset_refs_check(project.asset_folders(&p,context.temp_allocator),out.asset_refs,"",context.temp_allocator) {report(&errors,false,e,"create or import the asset, or fix the path")}
     if scene:=base.text_get(p.manifest.start_scene[:]);scene!="" {
         report(&errors,os.is_file(project.path(project.folder_path(p.root,.Assets),scene)),fmt.tprintf("start scene %s",scene),fmt.tprintf("save that scene or change start_scene in %s",project.PROJECT_FILE))
     }

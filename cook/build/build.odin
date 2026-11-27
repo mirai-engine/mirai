@@ -41,6 +41,7 @@ Failure :: enum u8 {
     Engine_Incomplete, // an installed engine lacks some of its binaries: Result.text names their folder
     Engine_Defines,   // the binaries that load the library are built with other defines than the project's: Result.text says which and what to run
     Generate,         // the attributes of the project's packages are wrong: Result.text says how
+    Asset_Paths,      // the code of the project names assets that are not there once its packages are refreshed: Result.text says where
     Compiler_Missing, // no Odin compiler in MIRAI_ODIN or in PATH
     Shaders,          // the shaders of the engine were not generated: Result.text says why
     Compiler_Failed,  // it could not be started or waited for
@@ -81,7 +82,7 @@ Desc :: struct {
     package_folder:string,       // Test and Program, and Check of one package: its folder, absolute
     test:Test_Options,           // Test: how its executable runs
     store_root:string,           // the store the packages of the project and its plugins are refreshed in and listed from; "": the machine's (store.default_root)
-    refresh_skip:bool,           // Build: the packages are left as they are, for a caller that refreshes them with the library built (a join, with its peers)
+    refresh_skip:bool,           // Build: the packages are left as they are, for a caller that refreshes them with the library built (a join, with its peers, an import), and the paths of assets the code names are not checked
     peers:cache.Peers_Open,      // Game: what gives its cook what the peers of the project's org built and takes what it builds (cook/kai.peers_open); nil: none
     allocator:runtime.Allocator, // of the job. Unset: context.allocator
 }
@@ -136,7 +137,9 @@ Job :: struct {
     settings:string,            // Game: its settings file: those of the engine and of the project merged, since it ships without the engine
     cook:Cook_Desc,             // Game: the assets it ships; without assets, a project that has none
     store:store.Store,          // Game: the store of store_root, which cook.store names; unopened: none
-    plugin_assets:[dynamic]project.Asset_Folder, // Game: the folders of assets of its active plugins, in cook.plugins
+    asset_folders:[]project.Asset_Folder, // project.asset_folders: what asset_refs name; Game: those of its plugins are in cook.plugins
+    asset_refs:[]Asset_Ref,     // the paths of assets the code names that it checks (asset_check); Game: those of the code it ships, the roots of its cook too
+    asset_check:bool,           // a build that refreshes the packages, once it has; a check of the project, once its code checks
     development:[dynamic]string, // Game: the folders of the active development plugins, which it must not reach
     plugins:[]Plugin_Library,    // the plugin libraries the target links (plugins.odin)
     plugin_hashes:[]u64,
@@ -239,7 +242,7 @@ job_start :: proc(desc:Desc) -> ^Job {
         for root,i in roots {job.imports[i]=strings.clone(root,a)}
         job.import_program=project_engine(p,desc.engine,a).import_program
     }
-    generated,written:=generated_write(p,desc.target,job.store_root)
+    generated,written:=generated_write(p,desc.target)
     if !written {
         if len(generated.errors)>0 {
             job.result.text=strings.join(generated.errors,"\n",a)
@@ -251,6 +254,8 @@ job_start :: proc(desc:Desc) -> ^Job {
         job.result.text=strings.join(errors,"\n",a)
         return job_fail(job,.Generate)
     }
+    job.asset_check=desc.action==.Build && !desc.refresh_skip || desc.action==.Check && desc.package_folder==""
+    if job.asset_check || desc.target==.Game {job_asset_refs_take(job,p,generated.asset_refs)}
     job.published=target_output(p,desc.target,desc.output,a,desc.server)
     if desc.target==.Game && project.path_same(job.published[:strings.last_index_byte(job.published,'/')],p.root) {return job_fail(job,.Output_Invalid)}
     job.staged=project.path(job.work,strings.concatenate({job.prefix,desc.target==.Game?project.EXECUTABLE_SUFFIX:project.LIBRARY_SUFFIX},context.temp_allocator),allocator=a)
@@ -283,11 +288,11 @@ job_start :: proc(desc:Desc) -> ^Job {
                     job.cook.store=&job.store
                 }
             }
-            job.plugin_assets=make([dynamic]project.Asset_Folder,a)
-            for found in project.asset_folders(p,a) {
-                if found.prefix!="" {append(&job.plugin_assets,found)}
-            }
-            job.cook.plugins=job.plugin_assets[:]
+            // The project's own folder comes first.
+            job.cook.plugins=job.asset_folders[1:]
+            roots:=make([]string,len(job.asset_refs),a)
+            for ref,i in job.asset_refs {roots[i]=ref.path}
+            job.cook.code_roots=roots
             for index in p.active {job.cook.far||=base.text_get(p.plugins[index].manifest.name[:])=="streaming"}
         }
     }
@@ -325,6 +330,34 @@ build_test_worlds_write :: proc(p:^project.Project,action:Action,target:Target,p
     }
     if package_folder!="" {append(&folders,package_folder)}
     return test_worlds_write(p.engine_root,p.root,folders[:],false,project.path(project_tests_folder(p.root,temp),"worlds.stamp",allocator=temp),temp)
+}
+
+// Keeps the folders of assets of the project and the paths of assets its code
+// names, of the code a game ships for a game, which the job holds past p.
+@(private)
+job_asset_refs_take :: proc(job:^Job,p:^project.Project,refs:[]Asset_Ref) {
+    a:=virtual.arena_allocator(&job.arena)
+    folders:=project.asset_folders(p,a)
+    for &folder in folders {folder.root=strings.clone(folder.root,a)}
+    job.asset_folders=folders
+    kept:=make([dynamic]Asset_Ref,0,len(refs),a)
+    for ref in refs {
+        if job.target==.Game && !ref.shipped {continue}
+        append(&kept,Asset_Ref{path=strings.clone(ref.path,a),file=strings.clone(ref.file,a),line=ref.line,column=ref.column,shipped=ref.shipped})
+    }
+    job.asset_refs=kept[:]
+}
+
+// Whether every path of an asset the code names that the job checks names
+// one; the job fails with where those that do not are written otherwise.
+@(private)
+job_asset_refs_check :: proc(job:^Job) -> bool {
+    if !job.asset_check {return true}
+    errors:=asset_refs_check(job.asset_folders,job.asset_refs,job.store_root,context.temp_allocator)
+    if len(errors)==0 {return true}
+    job.result.text=strings.join(errors,"\n",virtual.arena_allocator(&job.arena))
+    job_fail(job,.Asset_Paths)
+    return false
 }
 
 // Declares the plugin libraries that do not stand and queues their compiles,
@@ -715,6 +748,7 @@ job_probe_finish :: proc(job:^Job,compile:^Compile,exit_code:int) {
         job_fail(job,failure)
         return
     }
+    if !job_asset_refs_check(job) {return}
     job.result.status=.Built
     job_files_remove(job)
     job_done(job)
@@ -950,6 +984,7 @@ job_imports :: proc(job:^Job,compiled:Status) -> ^Job {
 
 @(private)
 job_target_done :: proc(job:^Job,compiled:Status) -> ^Job {
+    if !job_asset_refs_check(job) {return job}
     if job.target==.Game {
         if failure:=job_ship(job);failure!=.None {return job_fail(job,failure)}
     }

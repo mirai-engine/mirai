@@ -22,7 +22,7 @@ NEW_USAGE :: "new <folder> [--name N] [--template T] [--store S] [--no-kai] | ne
 BUILD_USAGE :: "build tools|kai [--target linux_arm64] [--debug]"
 BUILD_ENGINE_USAGE :: "build engine [--release] [--force]"
 BUILD_PROJECT_USAGE :: "build <editor|game|server> [project] [--release] [--out folder] [--store folder]"
-GENERATE_USAGE :: "generate [project] [--store folder]"
+GENERATE_USAGE :: "generate [project]"
 EDIT_USAGE :: "edit [project] [--release] [--store folder] [editor arguments]"
 PLAY_USAGE :: "play [project] [--release] [--store folder] [player arguments]"
 
@@ -236,11 +236,9 @@ engine_report :: proc(result:build.Engine_Result,root:string,out:=os.stdout) -> 
     return 1
 }
 
-// mirai generate [project]: writes the generated packages and says what the attributes have wrong.
+// mirai generate [project]: writes the generated packages and says what the
+// attributes have wrong. It reads the code alone, not the assets it names.
 cmd_generate :: proc(root:string,args:[]string) -> int {
-    args:=args
-    store_root,ok:=store_root_take(&args,"generate")
-    if !ok {return 2}
     if code:=positionals_only("generate",args);code!=0 {return code}
     if len(args)>1 {return argument_unknown("generate",args[1])}
     folder:=len(args)>0?args[0]:"."
@@ -250,7 +248,7 @@ cmd_generate :: proc(root:string,args:[]string) -> int {
         return 1
     }
     defer project.close(&p)
-    out,written:=build.world_write_files(&p,store_root=store_root)
+    out,written:=build.world_write_files(&p)
     for e in out.errors {fmt.eprintln(e)}
     if !written {
         if len(out.errors)==0 {fmt.eprintfln("mirai generate: could not write to %s",build.generated_root(p.root))}
@@ -466,6 +464,7 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
             case .Engine_Missing:   fmt.eprintln("mirai build: the engine root is unknown")
             case .Engine_Incomplete: fmt.eprintln("mirai build: the installed engine lacks some of its binaries: unpack its package again")
             case .Generate:         fmt.eprintln("mirai build: the attributes of the project packages do not generate a world")
+            case .Asset_Paths:      fmt.eprintln("mirai build: the code names assets the project does not have: create or import them, or fix the paths")
             case .Compiler_Missing: fmt.eprintln("mirai build: cannot find the Odin compiler (MIRAI_ODIN, .deps/odin/dist or PATH); mirai doctor says where it looks")
             case .Compiler_Failed:  fmt.eprintln("mirai build: could not run the Odin compiler")
             case .Write_Failed:     fmt.eprintfln("mirai build: could not write to %s",project.folder_path(p.root,.Generated))
@@ -547,11 +546,12 @@ project_engine_paths :: proc(root,folder:string,mode:Build_Mode) -> build.Engine
 
 // Whether building a library of a project against a current engine would
 // compile nothing: the C libraries, the shaders of the project and the
-// library stand. What has nothing to compile takes no turn.
+// library stand, and the paths of assets its code names name assets, which
+// the build would check. What has nothing to compile takes no turn.
 @(private="file")
 library_current :: proc(root:string,p:^project.Project,target:build.Target,engine:Build_Mode,dev:bool,store_root:string) -> bool {
     return c_libraries_current(root) && build.shaders_current(p,store_root=store_root) &&
-        build.target_state(p,target,"",dev,engine)==.Current
+        build.target_state(p,target,"",dev,engine)==.Current && len(build.asset_paths_check(p,store_root,context.temp_allocator))==0
 }
 
 // The value after args[index^], advancing the index past it; false at their end.

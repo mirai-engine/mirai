@@ -16,7 +16,8 @@ import "mirai:project"
 // of the import alone. The program loads the editor library of the project
 // of what it imports (its importers and the types of its game): one built
 // from other sources, of the engine or of the project, is built again first,
-// without refreshing packages or opening the editor.
+// without refreshing packages, checking the assets its code names (which the
+// import may be making) or opening the editor.
 // The program runs in the current folder with the other arguments, and its
 // exit code is the command's.
 

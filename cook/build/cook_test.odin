@@ -207,6 +207,42 @@ a_cook_ships_every_asset_of_an_active_plugin_under_its_prefix :: proc(t:^testing
     testing.expect_value(t,asset.registry_file_path(&mounted,"scenes/main.scene",context.temp_allocator),fmt.tprintf("%s/scenes/main.scene",assets))
 }
 
+// The assets the code of the game names by their paths are roots, as those of
+// cook.mirai, with what they depend on, whichever names one more than once; a
+// dedicated server leaves what is only shown or heard behind all the same, and
+// a path that names no file of the assets fails the cook by that path.
+@(test)
+a_cook_ships_the_assets_the_code_of_the_game_names :: proc(t:^testing.T) {
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    folder:=base.test_folder(t,"cook-code-roots")
+    if folder=="" {return}
+    assets,output:=fmt.tprintf("%s/project/assets",folder),fmt.tprintf("%s/ship/assets",folder)
+    project_write(t,&types,assets)
+    SCENES :: "materials/wood.mat models/crate.mesh prefabs/prop.scene scenes/main.scene textures/wood_color.tex textures/wood_normal.tex "
+    Case :: struct {roots:[]string,server:bool,error:Cook_Error,kept:string,left:[]string}
+    cases:=[]Case{
+        {nil,false,.None,SCENES,nil},
+        {{"materials/spare.mat","ui/hud.ui","materials/spare.mat"},false,.None,"materials/spare.mat materials/wood.mat models/crate.mesh prefabs/prop.scene scenes/main.scene textures/blocks.tex textures/icon.tex textures/wood_color.tex textures/wood_normal.tex ui/hud.ui ",nil},
+        {{"materials/spare.mat","ui/hud.ui"},true,.None,"materials/spare.mat materials/wood.mat models/crate.mesh prefabs/prop.scene scenes/main.scene ",{"textures/blocks.tex","ui/hud.ui"}},
+        {{"ui/hud.ui","materials/gone.mat"},false,.Root_Missing,"",nil},
+    }
+    for c in cases {
+        report:=cook_assets({assets=assets,output=output,code_roots=c.roots,server=c.server,allocator=context.temp_allocator})
+        if !testing.expectf(t,report.error==c.error,"%v: %v %s",c.roots,report.error,report.detail) {continue}
+        if c.error!=.None {
+            testing.expect_value(t,report.detail,"materials/gone.mat")
+            continue
+        }
+        kept,_:=names(&report)
+        testing.expectf(t,kept==c.kept,"%v: %s",c.roots,kept)
+        for path in c.left {
+            shown:=false
+            for dropped in report.dropped {shown||=dropped.path==path && dropped.shown}
+            testing.expectf(t,shown && !strings.contains(kept,path),"%v: a server leaves %s behind: %s",c.roots,path,kept)
+        }
+    }
+}
+
 @(private="file")
 Glow :: struct {range:f32}
 

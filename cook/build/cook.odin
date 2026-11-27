@@ -29,8 +29,9 @@ import "mirai:store"
 // What is reached starts at the roots: every scene, every prefab (code reaches
 // one only by instantiating it), every table of game data (.records, which
 // the code reads by the type of its rows) and every .strings (whose keys
-// interfaces, rows and code show) of the project and what cook.mirai
-// names, the other assets only code refers to. From them, everything an
+// interfaces, rows and code show) of the project, the assets the code of the
+// game names by their paths (Asset_Ref), and what cook.mirai names: the other
+// assets only code refers to, by a path it makes. From them, everything an
 // asset depends on, and so on. The rest stays behind and is listed in the
 // report. The assets of the project and of each plugin are their files and
 // the outputs of the packages each root pins, listed from the store of the
@@ -63,6 +64,7 @@ Cook_Desc :: struct {
     assets:string,   // the assets folder of the project
     output:string,   // the assets folder of the shipped game: it ends up holding what was cooked and nothing else
     manifest:string, // the cook.mirai of the project. "", or a file that does not exist: the scenes are the only roots
+    code_roots:[]string, // the paths of assets the code of the game names (Asset_Ref.shipped), from the assets folder: roots
     plugins:[]project.Asset_Folder, // the assets of active plugins: every file but the sources of its packages a root, cooked under its prefix
     store:^store.Store,   // that lists the packages of the roots and whose texture cache keeps compressed textures by content (textures.cache_read); nil: none, for roots without packages
     cache_source:cache.Source, // asked on a miss of that cache before compressing
@@ -353,6 +355,11 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
             named=true
         }
         if !named {cook_fail(&report,.Root_Missing,root,allocator);return}
+    }
+    for path in desc.code_roots {
+        at,found:=registry.by_path[path]
+        if !found {cook_fail(&report,.Root_Missing,path,allocator);return}
+        root_add(reached,&pending,&report,at)
     }
     // A declared retarget ships its animation and skeleton, as roots.
     declared:=make([][2]base.Asset_Id,len(manifest.retargets),temp)

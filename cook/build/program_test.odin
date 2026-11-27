@@ -124,7 +124,10 @@ FIXTURE_REFUSED_LINE :: 26
 // that mirai scene check passes; a scene the game refuses is said with the
 // line of the tool that wrote it; a second run writes nothing; mirai records
 // reads, checks and writes those tables, and the methods, components and
-// actions of the project are described with no editor running.
+// actions of the project are described with no editor running. The game names
+// the scene the tool writes by its path: the tool builds while the scene is
+// not there, and a build or a check of the project says where the game names
+// it until the tool has run.
 @(test)
 a_content_tool_writes_typed_rows_and_scenes_of_its_game :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
@@ -152,6 +155,8 @@ Crate :: struct {weight:f32}
 
 @(step="fixed")
 crates_fall :: proc(crates:^core.Table(Crate),weapons:core.Records(Weapon)) {}
+
+CRATES :: "arena/crates.scene"
 `},
         {"tools/content/main.odin",`package main
 
@@ -226,9 +231,19 @@ main :: proc() {
     p,error:=project.open(folder,root)
     if !testing.expect_value(t,error.code,project.Error_Code.None) {return}
     defer project.close(&p)
-    built:=job_run({project=&p,target=.Editor,dev=true,engine=.Dev})
-    testing.expectf(t,built.result.status!=.Failed,"the editor library: %v %s %v",built.result.failure,built.result.text,built.result.diagnostics)
-    job_destroy(built)
+    // The library builds; the paths its game names are checked once it stands.
+    named :: proc(t:^testing.T,p:^project.Project,action:Action,there:bool) {
+        job:=job_run({project=p,target=.Editor,action=action,dev=true,engine=.Dev})
+        defer job_destroy(job)
+        if there {
+            testing.expectf(t,job.result.status!=.Failed,"%v with the scene there: %v %s %v",action,job.result.failure,job.result.text,job.result.diagnostics)
+            return
+        }
+        testing.expectf(t,job.result.failure==.Asset_Paths && strings.contains(job.result.text,`"arena/crates.scene" names no asset`) && strings.contains(job.result.text,"game.odin(17:"),"%v before the tool ran: %v %s %v",action,job.result.failure,job.result.text,job.result.diagnostics)
+    }
+    named(t,&p,.Build,false)
+    testing.expect(t,os.is_file(project.project_library(folder,"editor",context.temp_allocator)))
+    named(t,&p,.Check,false)
     job:=job_run({project=&p,target=.Editor,action=.Program,package_folder=project.path(folder,"tools/content"),dev=true,engine=.Dev})
     for d in job.result.diagnostics {log.errorf("%s(%d:%d): %s",d.file,d.line,d.column,d.message)}
     if !testing.expectf(t,job.result.status==.Built,"%v: %s",job.result.failure,job.result.text) {job_destroy(job);return}
@@ -238,6 +253,8 @@ main :: proc() {
 
     said,code:=program_output(t,folder,{tool},environment)
     testing.expectf(t,code==0 && strings.contains(said,"content: 3 written, 0 unchanged"),"%s",said)
+    named(t,&p,.Build,true)
+    named(t,&p,.Check,true)
     first,_:=program_output(t,folder,{tool,"--read"},environment)
     for wanted in ([]string{"data/ammo.records shell ","data/ammo.records slug ","data/weapons.records shotgun ",`"action": "dash"`,`"hold": 0.5`,`"damage": 12`}) {
         testing.expectf(t,strings.contains(first,wanted),"%q not in\n%s",wanted,first)

@@ -121,7 +121,8 @@ the same attributes and no private paths. Declaration and parameter binding:
 8. Game code names an asset by its path in the assets wherever a call takes one (`scene.spawn`,
    `scene.request`, `audio.play`), and a field it fills by
    `host.assets_id`; data fields hold its `base.Asset_Id`. A path literal of the project's code
-   that names no asset fails the build where it is written.
+   that names no asset fails `build`, `edit`, `play` and `check` where it is written, and the game
+   ships what the literals of its game code name ([assets](../../../docs/game/assets.md)).
 
 ## Invariants
 

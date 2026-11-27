@@ -297,6 +297,17 @@ Generated :: struct {
     game_world,editor_world,shipped_world,editor_main,game_main:string,
     errors:[]string,
     machine_settings:[]string, // the names of the @(storage,setting="machine"): the sections the file of the engine gives a shipped game
+    asset_refs:[]Asset_Ref,    // the paths of assets the code of the project writes, which a build checks once its packages are refreshed (asset_refs_check)
+}
+
+// A string literal of the code of the project that ends in the extension of
+// an asset ("pets/Dog.scene"): the path of an asset of the project, of its
+// plugins or of their packages, from the assets folder, and where it is written.
+Asset_Ref :: struct {
+    path:string,
+    file:string,
+    line,column:int,
+    shipped:bool, // in the code of the game that ships: not of an editor part or of a development plugin
 }
 
 // The packages of a project, read: what each declares, before anything is settled.
@@ -314,10 +325,10 @@ generator_read :: proc(p:^project.Project) -> (g:Generator) {
 }
 
 // The source of the world packages and of the main packages. The world of
-// the game that ships is generated only when shipped is asked for. The paths
-// of assets the code writes are checked against the packages of the project
-// and its plugins in the store at store_root ("": the machine's).
-world_generate :: proc(p:^project.Project,allocator:=context.allocator,shipped:=false,store_root:="") -> (out:Generated) {
+// the game that ships is generated only when shipped is asked for. It reads
+// the code alone: the assets the code names may not exist yet, as an import
+// or the content tool of the project makes them with what is generated.
+world_generate :: proc(p:^project.Project,allocator:=context.allocator,shipped:=false) -> (out:Generated) {
     context.allocator=allocator
     g:=generator_read(p)
     for pkg in g.packages {
@@ -330,7 +341,7 @@ world_generate :: proc(p:^project.Project,allocator:=context.allocator,shipped:=
     for pkg in g.packages {draws_read(&g,pkg)}
     rules_check(&g)
     defaults_check(&g)
-    asset_paths_check(&g,p,store_root)
+    out.asset_refs=asset_refs_collect(&g,p)
     out.errors=g.errors[:]
     if len(g.errors)>0 {return}
     out.game_world=world_write(&g,false)
@@ -395,10 +406,10 @@ PROJECT_INFO_SYMBOL :: "mirai_project_info"
 
 // Writes the generated packages under <project>/.mirai/gen when they changed.
 // out has what was generated, in the temp allocator.
-world_write_files :: proc(p:^project.Project,shipped:=false,store_root:="") -> (out:Generated,ok:bool) {
+world_write_files :: proc(p:^project.Project,shipped:=false) -> (out:Generated,ok:bool) {
     if out.errors=kinds_write(p);len(out.errors)>0 {return}
     if out.errors=records_write(p);len(out.errors)>0 {return}
-    out=world_generate(p,context.temp_allocator,shipped,store_root)
+    out=world_generate(p,context.temp_allocator,shipped)
     if len(out.errors)>0 {return}
     gen:=project.path(project.folder_path(p.root,.Generated,context.temp_allocator),"gen",allocator=context.temp_allocator)
     files:=[4][2]string{{"editor_world/world.odin",out.editor_world},{"shipped_world/world.odin",out.shipped_world},{"editor/main.odin",out.editor_main},{"game/main.odin",out.game_main}}
@@ -3818,33 +3829,19 @@ defaults_check :: proc(g:^Generator) {
     }
 }
 
-// The paths of assets the code of the project writes: a string literal that
-// ends in the extension of an asset ("pets/Dog.scene") names an asset of the
-// project, of its plugins or of their packages, or the build fails where it
-// is written, with the path that has the same name when there is one.
+// The paths of assets the code of the project writes: its string literals that
+// end in the extension of a kind of the engine or of an active plugin, but for
+// text that only looks like one ("spawned %s.scene"). The tests are not read.
 @(private="file")
-asset_paths_check :: proc(g:^Generator,p:^project.Project,store_root:string) {
-    assets:=project.folder_path(p.root,.Assets,context.temp_allocator)
-    if !os.is_dir(assets) {return}
-    registry:asset.Registry
-    packages,_:=asset.root_packages(p.root,store_root,context.temp_allocator)
-    asset.registry_init(&registry,assets,"",context.temp_allocator,packages.listed)
-    defer asset.registry_destroy(&registry)
-    for folder in project.asset_folders(p,context.temp_allocator) {
-        if folder.prefix=="" {continue}
-        plugin,_:=asset.root_packages(folder.root,store_root,context.temp_allocator)
-        asset.registry_mount(&registry,folder.path,folder.prefix,plugin.listed)
-    }
-    if asset.registry_scan(&registry)!=.None {return}
+asset_refs_collect :: proc(g:^Generator,p:^project.Project) -> []Asset_Ref {
     extensions:=make(map[string]bool,context.temp_allocator)
     for info in asset.KINDS {extensions[info.extension]=true}
-    // Those of the kinds of plugins, as the assets of the project have them; a source
-    // an import reads (a .png, a .umap) is no asset.
-    for file in registry.files {
-        if file.kind==0 {continue}
-        if dot:=strings.last_index_byte(file.path,'.');dot>0 {extensions[file.path[dot:]]=true}
+    for index in p.active {
+        for &kind in p.plugins[index].manifest.asset_kinds {
+            if extension:=base.text_get(kind.extension[:]);extension!="" {extensions[extension]=true}
+        }
     }
-    Walk :: struct {g:^Generator,file:^ast.File,registry:^asset.Registry,extensions:^map[string]bool}
+    Walk :: struct {refs:^[dynamic]Asset_Ref,file:^ast.File,extensions:^map[string]bool,shipped:bool}
     visit :: proc(v:^ast.Visitor,node:^ast.Node) -> ^ast.Visitor {
         if node==nil {return nil}
         w:=(^Walk)(v.data)
@@ -3854,24 +3851,64 @@ asset_paths_check :: proc(g:^Generator,p:^project.Project,store_root:string) {
         dot:=strings.last_index_byte(path,'.')
         slash:=strings.last_index_byte(path,'/')
         if dot<=slash+1 || !w.extensions[path[dot:]] || strings.contains_any(path,"%{}:\\\n") {return v}
-        if _,known:=w.registry.by_path[path];known {return v}
-        name:=path[slash+1:]
-        like:=""
-        for file in w.registry.files {
-            if file.path==name || strings.has_suffix(file.path,name) && file.path[len(file.path)-len(name)-1]=='/' {like=file.path;break}
-        }
-        hint:=like!=""?fmt.tprintf("; the asset of that name is %q",like):""
-        append(&w.g.errors,fmt.aprintf("%s(%d:%d): %q names no asset of the project or of its plugins%s: write the path of the asset from the assets folder, or create or import it",w.file.fullpath,lit.pos.line,lit.pos.column,path,hint))
+        append(w.refs,Asset_Ref{path=path,file=w.file.fullpath,line=lit.pos.line,column=lit.pos.column,shipped=w.shipped})
         return v
     }
+    refs:=make([dynamic]Asset_Ref)
     for pkg in g.packages {
         if !strings.has_prefix(pkg.path,"project:") {continue}
+        shipped:=!pkg.editor && (pkg.plugin<0 || !p.plugins[pkg.plugin].manifest.development)
         for file in pkg.files {
-            w:=Walk{g,file,&registry,&extensions}
+            w:=Walk{&refs,file,&extensions,shipped}
             visitor:=ast.Visitor{visit=visit,data=&w}
             for stmt in file.decls {ast.walk(&visitor,stmt)}
         }
     }
+    return refs[:]
+}
+
+// Of the paths of assets the code writes, those that name no asset of the
+// folders (project.asset_folders: the project's first, then those of its
+// plugins, each with the outputs of the packages its root pins in the store at
+// store_root, "": the machine's), each said where it is written, with the path
+// of the asset of that name when there is one. A project without an assets
+// folder names none. In allocator.
+asset_refs_check :: proc(folders:[]project.Asset_Folder,refs:[]Asset_Ref,store_root:string,allocator:=context.allocator) -> []string {
+    if len(refs)==0 || len(folders)==0 || folders[0].prefix!="" {return nil}
+    registry:asset.Registry
+    packages,_:=asset.root_packages(folders[0].root,store_root,context.temp_allocator)
+    asset.registry_init(&registry,folders[0].path,"",context.temp_allocator,packages.listed)
+    defer asset.registry_destroy(&registry)
+    for folder in folders[1:] {
+        plugin,_:=asset.root_packages(folder.root,store_root,context.temp_allocator)
+        asset.registry_mount(&registry,folder.path,folder.prefix,plugin.listed)
+    }
+    if asset.registry_scan(&registry)!=.None {return nil}
+    errors:=make([dynamic]string,allocator)
+    for ref in refs {
+        if _,known:=registry.by_path[ref.path];known {continue}
+        name:=ref.path[strings.last_index_byte(ref.path,'/')+1:]
+        like:=""
+        for file in registry.files {
+            if file.path==name || strings.has_suffix(file.path,name) && file.path[len(file.path)-len(name)-1]=='/' {like=file.path;break}
+        }
+        hint:=like!=""?fmt.tprintf("; the asset of that name is %q",like):""
+        append(&errors,fmt.aprintf("%s(%d:%d): %q names no asset of the project or of its plugins%s: write the path of the asset from the assets folder, or create or import it",ref.file,ref.line,ref.column,ref.path,hint,allocator=allocator))
+    }
+    return errors[:]
+}
+
+// asset_refs_check of every path of an asset the code of the project writes,
+// reading its packages alone: what a build that finds its library current
+// still checks. In allocator.
+asset_paths_check :: proc(p:^project.Project,store_root:="",allocator:=context.allocator) -> []string {
+    context.allocator=context.temp_allocator
+    g:Generator
+    packages_find(&g,p)
+    for pkg in g.packages {
+        if strings.has_prefix(pkg.path,"project:") {package_sources(&g,pkg,false)}
+    }
+    return asset_refs_check(project.asset_folders(p),asset_refs_collect(&g,p),store_root,allocator)
 }
 
 // The fields a literal of a struct whose fields are order names: those it

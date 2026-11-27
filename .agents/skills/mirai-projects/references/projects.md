@@ -243,7 +243,7 @@ PowerShell/cmd/Python. Builds are dev ([release builds](../../../../AGENTS.md#co
 | New worktree | `mirai worktree new <name> [--from <branch>]` |
 | Edit / Play | `mirai edit\|play [project] [--release] [--store dir] [args]` |
 | Build targets | `mirai build editor\|game\|server\|engine\|kai [project] [--target linux_arm64] [--release] [--out dir] [--store dir] [--force]` |
-| Generate / Content | `mirai generate [project] [--store dir]` / `mirai content [project] [-- args]` |
+| Generate / Content | `mirai generate [project]` / `mirai content [project] [-- args]` |
 | Import / Refresh | `mirai import <file> [--project P] [--folder F]` / `mirai import --refresh <root> [--final]` |
 | Share / Join | `mirai share [project] [--port N] [--store S]` / `mirai join <invite> [dir] [--address A]` |
 | Kai VCS & sync | `mirai kai init\|status\|snapshot\|new\|describe\|split\|log\|diff\|undo\|restore\|conflicts\|prune\|bookmarks\|publish\|profile\|org\|invite\|join\|pull\|agent\|web-login\|serve ...` |

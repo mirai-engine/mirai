@@ -164,6 +164,12 @@ to `Desc.store_root`, `mirai-import`, cook, editor, and player).
   `mirai-import`: checks local store -> `--from` / installed engine `builds/` -> local source
   ingest (`Import_Failed` if unavailable). Dev accepts Fast imports; `mirai build game --release`
   requires Final.
+- Asset path literals of `project:` code (`Generated.asset_refs`, extensions of `asset.KINDS` and
+  the active plugins' `asset_kinds`) are checked only after that refresh (`job_target_done`), and
+  by a check of the project after `odin check`: `Asset_Paths` with `file(line:col)`. Generation,
+  `refresh_skip` builds (`mirai import`, `join`), tests and `mirai content` never read assets, so
+  what makes an asset the code names builds first. `library_current` re-checks
+  (`build.asset_paths_check`) so a current library does not hide a missing asset.
 - Store-only machines build and ship without raw sources. Cooking writes resolved assets + `.index`
   as loose container files so shipped games never open a store.
 
@@ -181,10 +187,12 @@ to `Desc.store_root`, `mirai-import`, cook, editor, and player).
 }
 ```
 
-- **Roots & plugins:** Every `.scene`, prefab, `.records`, `.strings`, `cook.mirai` (`COOK_FILE`:
-  `assets/` paths, trailing-`/` dirs, or asset IDs), and all plugin `assets/` files (minus package
-  sources) mounted at `plugins/<name>`. Errors: `Root_Missing`, `Manifest_Invalid`,
-  `Package_Missing`, `Source_Failed` (Fast texture in release), `Duplicate_Id`, `Resolve_Failed`.
+- **Roots & plugins:** Every `.scene`, prefab, `.records`, `.strings`, asset path literal of
+  shipped code (`Asset_Ref.shipped`: not `editor/` or a `development` plugin;
+  `Cook_Desc.code_roots`), `cook.mirai` (`COOK_FILE`: `assets/` paths, trailing-`/` dirs, or asset
+  IDs), and all plugin `assets/` files (minus package sources) mounted at `plugins/<name>`.
+  Errors: `Root_Missing`, `Manifest_Invalid`, `Package_Missing`, `Source_Failed` (Fast texture
+  in release), `Duplicate_Id`, `Resolve_Failed`.
 - **Scope & transforms:** Transitive dependencies (`dropped` / `missing` reported); parallel worker
   cook (deterministic order; `Balanced` in dev `quick`, `Ultra` in release).
   - *Textures:* `"blocks"` (default) BCn-encodes RGBA8 (UI-only copied), cached by `content_hash`;
@@ -212,7 +220,8 @@ runtime package tests must not import engine-time packages (GPU tests use `packa
 ## Known limits
 
 - Cooked assets ship as loose files with `.index` (not packed into a single archive).
-- Code-only asset refs missing from `cook.mirai` are not cooked.
+- Assets only a path the code formats at run time names (`fmt.tprintf`) are not cooked unless
+  `cook.mirai` roots them.
 - First project shader build or Surface code edits recompile all material stages (metadata-only
   edits skip stages; PostProcess compiles one stage).
 - `shaders_destroy` and editor exit wait for an active shader generation instead of cancelling.
