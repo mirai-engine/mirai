@@ -66,8 +66,10 @@ mirai rpc --project . settings.set \
   and stylized art above all.
 - `ACES_2`: a filmic image whose colors soften as they brighten, with smooth highlights. For
   realistic or cinematic looks and strong emissive light.
+- `LUT`: the look of another engine or tool, baked by the project into a texture (`lut`, with the
+  gray it shows as `lut_gray`): what a port uses to show colors as its source game does.
 
-Both show a gray card with the same light: changing one changes the color and contrast of a
+All show a gray card with the same light: changing one changes the color and contrast of a
 scene, not how bright it is.
 
 ## Pitfalls that fail silently

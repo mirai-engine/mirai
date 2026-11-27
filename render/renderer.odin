@@ -632,7 +632,10 @@ Renderer :: struct {
 	dummy_rest:      rhi.Texture, // in place of the rest target (RG32 uint) while there is none
 	dfg:             rhi.Texture, // the split-sum table of the specular lobe, in the entry DFG_TEXTURE of the texture table
 	air:             Air_State,   // the tables of the air of an atmosphere (air.odin)
-	display_lut:     rhi.Texture, // the ACES 2.0 Output Transform (display.odin)
+	display_lut:     rhi.Texture, // the LUT the passes read: display_aces, or that of the project (display.odin)
+	display_aces:    rhi.Texture, // the ACES 2.0 Output Transform
+	display_tables:  rhi.Buffer,  // its tables of hue
+	display_custom:  Display_Custom,
 	display_transform: Display_Transform, // how the passes encode; Neutral is the default of a project
 	font:            rhi.Texture,
 	font_size:       [2]int,
@@ -870,9 +873,9 @@ renderer_destroy :: proc(r: ^Renderer) {
 	for b in r.font_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for b in r.stats_readback {if b != 0 {rhi.buffer_destroy(d, b)}}
 	cost_destroy(r)
-	for b in ([]rhi.Buffer{r.stats_buffer, r.scratch_buffer, r.glass_dispatch, r.dispatch_start, r.dummy_buffer, r.shadow_buffers.state, r.shadow_buffers.table}) {if b != 0 {rhi.buffer_destroy(d, b)}}
+	for b in ([]rhi.Buffer{r.stats_buffer, r.scratch_buffer, r.glass_dispatch, r.dispatch_start, r.dummy_buffer, r.shadow_buffers.state, r.shadow_buffers.table, r.display_tables}) {if b != 0 {rhi.buffer_destroy(d, b)}}
 	if r.light_changes != 0 {rhi.buffer_destroy(d, r.light_changes)}
-	for t in ([]rhi.Texture{r.dummy_texture, r.dummy_layers, r.dummy_uint, r.dummy_views, r.dummy_rest, r.dfg, r.display_lut, r.font, r.thumbnails}) {if t != 0 {rhi.texture_destroy(d, t)}}
+	for t in ([]rhi.Texture{r.dummy_texture, r.dummy_layers, r.dummy_uint, r.dummy_views, r.dummy_rest, r.dfg, r.display_aces, r.display_custom.lut, r.font, r.thumbnails}) {if t != 0 {rhi.texture_destroy(d, t)}}
 	air_destroy(r)
 	if r.linear_sampler != 0 {rhi.sampler_destroy(d, r.linear_sampler)}
 	if r.point_sampler != 0 {rhi.sampler_destroy(d, r.point_sampler)}
