@@ -613,6 +613,41 @@ the_turns_of_a_measurement_share_the_card_when_alone :: proc(t:^testing.T) {
     lock_release(&other)
 }
 
+// An open and idle session counts for the memory of the card, not for the
+// active GPU_AGENTS slot: another agent enters while the card fits it, and
+// resuming work serializes through gpu_work_try.
+@(test)
+an_open_and_idle_session_does_not_block_other_agents_when_memory_fits :: proc(t:^testing.T) {
+    if measuring() {return}
+    root:=base.test_folder(t,"workspace")
+    if root=="" {return}
+    GB :: i64(1)<<30
+    gpu_card_write(root,{8*GB,true,"card"})
+    first,first_taken,_:=gpu_try(root,"pid 61, the session of a",2*GB)
+    if !testing.expect(t,first_taken) {return}
+    defer lock_release(&first)
+    // While working, a second agent waits even though memory fits.
+    _,busy_taken,_:=gpu_try(root,"pid 62, the session of b",2*GB)
+    testing.expect(t,!busy_taken,"working agent holds the active slot")
+    // Once open and idle, a second agent fits if memory admits it, not if it exceeds the card.
+    testing.expect_value(t,gpu_turn_mark(root,61,true),0)
+    _,over_taken,_:=gpu_try(root,"pid 62, the session of b",6*GB)
+    testing.expect(t,!over_taken,"open session still counts for card memory")
+    second,second_taken,_:=gpu_try(root,"pid 62, the session of b",2*GB)
+    if !testing.expect(t,second_taken,"open session does not block an agent that fits") {return}
+    defer lock_release(&second)
+    // While the second works, the first cannot resume drawing; once the second goes idle, it can.
+    _,why,holder:=gpu_work_try(root,61)
+    testing.expect_value(t,why,Measure_Wait.Gpu)
+    testing.expectf(t,strings.has_prefix(holder,"pid 62, "),"waits for working agent, got %q",holder)
+    testing.expect(t,gpu_turn_mark(root,62,true)>=0)
+    turn,why2,_:=gpu_work_try(root,61)
+    testing.expect(t,turn>=0 && why2==.None,"resumes once the other agent is idle")
+    _,why3,holder3:=gpu_work_try(root,62)
+    testing.expect_value(t,why3,Measure_Wait.Gpu)
+    testing.expectf(t,strings.has_prefix(holder3,"pid 61, "),"now second waits for first, got %q",holder3)
+}
+
 // The pid a holder's text names first.
 @(private="file")
 pid_of :: proc(what:string) -> int {

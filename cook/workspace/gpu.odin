@@ -25,8 +25,9 @@ import "mirai:std/subprocess"
 // The turn of a person (person) is taken without waiting and counts for the
 // memory of the others; when every turn file is held it runs without one. Any
 // other waits while a measurement it is not part of runs (measured), and is
-// given a turn only while no other program a person does not run holds one
-// (GPU_AGENTS). The others wait in a queue, first come first served
+// given a turn only while fewer than GPU_AGENTS other programs a person does
+// not run are actively putting work on the GPU (not open and idle) and their
+// charges fit the card. The others wait in a queue, first come first served
 // (GPU_QUEUE). The turns of a measurement say so in their owner, and one of
 // them is given beside the others of the same measurement when no one else
 // holds a turn, also beyond the card: what it compares runs at once.
@@ -219,6 +220,30 @@ gpu_turn_mark :: proc(root:string,pid:int,open:bool,turn:=-1) -> (found:int) {
         gpu_owner_rewrite(owner,gpu_owner_text(strings.concatenate({bare,open?GPU_OPEN_TAG:""},context.temp_allocator),charge,held))
     }
     return
+}
+
+// Marks process pid's turn as putting work on the GPU when no measurement it
+// is not part of runs and fewer than GPU_AGENTS other non-person holders are
+// working (under GPU_ADMISSION_LOCK, so admission and resuming work serialize).
+// why is .None when it may work (found is its turn, -1 if none names pid),
+// .Measurement or .Gpu with holder when it must wait.
+gpu_work_try :: proc(root:string,pid:int,part_of:="",turn:=-1,allocator:=context.temp_allocator) -> (found:int,why:Measure_Wait,holder:string) {
+    if what,measurer:=measured(root,true,part_of,allocator);what==.Wait {return -1,.Measurement,measurer}
+    admission,admitted:=lock_acquire(lock_path(root,GPU_ADMISSION_LOCK,context.temp_allocator),fmt.tprintf("pid %d, gpu work",pid))
+    if !admitted {return gpu_turn_mark(root,pid,false,turn),.None,""}
+    defer lock_release(&admission)
+    if what,measurer:=measured(root,true,part_of,allocator);what==.Wait {return -1,.Measurement,measurer}
+    own:=fmt.tprintf("pid %d, ",pid)
+    agents:=0
+    first:=""
+    for h in gpu_holders(root,context.temp_allocator) {
+        if h.open || h.person || strings.has_prefix(h.holder,own) {continue}
+        if part_of!="" && gpu_holder_measurement(h.holder)==part_of {continue}
+        if first=="" {first=h.holder}
+        agents+=1
+    }
+    if agents>=GPU_AGENTS {return -1,.Gpu,strings.clone(first,allocator)}
+    return gpu_turn_mark(root,pid,false,turn),.None,""
 }
 
 // What the holders held at most beyond what the card has for the turns (its
@@ -419,8 +444,8 @@ gpu_try :: proc(root,what:string,charge:i64,person:=false,part_of:="") -> (lock:
 
 // Whether a turn charged charge fits beside holders on a card of memory
 // bytes: a turn free, fewer than GPU_AGENTS holders a person does not run
-// and the room for it, or every holder part of the same measurement
-// (part_of).
+// that put work on the GPU now (not open and idle) and the room for it, or
+// every holder part of the same measurement (part_of).
 @(private)
 gpu_room :: proc(holders:[]Gpu_Holder,memory,charge:i64,part_of:string) -> bool {
     charges:=make([]i64,len(holders),context.temp_allocator)
@@ -430,7 +455,7 @@ gpu_room :: proc(holders:[]Gpu_Holder,memory,charge:i64,part_of:string) -> bool 
         charges[i]=holder.charge
         same:=part_of!="" && gpu_holder_measurement(holder.holder)==part_of
         alone&&=same
-        if !same && !holder.person {agents+=1}
+        if !same && !holder.person && !holder.open {agents+=1}
     }
     return len(holders)<GPU_TURNS && (alone || agents<GPU_AGENTS && gpu_admits(memory,charges,charge))
 }

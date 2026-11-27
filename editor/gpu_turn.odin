@@ -68,26 +68,44 @@ gpu_turn_use :: proc(s:^Session,open:bool) {
 
 // Before a call that draws in a manual editor: waits while a measurement that
 // neither this editor nor its caller (part_of, its MEASURE_ENV) is part of
-// runs, at most limit (zero: no limit), with the turn open meanwhile, and
-// then says it works. ok is false, with who measures, when the limit passed
-// or the caller cancelled the call first.
+// runs or another non-person holder puts work on the GPU, at most limit
+// (zero: no limit), with the turn open meanwhile, and then says it works.
+// ok is false, with who holds it, when the limit passed or the caller
+// cancelled the call first.
 @(private)
 gpu_work_begin :: proc(s:^Session,part_of:string,limit:time.Duration) -> (ok:bool,holder:string) {
     if s.engine_root=="" {return true,""}
     start:=time.tick_now()
+    told:workspace.Measure_Wait
     for {
-        gpu_turn_use(s,false)
-        what:workspace.Measured
-        what,holder=workspace.measured(s.engine_root,true,part_of,context.temp_allocator)
-        if what!=.Wait {return true,""}
+        turn,why,by:=workspace.gpu_work_try(s.engine_root,os.get_pid(),part_of,s.gpu.turn,context.temp_allocator)
+        if why==.None {
+            if s.gpu.handle!=0 && turn>=0 {s.gpu.turn,s.gpu.said=turn,.Work}
+            return true,""
+        }
+        holder=by
         gpu_turn_use(s,true)
-        fmt.eprintfln("mirai: a call that draws waits for a measurement to finish (%s)",holder)
+        if told!=why {
+            told=why
+            if why==.Measurement {
+                fmt.eprintfln("mirai: a call that draws waits for a measurement to finish (%s)",holder)
+            } else {
+                fmt.eprintfln("mirai: a call that draws waits for GPU work to finish (%s)",holder)
+            }
+        }
         left:=time.Duration(0)
         if limit>0 {
             left=limit-time.tick_since(start)
             if left<=0 {return false,holder}
         }
-        if !workspace.measurement_wait(s.engine_root,part_of,limit=left,stop=proc(user:rawptr) -> bool {return api_stop_asked((^Session)(user))},user=s) {return false,holder}
+        if why==.Measurement {
+            if !workspace.measurement_wait(s.engine_root,part_of,limit=left,stop=proc(user:rawptr) -> bool {return api_stop_asked((^Session)(user))},user=s) {return false,holder}
+        } else {
+            if api_stop_asked(s) {return false,holder}
+            wait:=250*time.Millisecond
+            if left>0 && left<wait {wait=left}
+            time.sleep(wait)
+        }
     }
 }
 
