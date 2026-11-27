@@ -140,6 +140,7 @@ projects_show :: proc(s:^Session) {
     if p==nil {return}
     p.shown,p.creating,p.scroll=true,false,0
     if error:=project.recent_read(s.engine_root,&p.recent);error.code!=.None {notify(s,settings_file_error_text(project.recent_file(s.engine_root,context.temp_allocator),error))}
+    kai_team_open(s)
     projects_rows_read(s)
     if p.location_length==0 {projects_location_default(p)}
     _,p.engine_branch=projects_branch(s.engine_root)
@@ -550,6 +551,9 @@ projects_start :: proc(s:^Session) -> bool {
     }
     turn:=gpu_turn_pass(s,&command)
     preferences_save(s)
+    // Release the Kai agent's :7350 listener before spawning the project editor so
+    // the new process binds :7350 cleanly on both macOS and Windows.
+    kai_team_close(s)
     started,error:=subprocess.start({command=command[:],stdin=os.stdin,stdout=os.stdout,stderr=os.stderr},inherit=turn)
     if error!=nil {
         log.errorf("%s could not be started: %v",exe,error)

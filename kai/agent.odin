@@ -179,6 +179,7 @@ agent_start :: proc(a:^Agent,team:^Team,options:Agent_Options,allocator:=context
             agent_free(a)
             return team_fail(&a.team,.Io,fmt.tprintf("port %d is taken: stop the other Kai agent or choose another port",port))
         }
+        socket_cloexec(socket)
         a.listener,a.listening,a.listen_host=socket,true,host
         if bound,be:=net.bound_endpoint(socket);be==nil {a.port=bound.port}
         if options.portmap {
