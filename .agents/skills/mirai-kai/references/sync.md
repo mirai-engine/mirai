@@ -154,4 +154,23 @@ a sync; `mirai:net` gives only the
   members (waiting up to `PEERS_WAIT`), a miss asks them (`agent_ddc_ask`) and takes the output
   whole, and what the cache keeps is published and told to the org's nodes. A build found here
   that the org has no record of is published too, so the builds a project came with reach the
-  machines that pull it.
+  machines that pull it. Before it stops, an agent that published waits until its peers ask it
+  nothing for `DRAIN_IDLE` (at most `DRAIN_MAX`, `agent_drain`), so a node takes what it was told.
+- Publishing a project (`cook/kai` `publish`, so `kai.publish`, the Launcher and
+  `mirai kai publish`) also publishes the builds of the packages it pins that the store holds
+  whole, under `asset.REF_BUILDS`/<select> and `asset.REF_IMPORTS[_FAST]`/<key>
+  (`project_ddc_publish`): a project imported before it was the org's reaches whoever pulls it
+  without a source. A running agent tells its nodes of the new sets within `LOOK_SECONDS`.
+- A refresh that lacks a pinned build re-imports it only as `Import_Options.exact`: an import
+  that makes another manifest (content the source reads, such as Unreal's `/Engine`, differs on
+  that machine) fails by package and names, pins and shares nothing.
+
+## Transfers
+
+- `agent_transfers` lists what moves with each peer (download or upload; project, DDC or the
+  org's records), with bytes, chunks, what a download has left and the speed over the last two
+  seconds, from a fixed table of the agent (`kai/transfer.odin`); one quiet for `TRANSFER_KEEP`
+  leaves it. A want names no repository: the heads a pull starts from (`agent_roots`) say what
+  an upload is for, a peer's later wants follow it until it goes quiet, else the org's one
+  repository, else its records. `kai.peers` gives them, and the Team views and the Kai tab
+  show them.

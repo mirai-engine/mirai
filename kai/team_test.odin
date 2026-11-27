@@ -449,11 +449,77 @@ two_machines_pair_by_invite_and_sync_over_tcp :: proc(t:^testing.T) {
     pulls:=make([dynamic]Pull,context.temp_allocator)
     agent_pulls(&pc.agent,&pulls)
     testing.expect(t,len(pulls)==1 && pulls[0].whole && pulls[0].chunks>0 && pulls[0].bytes>0,"the pull says how far it is")
+    // Each end counts the repository's transfer, by peer, as it moved.
+    Seen :: struct {a:^Agent,direction:Transfer_Direction,peer:string,bytes:i64}
+    for x in ([]Seen{{&pc.agent,.Download,"Ana (Ana-laptop)",pulls[0].bytes},{&mac.agent,.Upload,"Ben (Ben-laptop)",pulls[0].bytes}}) {
+        list:=make([dynamic]Transfer,context.temp_allocator)
+        agent_transfers(x.a,&list,context.temp_allocator)
+        found:=false
+        for y in list {
+            if y.direction!=x.direction || y.kind!=.Project {continue}
+            found=y.repo==repo && y.label=="game" && y.peer_name==x.peer && y.bytes>=x.bytes && y.chunks>0 && y.bytes_per_second>0
+        }
+        testing.expectf(t,found,"%v of game with %s, %d bytes: %v",x.direction,x.peer,x.bytes,list[:])
+    }
     // The invite is used: a second device gets nothing with it.
     _,se:=agent_join(&stranger.agent,text)
     testing.expect(t,se==.Expired || se==.Unreachable || se==.Unauthorized,"a used invite admits nobody")
     _,_,sh:=team_org(&stranger.team,org)
     testing.expect_value(t,sh,Error.Missing)
+}
+
+// A transfer's speed is what moved over its last window, and falls to zero as it goes quiet;
+// one quiet for TRANSFER_KEEP leaves the list. A drain waits while a peer keeps asking, and
+// not at all without a connected peer.
+@(test)
+a_transfer_measures_its_window_and_leaves_once_quiet :: proc(t:^testing.T) {
+    a:Agent
+    now:=transfer_now()
+    x:=&a.transfers[0]
+    x^={used=true,direction=.Upload,root={kind=.Ddc},started=now-2*i64(time.Second),last=now,bucket=now/i64(TRANSFER_BUCKET)}
+    x.label_length=copy(x.label[:],"DDC")
+    x.peer_name_length=copy(x.peer_name[:],"cloud (node)")
+    // 1 MB in each bucket of the window: 4 MB a second.
+    for &b in x.window {b=1_000_000}
+    x.bytes=8_000_000
+    list:=make([dynamic]Transfer,context.temp_allocator)
+    agent_transfers(&a,&list,context.temp_allocator)
+    if !testing.expect_value(t,len(list),1) {return}
+    y:=list[0]
+    testing.expectf(t,y.active && y.label=="DDC" && y.peer_name=="cloud (node)" && y.bytes==8_000_000,"%v",y)
+    testing.expectf(t,y.bytes_per_second>3_900_000 && y.bytes_per_second<4_600_000,"4 MB/s over the window: %f",y.bytes_per_second)
+    // Quiet for longer than the window: listed, at no speed.
+    x.last=now-3*i64(time.Second)
+    x.bucket-=3*i64(time.Second/TRANSFER_BUCKET)
+    clear(&list)
+    agent_transfers(&a,&list,context.temp_allocator)
+    testing.expectf(t,len(list)==1 && !list[0].active && list[0].bytes_per_second==0,"%v",list[:])
+    // Quiet for TRANSFER_KEEP: gone, and its place is free.
+    x.last=now-i64(TRANSFER_KEEP)-1
+    clear(&list)
+    agent_transfers(&a,&list,context.temp_allocator)
+    testing.expect(t,len(list)==0 && !a.transfers[0].used,"a quiet transfer leaves the list")
+
+    started:=time.tick_now()
+    sync.atomic_store(&a.asked,transfer_now())
+    agent_drain(&a,time.Second,10*time.Second)
+    testing.expect(t,time.tick_since(started)<500*time.Millisecond,"no peer: no wait")
+
+    folder:=base.test_folder(t,"kai-drain")
+    if folder=="" {return}
+    mac,pc:Machine
+    if !machine_open(t,&mac,folder,"Ana") || !machine_open(t,&pc,folder,"Ben") {return}
+    defer machine_close(&mac)
+    defer machine_close(&pc)
+    org,_:=team_org_create(&mac.team,"studio")
+    if !machine_start(t,&mac,0) || !machine_start(t,&pc,-1) {return}
+    text,_:=team_invite(&mac.team,org,.Node,"",{fmt.tprintf("127.0.0.1:%d",agent_port(&mac.agent))},context.temp_allocator)
+    if _,e:=agent_join(&pc.agent,text);!testing.expectf(t,e==.None,"join: %s",pc.agent.team.why) {return}
+    started=time.tick_now()
+    sync.atomic_store(&pc.agent.asked,transfer_now())
+    agent_drain(&pc.agent,300*time.Millisecond,10*time.Second)
+    waited:=time.tick_since(started)
+    testing.expectf(t,waited>=300*time.Millisecond && waited<5*time.Second,"a connected agent drains until it is asked nothing: %v",waited)
 }
 
 // The throughput of a pull over loopback: KAI_BENCH_MB megabytes (16 unless

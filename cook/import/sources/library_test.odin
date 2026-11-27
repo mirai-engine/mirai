@@ -578,6 +578,55 @@ a_copy_of_a_root_with_its_sources_and_an_empty_store_builds_the_same :: proc(t:^
     testing.expect(t,os.exists(asset.package_file(bare,pinned.packages[1].id)))
 }
 
+// A store that lacks the build a project pins makes it again from the source only when its
+// import makes the manifest pinned: one that makes another (content the source reads differs
+// on this machine) fails by package, and the pin, its manifest's file and the store's name of
+// the import key stay as they were, so a later refresh is not taken in by it either.
+@(test)
+a_reimport_that_makes_another_manifest_keeps_the_pin :: proc(t:^testing.T) {
+    top:=base.test_folder(t,"library-differs")
+    if top=="" {return}
+    context.user_ptr=prefab.import_world(t)
+    game:=fmt.tprintf("%s/game",top)
+    props:=fmt.tprintf("%s/assets/props",game)
+    os.make_directory_all(props)
+    sign:=fmt.tprintf("%s/sign.png",props)
+    _=os.write_entire_file(sign,png_bytes(8,8,{200,40,40}))
+    here:=test_store(t,fmt.tprintf("%s/here",top))
+    if here==nil {return}
+    options:=Library_Options{store=here,root=game,plugins=test_library}
+    report,added,error:=project_ingest(game,sign,"props",options,allocator=context.temp_allocator)
+    if !testing.expectf(t,error.code==.None,"%s",error.message) || !report_clean(t,added) {return}
+    pinned,_,_:=asset.packages_load(game,context.temp_allocator)
+    if !testing.expect_value(t,len(pinned.packages),1) {return}
+    // The pin names a manifest of the same source and identity that the import here does not make.
+    entry:=pinned.packages[0]
+    p,get_error:=asset.package_get(here,entry.manifest,context.temp_allocator)
+    if !testing.expect_value(t,get_error,asset.Error.None) {return}
+    p.name=fmt.tprintf("%s elsewhere",p.name)
+    other,put_error:=asset.package_put(here,&p)
+    if !testing.expect_value(t,put_error,asset.Error.None) {return}
+    entry.manifest=other
+    if !testing.expect_value(t,project_pin(game,here,entry),asset.Error.None) {return}
+    pins_before,_:=os.read_entire_file(fmt.tprintf("%s/%s",game,asset.PACKAGES_FILE),context.temp_allocator)
+    manifest_before,_:=os.read_entire_file(asset.package_file(game,entry.id),context.temp_allocator)
+    fresh:=test_store(t,fmt.tprintf("%s/fresh",top))
+    if fresh==nil {return}
+    again:=options
+    again.store=fresh
+    for pass in 0..<2 {
+        refreshed:=project_refresh(game,again,context.temp_allocator)
+        testing.expectf(t,len(refreshed.failures)==1 && strings.contains(refreshed.failures[0],"makes another package"),"pass %d: %v",pass,refreshed.failures[:])
+        pins_after,_:=os.read_entire_file(fmt.tprintf("%s/%s",game,asset.PACKAGES_FILE),context.temp_allocator)
+        manifest_after,_:=os.read_entire_file(asset.package_file(game,entry.id),context.temp_allocator)
+        testing.expectf(t,string(pins_after)==string(pins_before),"pass %d: the pin stays",pass)
+        testing.expectf(t,string(manifest_after)==string(manifest_before),"pass %d: the pinned manifest's file stays",pass)
+        digits:[64]u8
+        _,ref_error:=store.ref_get(fresh,asset.REF_IMPORTS,store.hex(report.key,&digits))
+        testing.expectf(t,ref_error==.Missing,"pass %d: the import key names no build of another manifest: %v",pass,ref_error)
+    }
+}
+
 // Following packages into a project writes the same bytes from any empty
 // store, and a refresh that would write what is there writes nothing: no
 // document, prefab or record of the root is written again.

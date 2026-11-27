@@ -72,6 +72,7 @@ kai_panel_build :: proc(s:^Session,width,room:f32) {
         }
     }
     kai_publish_build(s)
+    kai_transfers_build(s,true)
     if ui.scroll_area(ctx,ui.id(ctx,"kai_scroll"),&st.scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=2}) {
         // Checked while any file is: a click then unchecks them all, and with none checks them all.
         some:=false

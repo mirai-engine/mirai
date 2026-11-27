@@ -831,7 +831,7 @@ refresh_prefetch :: proc(l:^Library_State,top:string,entries:[]asset.Project_Pac
 // changed: what the project's pin records its files held when last written,
 // and what becomes of one that changed since (Import_Options.changed).
 @(private="file")
-library_ingest :: proc(l:^Library_State,path:string,manifest:store.Hash,settings:^importer.Import_Settings,documents:string,written:[]asset.Package_Written,changed:importer.Changed,allocator:mem.Allocator) -> (report:importer.Import_Report,error:importer.Error) {
+library_ingest :: proc(l:^Library_State,path:string,manifest:store.Hash,settings:^importer.Import_Settings,documents:string,written:[]asset.Package_Written,changed:importer.Changed,allocator:mem.Allocator,exact:=false) -> (report:importer.Import_Report,error:importer.Error) {
     s:=l.options.store
     if s==nil {
         return {},importer.error_make(.Write,
@@ -875,7 +875,7 @@ library_ingest :: proc(l:^Library_State,path:string,manifest:store.Hash,settings
         }
     }
     options:=importer.Import_Options{
-        store=s,cache_source=l.options.source,manifest=manifest,documents=documents,root=l.options.root,
+        store=s,cache_source=l.options.source,manifest=manifest,exact=exact,documents=documents,root=l.options.root,
         rebuild=l.options.rebuild,fast_textures=l.options.fast_textures,worker=l.options.worker,gpu=l.options.gpu,hashes=&hashes,
     }
     if documents!="" {options.registry,options.world,options.written,options.changed=l.registry,l.plugins.world,written,changed}
@@ -1159,7 +1159,8 @@ source_changed :: proc(l:^Library_State,p:^asset.Package,source:string) -> bool 
 // the manifest it gives; a model is imported with the project's folder, which follows its
 // documents and writes its prefab, and any other follows from its build. objects_only: the
 // source and the manifest are those pinned, and only the objects of its build are made: the
-// documents of the project, which that same import made, are left as they are.
+// documents of the project, which that same import made, are left as they are, and an import
+// that makes another manifest fails and leaves the pin and the store's names as they were.
 @(private="file")
 reingest :: proc(l:^Library_State,top:string,entry:^asset.Project_Package,p:^asset.Package,source,documents:string,prefab:bool,why:string,report:^Library_Report,objects_only:=false) {
     if l.options.progress.procedure!=nil {fmt.wprintfln(l.options.progress,"importing %s: %s",source,why)}
@@ -1168,7 +1169,7 @@ reingest :: proc(l:^Library_State,top:string,entry:^asset.Project_Package,p:^ass
     changed:=importer.Changed.Discard if l.options.changed==.Discard else .Keep
     written,error:=library_ingest(
         l,source,entry.manifest,nil,documents if model && !objects_only else "",entry.written[:],changed,
-        context.temp_allocator)
+        context.temp_allocator,exact=objects_only)
     if error.code!=.None {
         report_line(&report.failures,"package %s: %s",p.name,error.message)
         return

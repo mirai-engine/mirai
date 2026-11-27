@@ -22,6 +22,10 @@ import vcs "mirai:kai"
 
 LABEL_DDC_CACHE :: "kai-1/ddc-cache"
 PEERS_WAIT :: 2*time.Second // a cook waits this long for the org's machines to connect
+// What published, the agent of peers_open waits for the org's nodes to take
+// it: until they ask nothing for DRAIN_IDLE, at most DRAIN_MAX.
+DRAIN_IDLE :: 2*time.Second
+DRAIN_MAX :: 2*time.Minute
 
 Mesh_Cache :: struct {
     team:^vcs.Team,   // signs what is published
@@ -102,6 +106,7 @@ Peers :: struct {
 peers_close :: proc(source:cache.Source) -> (taken,published:int) {
     p:=(^Peers)(source.user)
     taken,published=p.cache.taken,p.cache.published
+    if published>0 {vcs.agent_drain(&p.agent,DRAIN_IDLE,DRAIN_MAX)}
     vcs.agent_stop(&p.agent)
     vcs.team_close(&p.team)
     store.close(&p.s)
@@ -139,14 +144,39 @@ mesh_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string
     }
 }
 
-// Publishes what the cache kept: the object of the ref and, for a build
-// (asset.REF_IMPORTS, asset.REF_IMPORTS_FAST or asset.REF_BUILDS), every
-// object the build lists, which must come with it.
+// Publishes what the cache kept and tells the org's connected nodes.
 @(private)
 mesh_kept :: proc(user:rawptr,namespace,name:string,object:store.Hash,from:[]string) {
+    mesh_share(user,namespace,name,object,false)
+}
+
+// Publishes a result found here unless a record of its key names an output
+// this store holds whole, which it then serves.
+@(private)
+mesh_here :: proc(user:rawptr,namespace,name:string,object:store.Hash,from:[]string) {
+    mesh_share(user,namespace,name,object,true)
+}
+
+@(private="file")
+mesh_share :: proc(user:rawptr,namespace,name:string,object:store.Hash,here:bool) {
     c:=(^Mesh_Cache)(user)
     s,se:=vcs.team_store(c.team,c.org)
     if se!=.None {return}
+    key,address,published:=ddc_share(c.team,c.org,s,namespace,name,object,here)
+    if !published {return}
+    vcs.agent_ddc_published(c.agent,c.org,key,address)
+    sync.mutex_lock(&c.lock)
+    c.published+=1
+    sync.mutex_unlock(&c.lock)
+}
+
+// Publishes the result of the cache ref (namespace, name) as this device's
+// record in org's derived data: object and, for a build (asset.REF_IMPORTS,
+// asset.REF_IMPORTS_FAST or asset.REF_BUILDS), every object the build lists,
+// which must come with it. Nothing when a record of the key names that same
+// output, or with here, any output this store holds whole. published: the
+// key and the address of its set then.
+ddc_share :: proc(t:^vcs.Team,org:vcs.Org_Id,s:^store.Store,namespace,name:string,object:store.Hash,here:bool) -> (key,address:store.Hash,published:bool) {
     objects:=make([dynamic]store.Hash,context.temp_allocator)
     append(&objects,object)
     if namespace==asset.REF_IMPORTS || namespace==asset.REF_IMPORTS_FAST || namespace==asset.REF_BUILDS {
@@ -155,32 +185,30 @@ mesh_kept :: proc(user:rawptr,namespace,name:string,object:store.Hash,from:[]str
         listed:=asset.Build_Objects{build=&b,with_thumbnails=true}
         for address in asset.build_object_next(&listed) {append(&objects,address)}
     }
-    key:=ddc_key(namespace,name)
-    if _,e:=vcs.ddc_publish(s,c.org,&c.team.identity,key,objects[:],time.now()._nsec);e!=.None {return}
+    key=ddc_key(namespace,name)
+    records:=make([dynamic]vcs.DDC_Record,context.temp_allocator)
+    vcs.ddc_lookup(s,org,key,&records)
+    if len(records)>0 {
+        output,oe:=vcs.ddc_output_put(s,objects[:])
+        if oe!=.None {return}
+        for d in records {
+            if d.output_root==output {return}
+        }
+        if here {
+            lacking:=make([dynamic]store.Hash,context.temp_allocator)
+            for d in records {
+                clear(&lacking)
+                if _,e:=vcs.ddc_output_lacking(s,d.output_root,&lacking);e==.None && len(lacking)==0 {return}
+            }
+        }
+    }
+    if _,e:=vcs.ddc_publish(s,org,&t.identity,key,objects[:],time.now()._nsec);e!=.None {return}
     if store.commit(s)!=.None {return}
     ns:[len(vcs.DDC_PREFIX)+32]u8
     hex:[64]u8
-    if address,e:=store.ref_get(s,vcs.ddc_namespace(c.org,&ns),store.hex(key,&hex));e==.None {vcs.agent_ddc_published(c.agent,c.org,key,address)}
-    sync.mutex_lock(&c.lock)
-    c.published+=1
-    sync.mutex_unlock(&c.lock)
-}
-
-// Publishes a result found here unless a record of its key names an output
-// this store holds whole, which it then serves.
-@(private)
-mesh_here :: proc(user:rawptr,namespace,name:string,object:store.Hash,from:[]string) {
-    c:=(^Mesh_Cache)(user)
-    s,se:=vcs.team_store(c.team,c.org)
-    if se!=.None {return}
-    records:=make([dynamic]vcs.DDC_Record,context.temp_allocator)
-    vcs.ddc_lookup(s,c.org,ddc_key(namespace,name),&records)
-    lacking:=make([dynamic]store.Hash,context.temp_allocator)
-    for d in records {
-        clear(&lacking)
-        if _,e:=vcs.ddc_output_lacking(s,d.output_root,&lacking);e==.None && len(lacking)==0 {return}
-    }
-    mesh_kept(user,namespace,name,object,from)
+    e:store.Error
+    if address,e=store.ref_get(s,vcs.ddc_namespace(org,&ns),store.hex(key,&hex));e!=.None {return}
+    return key,address,true
 }
 
 // The identity of this machine: the seed kept in the root of the store, made

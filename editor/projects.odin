@@ -678,6 +678,18 @@ projects_poll :: proc(s:^Session) {
         log.errorf("%s could not be built: %s",base.text_get(p.opening[:]),text)
         return
     }
+    // An editor without its shaders draws nothing right: the project stays closed and says why.
+    if r.shaders!=nil && r.shaders.result.status==.Failed {
+        result:=&r.shaders.result
+        why:=result.message
+        for d in result.diagnostics {
+            if d.severity==.Error {why=fmt.tprintf("%s(%d:%d) %s",d.file,d.line,d.column,d.message);break}
+        }
+        text:=fmt.tprintf("The shaders of the project could not be built: %s",why if why!="" else "the generation failed")
+        p.error_length=copy(p.error[:],text)
+        log.errorf("%s: %s",base.text_get(p.opening[:]),text)
+        return
+    }
     if p.launcher {
         if projects_start(s) {s.quit=true}
         return

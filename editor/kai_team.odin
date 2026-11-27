@@ -571,6 +571,38 @@ kai_clone_progress :: proc(t:^Kai_Team) -> (chunks:int,bytes:i64) {
     return
 }
 
+// What moves with the org's machines now or moved a few seconds ago, read
+// from the agent at each call, its texts in allocator: what a pull, a
+// publish or derived data sends or takes, by peer, with its speed. None, and
+// nothing allocated, while no agent runs or nothing moves.
+kai_transfers :: proc(s:^Session,allocator:=context.temp_allocator) -> []vcs.Transfer {
+    if s.kai==nil || s.kai.team==nil || !s.kai.team.running {return nil}
+    out:=make([dynamic]vcs.Transfer,allocator)
+    vcs.agent_transfers(&s.kai.team.agent,&out,allocator)
+    return out[:]
+}
+
+// How fast a repository comes now, from every peer it comes from: bytes a second.
+kai_pull_speed :: proc(s:^Session,org:vcs.Org_Id,repo:vcs.Repo_Id) -> (bytes_per_second:f64) {
+    for x in kai_transfers(s) {
+        if x.direction==.Download && x.kind==.Project && x.org==org && x.repo==repo {bytes_per_second+=x.bytes_per_second}
+    }
+    return
+}
+
+// What a transfer moves and with whom ("Uploading Dreamscape to Frama (PC)"),
+// and how far it is ("42.3 MB · 8.4 MB/s"), in the temp allocator.
+kai_transfer_text :: proc(x:^vcs.Transfer) -> (what,rest:string) {
+    label:=x.label
+    if x.kind==.Sync {label=fmt.tprintf("the records of %s",x.label) if x.label!="" else "the org's records"}
+    peer:=x.peer_name if x.peer_name!="" else "a peer"
+    what=fmt.tprintf("%s %s %s %s",x.direction==.Upload?"Uploading":"Downloading",label,x.direction==.Upload?"to":"from",peer)
+    speed:=x.active?fmt.tprintf("%s/s",base.bytes_text(i64(x.bytes_per_second))):"idle"
+    rest=fmt.tprintf("%s · %s",base.bytes_text(x.bytes),speed)
+    if x.direction==.Download && x.left>0 && x.active {rest=fmt.tprintf("%s · %d chunks left",rest,x.left)}
+    return
+}
+
 // The folder a repository is pulled into: one of the location named after it.
 // If an unrelated folder of that name already exists on disk (including
 // case-insensitive matches on Windows/macOS), picks <name>-2, <name>-3, ...

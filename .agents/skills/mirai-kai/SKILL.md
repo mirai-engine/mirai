@@ -60,6 +60,7 @@ read a server's repositories, from a browser.
   [reach](references/sync.md#how-machines-reach-each-other); how fast a pull goes:
   [pulls](references/sync.md#pulls).
 - Derived data a cook takes from a peer: [derived data](references/sync.md#derived-data).
+- What uploads or downloads now, by peer, with its speed: [transfers](references/sync.md#transfers).
 - The server `mirai kai serve`, its stores, its web view and accounts, and its deployment:
   [server](references/server.md#the-server), [web view](references/server.md#the-web-view),
   [accounts](references/server.md#web-accounts) and

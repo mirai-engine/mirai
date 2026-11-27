@@ -271,6 +271,9 @@ writer_publish :: proc(w:^Writer,name,importer:string) -> bool {
     slice.sort_by(b.programs[:],asset.program_address_less)
     manifest,manifest_error:=asset.package_put(s,&p)
     if manifest_error!=.None {return writer_fail(w,.Write,"the manifest of the package of %s could not be put in the store at %s: %v",w.path,s.root,manifest_error)}
+    if w.options.exact && manifest!=w.options.manifest {
+        return writer_fail(w,.Differs,"importing %s here makes another package than the one the project pins (%d assets where it pins %d: the source, or content it reads such as an engine's, differs on this machine), so the pin stays and the build is missing: take it from a machine of the project's org that has it (publishing the project with Kai shares it), or import the source again there",w.path,len(p.assets),len(w.previous.assets))
+    }
     build,build_error:=asset.build_put(s,&b)
     if build_error!=.None {return writer_fail(w,.Write,"the build of the package of %s could not be put in the store at %s: %v",w.path,s.root,build_error)}
     id_text:[base.ASSET_ID_TEXT]u8

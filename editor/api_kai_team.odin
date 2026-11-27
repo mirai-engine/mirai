@@ -102,12 +102,25 @@ Api_Kai_Pull :: struct {
     bytes:i64,
     whole:bool,
 }
+Api_Kai_Transfer :: struct {
+    direction:string `mirai:"label=download or upload"`,
+    kind:string `mirai:"label=project (a repository's files), ddc (derived data) or sync (the org's records)"`,
+    label:string `mirai:"label=The repository's name, DDC, or the org's name"`,
+    peer:string `mirai:"label=name (device) of the machine it moves with"`,
+    bytes:i64,
+    chunks:int,
+    left:int `mirai:"label=Download: chunks asked and not here yet"`,
+    bytes_per_second:f64 `mirai:"label=Over the last two seconds"`,
+    seconds:f64 `mirai:"label=Since it began"`,
+    active:bool `mirai:"label=Something moved within the last two seconds; a transfer quiet for five leaves the list"`,
+}
 Api_Kai_Peers :: struct {
     running:bool `mirai:"label=The agent of this machine runs in this editor"`,
     port:int,
     addresses:[]string `mirai:"label=Where this machine listens on its LAN"`,
     peers:[]Api_Kai_Peer,
     pulls:[]Api_Kai_Pull,
+    transfers:[]Api_Kai_Transfer `mirai:"label=What moves with each peer now, or moved in the last seconds, with its speed"`,
 }
 Api_Kai_Web_Login_Params :: struct {
     server:string `mirai:"optional,label=The host:port of the server's agent, as the org lists it; none: says how the last sign-in went"`,
@@ -127,7 +140,7 @@ kai_team_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="kai.join",summary="Joins the org of an invite on a thread of the agent: reaches the machine that made it, proves the invite and waits for the org's record that lists this machine; asked again with no invite, how it went.",params=type_info_of(Api_Kai_Join_Params),result=type_info_of(Api_Kai_Joined),run=api_kai_join})
     api_register(s,st,{name="kai.publish",summary="Publishes the working copy to main for the whole org: closes the working change when it changed a file, and moves main; a project in no org goes into one first, in the same call.",params=type_info_of(Api_Kai_Publish_Params),result=type_info_of(Api_Kai_Published),run=api_kai_publish})
     api_register(s,st,{name="kai.clone",summary="Pulls a repository of an org into a folder: it is a workspace at once, and its files are written once the agent has every object of main; asked again, how far it is.",params=type_info_of(Api_Kai_Clone_Params),result=type_info_of(Api_Kai_Clone),run=api_kai_clone})
-    api_register(s,st,{name="kai.peers",summary="The agent of this machine: where it listens, the machines connected now and how far each repository's pull is.",result=type_info_of(Api_Kai_Peers),flags={.Read_Only},run=api_kai_peers})
+    api_register(s,st,{name="kai.peers",summary="The agent of this machine: where it listens, the machines connected now, how far each repository's pull is and what moves with each peer, with its speed.",result=type_info_of(Api_Kai_Peers),flags={.Read_Only},run=api_kai_peers})
     api_register(s,st,{name="kai.web_login",summary="Sets the name and password this machine signs in with on the web view of a Kai server of its org, on a thread of the agent, which proves the server's key first; asked again with no params, how it went.",params=type_info_of(Api_Kai_Web_Login_Params),result=type_info_of(Api_Kai_Task),run=api_kai_web_login})
 }
 
@@ -526,6 +539,17 @@ api_kai_peers :: proc(s:^Session,call:^api.Call) {
             for repo in o.repos {if repo.id==x.repo {name=repo.name}}
         }
         r.pulls[i]={strings.clone(name,call.allocator),x.chunks,x.left,x.bytes,x.whole}
+    }
+    transfers:=kai_transfers(s,call.allocator)
+    r.transfers=make([]Api_Kai_Transfer,len(transfers),call.allocator)
+    for x,i in transfers {
+        kind:="sync"
+        switch x.kind {
+        case .Sync:
+        case .Project: kind="project"
+        case .Ddc: kind="ddc"
+        }
+        r.transfers[i]={x.direction==.Upload?"upload":"download",kind,x.label,x.peer_name,x.bytes,x.chunks,x.left,x.bytes_per_second,x.seconds,x.active}
     }
 }
 

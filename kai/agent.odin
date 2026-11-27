@@ -102,6 +102,9 @@ Agent :: struct {
     heard:map[Key]Heard,      // where peers said members listen (Peers)
     loopback:bool,            // listens and dials on loopback alone (tests): other addresses peers tell are ignored
     served:int,               // chunks sent to peers, atomic
+    transfers:[TRANSFERS_MAX]Transfer_Slot, // what moves with each peer (transfer.odin)
+    roots:map[store.Hash]Transfer_Root,     // the heads a pull starts from, and what each is for (agent_roots)
+    asked:i64,                // atomic, tick ns: when a peer last asked or was answered, or a node was told of derived data (agent_drain)
     changed:bool,
     redial:bool,
     gossip:bool,              // the peers are told where the members listen again
@@ -147,6 +150,8 @@ Peer :: struct {
     kept:bool,              // under the agent's lock: the one connection kept to its key (peer_unique)
     reader,server,puller:^thread.Thread,
     refs:int,               // under the agent's lock: callers holding it, which the reaper waits for
+    serving:Transfer_Root,  // what its wants are for (agent_serving)
+    serving_at:i64,         // tick ns of its last want
 }
 
 @(private)
@@ -154,6 +159,7 @@ Fetch :: struct {
     s:^store.Store,
     org:Org_Id,
     repo:Repo_Id,                    // the repository whose pull counts what arrives; zero when none
+    kind:Transfer_Kind,              // what the transfer it counts in moves
     left:int,                        // under the agent's lock: chunks it queued or asked and has not had
     pending:map[store.Hash]struct{}, // under its peer's lock: asked and not answered
     arrived:[dynamic]Arrival,        // under its peer's lock
@@ -193,6 +199,7 @@ agent_start :: proc(a:^Agent,team:^Team,options:Agent_Options,allocator:=context
     a.fetches=make([dynamic]^Fetch,allocator)
     a.claims=make(map[Claim]^Fetch,allocator)
     a.heard=make(map[Key]Heard,allocator)
+    a.roots=make(map[store.Hash]Transfer_Root,allocator)
     if address,ok:=net.parse_ip4_address(options.host);ok {a.loopback=address[0]==127}
     if options.port>=0 {
         host:=net.IP4_Any
@@ -308,6 +315,7 @@ agent_free :: proc(a:^Agent) {
     delete(a.fetches)
     delete(a.claims)
     delete(a.heard)
+    delete(a.roots)
     delete(a.team.name,a.allocator)
     delete(a.team.device,a.allocator)
     a.team={}
@@ -858,6 +866,7 @@ peer_read_run :: proc(p:^Peer) {
             if !full {
                 append(&p.requests,copied)
                 p.requested+=len(copied)
+                sync.atomic_store(&a.asked,transfer_now())
             }
             sync.cond_broadcast(&p.cond)
             sync.mutex_unlock(&p.lock)
@@ -1094,6 +1103,7 @@ peer_serve_run :: proc(p:^Peer) {
         if count>WANT_MAX || !count_fits(&r,u64(count),size_of(store.Hash)) {return}
         lacking:=make([dynamic]store.Hash,context.temp_allocator)
         at,n:=2,0
+        served,served_bytes:=0,i64(0)
         for _ in 0..<count {
             address:=read_value(&r,store.Hash)
             if !member {
@@ -1116,9 +1126,16 @@ peer_serve_run :: proc(p:^Peer) {
             copy(buffer[at+41:],bytes)
             at+=41+len(bytes)
             n+=1
+            served+=1
+            served_bytes+=i64(size)
             sync.atomic_add(&a.served,1)
         }
         if n>0 && !serve_flush(p,buffer,at,n) {return}
+        if served>0 {
+            asked:=slice.reinterpret([]store.Hash,request[1+size_of(Org_Id)+2:][:count*size_of(store.Hash)])
+            agent_transfer(a,p,.Upload,agent_serving(a,p,org,asked),served,served_bytes,0)
+        }
+        sync.atomic_store(&a.asked,transfer_now())
         for k:=0;k<len(lacking);k+=1000 {
             part:=lacking[k:min(len(lacking),k+1000)]
             head:=[2]u8{u8(len(part)),u8(len(part)>>8)}
@@ -1265,14 +1282,14 @@ peer_pull :: proc(p:^Peer,told:[]Tell_Entry) -> (changed:bool) {
 // whole when they are here, changed when the ref moved.
 @(private)
 peer_ddc_take :: proc(p:^Peer,org:^Org,s:^store.Store,key,address:store.Hash) -> (whole,changed:bool) {
-    if !peer_fetch(p,org.id,s,{address}) {return}
+    if !peer_fetch(p,org.id,s,{address},kind=.Ddc) {return}
     records:=make([dynamic][]u8,context.temp_allocator)
     if ddc_set_read(s,address,&records)!=.None {return}
     roots:=make([dynamic]Walk_Item,context.temp_allocator)
     for record in records {
         if d,ok:=ddc_record_allowed(org,key,record);ok {append(&roots,Walk_Item{d.output_root,.Output})}
     }
-    if len(roots)==0 || !peer_whole(p,org.id,s,roots[:]) {return}
+    if len(roots)==0 || !peer_whole(p,org.id,s,roots[:],kind=.Ddc) {return}
     moved,_,e:=ddc_accept(s,org,key,address) // its ref_set commits
     return e==.None,moved
 }
@@ -1281,12 +1298,12 @@ peer_ddc_take :: proc(p:^Peer,org:^Org,s:^store.Store,key,address:store.Hash) ->
 // a time; whole when nothing is missing any more. repo and sources are
 // peer_fetch's.
 @(private)
-peer_whole :: proc(p:^Peer,org:Org_Id,s:^store.Store,roots:[]Walk_Item,repo:Repo_Id={},sources:=1) -> bool {
+peer_whole :: proc(p:^Peer,org:Org_Id,s:^store.Store,roots:[]Walk_Item,repo:Repo_Id={},sources:=1,kind:=Transfer_Kind.Sync) -> bool {
     for {
         missing:=make([dynamic]store.Hash,context.temp_allocator)
         walk_missing(s,roots,nil,&missing)
         if len(missing)==0 {return true}
-        if !peer_fetch(p,org,s,missing[:],repo,sources) {return false}
+        if !peer_fetch(p,org,s,missing[:],repo,sources,kind) {return false}
     }
 }
 
@@ -1376,14 +1393,15 @@ agent_org_pull :: proc(a:^Agent,p:^Peer,org:Org_Id,address:store.Hash,create:=fa
 // claim goes (fetch_release) and this one takes the chunk or asks it itself.
 // repo, when not zero, is the repository whose pull counts what arrives;
 // sources, how many peers hold it: each takes its share of a level of few
-// chunks, and a fast one takes what is left.
+// chunks, and a fast one takes what is left. kind: what the transfer it
+// counts in moves, Project with a repo.
 @(private)
-peer_fetch :: proc(p:^Peer,org:Org_Id,s:^store.Store,roots:[]store.Hash,repo:Repo_Id={},sources:=1) -> (ok:bool) {
+peer_fetch :: proc(p:^Peer,org:Org_Id,s:^store.Store,roots:[]store.Hash,repo:Repo_Id={},sources:=1,kind:=Transfer_Kind.Sync) -> (ok:bool) {
     a:=p.agent
     f,fe:=new(Fetch)
     if fe!=nil {return false}
     defer free(f)
-    f.s,f.org,f.repo=s,org,repo
+    f.s,f.org,f.repo,f.kind=s,org,repo,repo!={}?.Project:kind
     f.pending=make(map[store.Hash]struct{})
     defer delete(f.pending)
     defer delete(f.arrived)
@@ -1504,8 +1522,10 @@ peer_fetch :: proc(p:^Peer,org:Org_Id,s:^store.Store,roots:[]store.Hash,repo:Rep
         inflight-=len(arrived)
         f.left=len(queue)+inflight
         if repo!={} {pull_count_locked(a,f,chunks,bytes)}
+        left:=f.left
         sync.cond_broadcast(&a.wake)
         sync.mutex_unlock(&a.lock)
+        agent_transfer(a,p,.Download,{kind=f.kind,org=org,repo=repo},chunks,bytes,left)
         for x in arrived {
             if x.lacked {
                 lacked=true
@@ -2076,7 +2096,7 @@ agent_ddc_published :: proc(a:^Agent,org:Org_Id,key:store.Hash,address:store.Has
     peers:=peers_live(a)
     defer peers_unpin(a,peers)
     for p in peers {
-        if role,ok:=agent_role(a,org,p.conn.peer);ok && role==.Node {peer_tell(p,{entry})}
+        if role,ok:=agent_role(a,org,p.conn.peer);ok && role==.Node && peer_tell(p,{entry}) {sync.atomic_store(&a.asked,transfer_now())}
     }
 }
 
@@ -2154,6 +2174,7 @@ agent_tell_changes :: proc(a:^Agent) -> (members:bool) {
     }
     sync.mutex_unlock(&a.lock)
     if len(moved)==0 {return}
+    agent_roots(a,heads[:])
     agent_moved(a)
     peers:=peers_live(a)
     defer peers_unpin(a,peers)

@@ -1,13 +1,16 @@
 package editor
 
 import "base:intrinsics"
+import "base:runtime"
 import "core:fmt"
+import "core:log"
 import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:testing"
 import "core:time"
 import "mirai:asset"
+import "mirai:cook/build"
 import img "mirai:cook/image"
 import "mirai:cook/install"
 import ka "mirai:cook/kai"
@@ -207,6 +210,27 @@ projects_open_runs_off_the_frame_and_reports_stages_and_cancel :: proc(t:^testin
         time.sleep(time.Millisecond)
     }
     testing.expect(t,!projects_opening(&p) && !p.cancelling && !p.next)
+}
+
+// A project whose shaders could not be built does not open: the Launcher says why and starts
+// nothing, as for a build that failed.
+@(test)
+projects_open_says_why_its_shaders_failed :: proc(t:^testing.T) {
+    a:=runtime.heap_allocator()
+    r:=new(Build_Run,a)
+    r.opened,r.done=true,true
+    r.job=new(build.Job,a)
+    r.job.allocator,r.job.result.status=a,.Built
+    r.shaders=new(build.Shaders_Job,a)
+    r.shaders.allocator=a
+    r.shaders.result={status=.Failed,message="slangc is missing: mirai setup slang installs it"}
+    p:=Projects{run=r,launcher=true}
+    s:=Session{projects=&p}
+    context.logger=log.nil_logger() // the log says it as an error, which is the case here
+    projects_poll(&s)
+    error:=string(p.error[:p.error_length])
+    testing.expect(t,p.run==nil && !p.next && !s.quit,"the editor does not start")
+    testing.expectf(t,strings.contains(error,"shaders") && strings.contains(error,"slangc is missing"),"the error says why: %q",error)
 }
 
 @(test)

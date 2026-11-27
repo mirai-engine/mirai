@@ -185,6 +185,7 @@ kai_team_build :: proc(s:^Session,launcher:=false) {
         kai_row_names(ctx,v.machine,status,ui.tone(ctx,"text"))
         if !t.running && t.why_length>0 {kai_line(ctx,string(t.why[:t.why_length]),"danger")}
         for p in v.peer_lines {kai_row_names(ctx,p.name,p.rest,ui.tone(ctx,"text"))}
+        kai_transfers_build(s,false)
         if v.org>=0 && v.org<len(v.orgs) {
             kai_org_build(s,v.org,false)
         } else {
@@ -193,6 +194,37 @@ kai_team_build :: proc(s:^Session,launcher:=false) {
         return
     }
     kai_team_launcher_build(s)
+}
+
+// What moves with the org's machines now, a row each: an arrow up or down
+// (accent while it moves), what moves and with whom, and how far it is with
+// its speed, wrapped. Nothing while nothing moves. strip: the Changes view's,
+// in a well without a head.
+@(private)
+kai_transfers_build :: proc(s:^Session,strip:bool) {
+    transfers:=kai_transfers(s)
+    if len(transfers)==0 {return}
+    ctx:=s.gui.ctx
+    if !strip {kai_head(ctx,"TRANSFERS",len(transfers))}
+    list:=ui.Box{width=ui.GROW,height=ui.FIT,direction=.Column,gap=4}
+    if strip {list.padding,list.fill,list.stroke,list.stroke_width,list.radius=ui.padding_all(8),ui.tone(ctx,"well"),ui.tone(ctx,"border"),1,6}
+    if ui.box(ctx,list) {
+        size:=ui.metric(ctx,"font_small")
+        for &x,i in transfers {
+            what,rest:=kai_transfer_text(&x)
+            ui.id_push(ctx,ui.id(ctx,"kai_transfer",i))
+            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,padding={strip?0:KAI_ROW_PAD,1,KAI_ROW_PAD,1}}) {
+                if ui.box(ctx,{width=ui.fixed(12),height=ui.fixed(size+4),align_y=.Center}) {
+                    ui.icon(ctx,ui.icon_user(u8(x.direction==.Upload?User_Icon.Up:User_Icon.Down)),ui.tone(ctx,x.active?"accent":"text_faint"),12)
+                }
+                if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=1}) {
+                    ui.text(ctx,what,ui.prose(ctx,size,ui.tone(ctx,"text")),ui.GROW)
+                    ui.text(ctx,rest,ui.prose(ctx,size,ui.tone(ctx,"text_faint")),ui.GROW)
+                }
+            }
+            ui.id_pop(ctx)
+        }
+    }
 }
 
 // Launcher Team view: overview of organization cards + New/Join actions, or
@@ -229,6 +261,7 @@ kai_team_launcher_build :: proc(s:^Session) {
         kai_row_names(ctx,v.machine,status,ui.tone(ctx,"text"))
         if !t.running && t.why_length>0 {kai_line(ctx,string(t.why[:t.why_length]),"danger")}
         for p in v.peer_lines {kai_row_names(ctx,p.name,p.rest,ui.tone(ctx,"text_muted"))}
+        kai_transfers_build(s,false)
     }
 
     ui.spacer(ctx,0,6)

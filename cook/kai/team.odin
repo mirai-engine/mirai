@@ -193,7 +193,42 @@ publish :: proc(p:^Project,t:^vcs.Team,name:string,closing:string,changed:^[dyna
         }
     }
     bookmark_move(p,t,name,revision) or_return
+    project_ddc_publish(p,t)
     return revision,.None
+}
+
+// Publishes in the org's derived data the builds of the packages the project
+// pins that this store holds whole, as a refresh asks for them: by the
+// manifest (asset.REF_BUILDS) and by import key (asset.REF_IMPORTS or
+// asset.REF_IMPORTS_FAST), so a machine that pulls the project takes the
+// exact builds it was published with. A key the org has a record of this
+// output for is left as it is; the org's nodes hear of the rest from the
+// agent. published: the keys whose records were added.
+project_ddc_publish :: proc(p:^Project,t:^vcs.Team) -> (published:int) {
+    l,e:=project_of(p,t)
+    if e!=.None {return}
+    s,se:=vcs.team_store(t,l.org)
+    if se!=.None {return}
+    root:=p.workspace.root
+    list,_,le:=asset.packages_load(root,context.temp_allocator)
+    if le!=.None {return}
+    for &entry in list.packages {
+        x,pe:=asset.package_load(s,root,&entry,context.temp_allocator)
+        if pe!=.None {continue}
+        select_digits,key_digits:[64]u8
+        select:=store.hex(asset.build_select(entry.manifest,&x),&select_digits)
+        address,re:=store.ref_get(s,asset.REF_BUILDS,select)
+        if re!=.None {continue}
+        b,be:=asset.build_get(s,address,context.temp_allocator)
+        if be!=.None || b.package_id!=entry.id || !asset.build_whole(s,&b) {continue}
+        if _,_,ok:=ddc_share(t,l.org,s,asset.REF_BUILDS,select,address,true);ok {published+=1}
+        if b.key=={} {continue}
+        namespace:=b.final?asset.REF_IMPORTS:asset.REF_IMPORTS_FAST
+        key:=store.hex(b.key,&key_digits)
+        if held,he:=store.ref_get(s,namespace,key);he!=.None || held!=address {continue}
+        if _,_,ok:=ddc_share(t,l.org,s,namespace,key,address,true);ok {published+=1}
+    }
+    return
 }
 
 // Moves the repository's shared bookmark name to revision for the whole org.

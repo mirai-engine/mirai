@@ -129,6 +129,7 @@ projects_repository_row :: proc(s:^Session,r:^Kai_Repository,busy:bool) {
                 } else {
                     what=fmt.tprintf("%s · %d chunks, %s pulled",kind,chunks,base.bytes_text(bytes))
                 }
+                if speed:=kai_pull_speed(s,o.id,x.id);speed>0 {what=fmt.tprintf("%s · %s/s",what,base.bytes_text(i64(speed)))}
             case !x.published: what=fmt.tprintf("%s · not published yet",kind)
             case x.main=="": what=fmt.tprintf("%s · main is published, Pull takes it",kind)
             case !x.here && !x.linked: what=fmt.tprintf("%s · main %s",kind,x.main)

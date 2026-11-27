@@ -41,6 +41,7 @@ Error_Code :: enum u8 {
     Tool,        // an external tool failed or is missing
     Write,       // an asset could not be written
     Changed,     // a document it writes over was changed since it last wrote it (Import_Options.changed)
+    Differs,     // it made another package than the one it had to make again (Import_Options.exact)
 }
 
 // message lives in context.temp_allocator of the caller.
@@ -67,6 +68,10 @@ Import_Options :: struct {
     // settings the import keeps; zero: the one the store names for the path
     // of the source (package_previous), else a new package.
     manifest:mstore.Hash,
+    // The import makes manifest again, as it is, for the objects of its build:
+    // one that makes another (the source, or content it reads that is not
+    // among its inputs, differs here) names and shares nothing and fails.
+    exact:bool,
     // The folder of the assets of a project the documents of the import are
     // written or followed in (documents.odin), and the prefab of a model;
     // "": they are blobs of the build alone.
