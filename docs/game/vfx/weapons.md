@@ -47,19 +47,21 @@ mesh and rims it with `ctx.view_direction`. A program with `//! births` needs `m
 
 ## Muzzle flash light
 
-`light` gives a layer one point light at its emitter, moved by `light.offset` (metres, in the
-axes of the emitter), while its particles live: `color_over_life` dims and tints it (its alpha
-scales `light.intensity`) at the mean age of the particles alive; `light.range` stays. A short
-burst with a fading alpha is a flash that lights the walls around the barrel and goes out with
-the sparks. The light stays at the emitter: it does not fly with the
-particles.
+`light` gives the particles of a layer point lights that fly with them: each takes the color of
+its particle (or `light.color`) and `light.intensity` by its alpha, so `color_over_life` dims and
+tints it. A short burst with a fading alpha is a flash that lights the walls around the barrel
+and goes out with the sparks. `light.fraction` lights only some of the particles and
+`light.max_lights` caps the layer; they cast no shadows.
 
 ```odin
-fx.light = {color = {1, 0.7, 0.4}, intensity = 800, range = 6, radius = 0.05, offset = {0, 0, 0.1}}
+fx.light = {color = {1, 0.7, 0.4}, intensity = 800, range = 6, radius = 0.05, max_lights = 1}
 ```
 
-At most `Particle_Settings.max_lights` (32) layers shine at once, those nearest the player;
-past that, the problem `vfx.lights_over` names how many were dropped.
+A layer with `render = .Light` draws nothing: one particle at the barrel is one light, and its
+Vfx program may give the light its own color, intensity and range (`visual.light_color`,
+`light_intensity`, `light_range`, `light_radius`). At most `Particle_Settings.max_lights` (128)
+lights shine at once, those of `.Light` layers first; past that, the problem `vfx.lights_over`
+names how many were left out.
 
 ## Local space
 

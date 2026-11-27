@@ -130,6 +130,12 @@ void main(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local 
             particle_queue[SORT_AT / 4u] = 0u;
             particle_queue[SORT_AT / 4u + 1u] = 1u;
             particle_queue[SORT_AT / 4u + 2u] = 1u;
+            // The header of the lights of the frame: none, and a box that holds nothing.
+            particle_queue[PARTICLE_LIGHTS_WORD] = 0u;
+            for (uint i = 1u; i <= 3u; i++) {
+                particle_queue[PARTICLE_LIGHTS_WORD + i] = 0xFFFFFFFFu;
+                particle_queue[PARTICLE_LIGHTS_WORD + 3u + i] = 0u;
+            }
         }
     }
     if (params.mode == 2u || id.x >= params.count) return;
@@ -137,6 +143,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local 
     uint4 range = particle_emitters[slot].range;
     if (params.step == 0u) {
         particle_states[slot].births = 0u;
+        particle_states[slot].lights = 0u;
         if ((range.w & PARTICLE_FLAG_RESET) != 0u) {
             particle_states[slot].dead = range.y;
             particle_states[slot].born = 0u;

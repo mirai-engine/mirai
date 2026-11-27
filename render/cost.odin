@@ -164,7 +164,7 @@ translucent_forward_pipelines :: proc(p: ^Pass, overflow: bool) -> (stages: [3]T
 	r := p.r
 	counting := p.cost != 0
 	if counting {rhi.cmd_bind_buffer(p.cmd, SLOT_PASS7, p.cost)}
-	shadowless := p.frame.shadowless_lights != 0
+	shadowless := lights_listed(p.frame)
 	spared :: proc(r: ^Renderer, id: Pipeline_Id, layered, shadowless: bool) -> Translucent_Stage {
 		fewer := rhi.Shader_Constants{}
 		if !layered {fewer += {TRANSLUCENT_FRAG_UNLAYERED}}

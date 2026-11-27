@@ -12,7 +12,14 @@ struct Params_Block { uint mode; uint emitters; uint count; uint parity; };
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 id : SV_DispatchThreadID) {
-    if (id.x == 0u) particle_queue[params.parity ^ 1u] = 0u;
+    if (id.x == 0u) {
+        particle_queue[params.parity ^ 1u] = 0u;
+        // The lights the particles gave: those past the most the frame shows, and those it shows.
+        uint given = particle_queue[PARTICLE_LIGHTS_WORD];
+        uint most = min(particle_frame_lights(), DYNAMIC_LIGHTS_MAX);
+        if (given > most) InterlockedAdd(counted[2], given - most);
+        InterlockedAdd(counted[3], min(given, most));
+    }
     if (id.x >= params.count) return;
     uint slot = particle_frame_slot(id.x);
     uint alive = particle_states[slot].live_count[params.parity];
@@ -35,7 +42,8 @@ void main(uint3 id : SV_DispatchThreadID) {
         }
     } else {
         particle_states[slot].index_count = 6u;
-        particle_states[slot].instance_count = ribbon ? 0u : (kind == PARTICLE_RENDER_BEAM ? alive * BEAM_PIECES : alive);
+        // A Light particle draws nothing.
+        particle_states[slot].instance_count = ribbon || kind == PARTICLE_RENDER_LIGHT ? 0u : (kind == PARTICLE_RENDER_BEAM ? alive * BEAM_PIECES : alive);
         particle_states[slot].first_index = 0u;
         particle_states[slot].vertex_offset = 0;
         particle_states[slot].first_instance = 0u;

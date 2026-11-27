@@ -32,7 +32,7 @@ particle_document_shows_every_field_of_the_effect_once_in_its_group :: proc(t:^t
         group=particle_group(fields.tags[i],group)
         seen+={group}
     }
-    testing.expect_value(t,seen,bit_set[Particle_Group]{.Spawn,.Shape,.Motion,.Look,.Collision,.Program})
+    testing.expect_value(t,seen,bit_set[Particle_Group]{.Spawn,.Shape,.Motion,.Look,.Collision,.Light,.Program})
 }
 
 @(test)
@@ -126,7 +126,7 @@ particle_document_builds_the_rows_of_every_field_and_its_eyes_hide_them :: proc(
     p.held=p.file
     p.base=p.file
     p.held.info.size_over_life.values[1]=2
-    p.open={.Spawn=true,.Shape=true,.Motion=true,.Look=true,.Collision=true,.Program=true}
+    p.open={.Spawn=true,.Shape=true,.Motion=true,.Look=true,.Collision=true,.Light=true,.Program=true}
     frame :: proc(t:^testing.T,ctx:^ui.Context,s:^editor.Session,p:^Effect_Document,app:^host.App,input:ui.Input) {
         ui.frame_begin(ctx,input)
         if ui.box(ctx,{width=ui.fixed(264),height=ui.FIT,direction=.Column,gap=3}) {effect_rows(s,p,app.assets)}

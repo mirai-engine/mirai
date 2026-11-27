@@ -206,6 +206,12 @@ LIGHT_WEIGHT_ROWS          :: 2
 // list, and the words of a list, its count and its entries, a texel each.
 LIGHT_LIST_TILE            :: 8
 LIGHT_LIST_WORDS           :: 128
+// The lights an extension writes on the GPU each frame (frame_dynamic_lights):
+// at most this many, after a header in the tail of the buffer of the lights,
+// and an entry of a list that names one of them has LIGHT_ENTRY_DYNAMIC and
+// its index below.
+DYNAMIC_LIGHTS_MAX         :: 512
+LIGHT_ENTRY_DYNAMIC        :: u32(1) << 31
 // The lights of the blended instances a view draws (translucent_draws.comp):
 // the blocks of their lists across the texture of those lists, a block as a
 // list of a tile takes, and the words of the nodes of the lights with shadows

@@ -156,6 +156,73 @@ frame_gbuffer_mesh :: proc(r: ^Renderer, mesh: Mesh_Handle, material: Material_H
 	if a.layered {r.gbuffer_asked += {.Layers}}
 }
 
+// The lights an extension writes on the GPU, at most DYNAMIC_LIGHTS_MAX of a
+// frame: they cast no shadows and light what the lights without shadows light
+// (lists of opaque tiles and of blended cells, glass, media, the probes and
+// lit particles), with no tree and nothing on the CPU. They live in the tail
+// of the buffer of the lights (frame.dynamic_lights): a header, then the
+// lights, which a pass of the Simulate stage copies there from a buffer of its
+// own (pass_dynamic_lights_copy), each a Gpu_Light in render units. The
+// header: its first word how many there are, then the box that holds the
+// sphere each reaches, low corner (words 1 to 3) and high (4 to 6), each word
+// of the box a float as dynamic_light_order of lighting.slang orders it.
+// Passes before the copy of a frame see those of the frame before, while it
+// copied them in the same world and the origin did not move; else none.
+@(private)
+Dynamic_Lights :: struct {
+	asked:  u32,  // of frame_dynamic_lights, for this frame alone
+	copied: u64,  // the frame of the last copy + 1; 0: none, or the tail was made again
+	origin: Vec3, // of the renderer at that copy
+	world:  u64,
+}
+
+// Tells the next frame that an extension writes up to `capacity` lights on
+// the GPU (clamped to DYNAMIC_LIGHTS_MAX); 0, as a frame that does not ask,
+// gives none, at no cost. Reserving more is a load transaction: the tail
+// grows and stays. Ask in each frame that has them.
+frame_dynamic_lights :: proc(r: ^Renderer, capacity: u32) {
+	r.dynamic_lights.asked = max(r.dynamic_lights.asked, min(capacity, abi.DYNAMIC_LIGHTS_MAX))
+}
+
+// The frame.dynamic_lights of a view: none while the frame did not ask for them.
+@(private)
+dynamic_lights_of :: proc(r: ^Renderer) -> [4]u32 {
+	s := &r.scene
+	count := min(int(r.dynamic_lights.asked), s.dynamic_light_capacity)
+	if count <= 0 {return {}}
+	return {u32(s.light_capacity), u32(count), u32(s.light_capacity + 1), 0}
+}
+
+// In Simulate, after the dispatches that wrote them, copies the header and
+// `capacity` lights from a buffer of the world at offset (bytes) into the tail
+// of the buffer of the lights: the views after it light with them. False in
+// another stage, when the frame did not ask for lights, for a buffer the world
+// does not hold with that size, or when they do not fit in it.
+pass_dynamic_lights_copy :: proc(s: ^Stage_Pass, desc: Extension_Buffer_Desc, offset: u64, capacity: u32) -> bool {
+	r := s.pass.r
+	scene := &r.scene
+	count := min(capacity, r.dynamic_lights.asked, u32(scene.dynamic_light_capacity))
+	if s.stage != .Simulate || count == 0 || scene.light_buffer == 0 {return false}
+	bytes := u64(1 + count) * size_of(Gpu_Light)
+	if offset % 4 != 0 || offset + bytes > desc.size {return false}
+	entry := extension_buffer_find(r, s.world, desc)
+	if entry == nil {return false}
+	rhi.cmd_copy_buffer(s.pass.cmd, entry.buffer, offset, scene.light_buffer, u64(scene.light_capacity) * size_of(Gpu_Light), bytes)
+	r.dynamic_lights.copied, r.dynamic_lights.origin, r.dynamic_lights.world = r.frame + 1, r.origin, s.world
+	return true
+}
+
+// The header of the lights extensions write says none from the start of a
+// frame, unless the frame before copied them in this world and origin.
+@(private)
+dynamic_lights_settle :: proc(r: ^Renderer, cmd: ^rhi.Command_List) {
+	s, d := &r.scene, &r.dynamic_lights
+	if d.asked == 0 || s.dynamic_light_capacity == 0 || s.light_buffer == 0 {return}
+	if d.copied == r.frame && d.origin == r.origin && d.world == r.world_key {return}
+	rhi.cmd_fill_buffer(cmd, s.light_buffer, u64(s.light_capacity) * size_of(Gpu_Light), size_of(Gpu_Light), 0)
+	d.copied = 0
+}
+
 // Tells the frame that an extension draws every cluster of level 0 of a mesh
 // of the scene, where the cull of the scene does not see it (the meshes of
 // particles): a mesh whose pages stream loads them all, and keeps them while

@@ -18,6 +18,7 @@ import "plugins:vfx/runtime/effect"
 // lists are reordered for transparency, ribbons or mesh variants.
 
 CAPACITY :: 262144
+PARTICLE_LIGHTS :: 128 // of a world at once, by default (Particle_Settings.max_lights)
 EMITTER_CAPACITY :: 1024 // of a world
 EVENT_CAPACITY :: 16384
 EVENT_SPAWN_MAX :: 64
@@ -61,6 +62,7 @@ Program :: struct {
 // A program’s range in the frame’s emitter slot list.
 Program_Span :: struct {
     first,count:u32,
+    lights:u32, // its first slots, of Light layers whose particles give lights
     events,births,prepare:bool,
 }
 
@@ -110,6 +112,7 @@ FLAG_PREPARE :: 1024 // its program prepares what it keeps each frame
 FLAG_DRAIN :: 4096
 FLAG_VIEW :: 2048 // drawn into an effect view: its places are of that view, not of the world, and the origin does not move them
 FLAG_MULTIPLY :: 8192 // its sprites multiply what is behind them by their color
+FLAG_LIGHT :: 16384 // its particles give lights (effect.Particle_Light)
 STATE_BYTES :: 512 // what a program keeps of each emitter between its prepare and the rest of the frame
 // The data buffer: the parameters of each emitter, what their programs keep, then the Attributes.
 STATES_AT :: EMITTER_CAPACITY*erender.PROGRAM_PARAMETER_BYTES
@@ -166,15 +169,19 @@ Gpu_Emitter :: struct {
     mesh_handles:[effect.PARTICLE_MESHES]u32, // and the meshes, whose indices the frame lists (erender.frame_mesh_whole)
     scale:[4]f32,       // of every particle (effect.particle_scale); w: metres a ribbon repeats its texture over, 0 once over its length
     ribbons:[2][4]u32,  // the ribbon each group of births joins
+    light:[4]f32,       // of effect.Particle_Light: its color (0: that of each particle), intensity (cd)
+    light_reach:[4]f32, // its range and radius (m), fraction (0: every particle), shares (erender.light_shares)
+    light_limit:[4]u32, // lights of the emitter at once (0: as many as the world shows), 0, 0, 0
 }
-#assert(size_of(Gpu_Emitter)==976)
+#assert(size_of(Gpu_Emitter)==1024)
 
 // What the emitters of a frame share, first in its rows (particle_frame of particles.slang).
 Gpu_Frame :: struct {
     step:[4]f32, // seconds of the frame, of each step, steps, and the time at the end of the frame
     births:u32,  // bytes of the rows of the frame to the births of the channels
     slots:u32,
-    pad:[2]u32,
+    lights:u32,  // the most lights the particles give (Pool.light_capacity)
+    pad:u32,
 }
 #assert(size_of(Gpu_Frame)==32)
 
@@ -191,7 +198,7 @@ Gpu_State :: struct {
     births,born:u32, // of an emitter whose program gives its births: those of the frame, and all it started
     draw:[5]u32,    // indexed sprite draw
     live_count:[2]u32,
-    pad:u32,
+    lights:u32,     // lights its particles gave this frame, also those left out
     drained:[2]u32,
 }
 
@@ -211,6 +218,11 @@ WORK_AT :: 1245440
 SORT_AT :: 1253648
 #assert(WORK_AT==MESH_DRAWS_AT+EMITTER_CAPACITY*effect.PARTICLE_MESHES*size_of(Mesh_Draw))
 #assert(SORT_AT==WORK_AT+16+EMITTER_CAPACITY*8)
+// The lights the particles give (FLAG_LIGHT), as the renderer takes them
+// (erender.pass_dynamic_lights_copy): a header, then a Gpu_Light each.
+LIGHTS_AT :: 1257760
+LIGHT_BYTES :: 80
+#assert(LIGHTS_AT==SORT_AT+16+EMITTER_CAPACITY*4 && LIGHTS_AT%16==0)
 DRAIN_READBACK :: "vfx drained emitters"
 
 pool_buffer :: proc "contextless" (pool:^Pool,b:Pool_Buffer) -> erender.Buffer_Desc {
@@ -219,7 +231,7 @@ pool_buffer :: proc "contextless" (pool:^Pool,b:Pool_Buffer) -> erender.Buffer_D
     case .Particles: return {"vfx particles",count*size_of(Gpu_Particle)}
     case .Lists:     return {"vfx particle lists",5*count*size_of(u32)}
     case .State:     return {"vfx particle state",EMITTER_CAPACITY*size_of(Gpu_State)}
-    case .Events:    return {"vfx particle events",SORT_AT+16+EMITTER_CAPACITY*4}
+    case .Events:    return {"vfx particle events",LIGHTS_AT+(1+erender.DYNAMIC_LIGHTS_MAX)*LIGHT_BYTES}
     case .Data:      return {particle_data_name(pool.data_side),pool.data_bytes}
     case .Emitters:  return {"vfx particle emitters",EMITTER_CAPACITY*size_of(Gpu_Emitter)}
     }
@@ -263,6 +275,7 @@ Emitter_Structure :: struct {
     material:erender.Material_Handle,
     mesh_count:u32,
     meshes:[effect.PARTICLE_MESHES]Mesh_Choice,
+    lights:bool, // its particles give lights (emitter_lights): the frame asks for them, Light layers first
 }
 
 @(private)
@@ -270,7 +283,7 @@ emitter_structure :: proc "contextless" (d:^Emitter_Desc) -> Emitter_Structure {
     return {
         program=d.program.id,births=d.program.births,prepare=d.program.prepare,render=d.info.render,
         blended=d.blended,mixed=d.mixed,view=d.view,event_target=d.event_target,material=d.material,
-        mesh_count=d.mesh_count,meshes=d.meshes,
+        mesh_count=d.mesh_count,meshes=d.meshes,lights=emitter_lights(d),
     }
 }
 
@@ -349,6 +362,9 @@ Pool :: struct {
     // What the live emitters ask, found with the spans of the programs.
     sprites,meshes:bool,     // some draws them
     views:bool,              // some draws into an effect view
+    lights:bool,             // the particles of some give lights
+    light_layers:bool,       // and some of those are of a Light layer, whose lights come first
+    light_capacity:u32,      // of the frame: the most lights its particles give (Particle_Settings.max_lights)
     // Of the frame, from pool_prepare.
     resources:erender.Pass_Rows,
     rows_frame:u64,          // the frame whose rows they are; 0: none
@@ -717,6 +733,7 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
     }
     pool.steps=u32(clamp(math.ceil(pool.dt/STEP),1,STEPS))
     header.step={pool.dt,pool.dt/f32(pool.steps),f32(pool.steps),pass.time}
+    header.lights=pool.light_capacity
     // An emitter that is not dirty starts nothing, reads nothing of the frame
     // and is not new: what each frame gives is in the rows of the dirty ones.
     at:=0
@@ -727,7 +744,7 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
         flags:=u32(FLAG_ACTIVE)
         if s.fresh {flags|=FLAG_RESET;pool.needs_reset=true}
         if d.info.local_space {flags|=FLAG_LOCAL}
-        if d.info.lit {flags|=FLAG_LIT}
+        if d.info.lit && d.info.render!=.Light {flags|=FLAG_LIT}
         if d.info.sort || d.info.render==.Ribbon {flags|=FLAG_SORT}
         // While an effect view plays alone, the emitters of the world keep their particles as they are.
         if d.paused || pool.still && d.view==0 {flags|=FLAG_PAUSED}
@@ -735,6 +752,7 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
         if d.info.render!=.Mesh && d.info.blend==.Additive {flags|=FLAG_ADDITIVE}
         if d.info.render!=.Mesh && d.info.blend==.Multiply {flags|=FLAG_MULTIPLY}
         if d.info.emission_mode==.Relative {flags|=FLAG_RELATIVE}
+        if pool.light_capacity>0 && emitter_lights(d) {flags|=FLAG_LIGHT}
         // The places of an emitter of an effect view are of that view.
         origin:=pass.origin
         if d.view!=0 {flags|=FLAG_VIEW;origin={}}
@@ -925,6 +943,17 @@ emitter_row :: proc(g:^Gpu_Emitter,s:^Pool_Slot,capacity:u32) {
         g.gradient_times[i/4][i%4]=m.color_over_life.times[color_key]
     }
     g.data.xy={u32(pool_data_bytes(capacity))+s.attributes,s.stride}
+    light:=m.light
+    g.light={max(light.color.r,0),max(light.color.g,0),max(light.color.b,0),max(light.intensity,0)}
+    g.light_reach={max(light.range,0),max(light.radius,0),clamp(light.fraction,0,1),erender.light_shares(light.indirect,light.scattering)}
+    g.light_limit={u32(light.max_lights),0,0,0}
+}
+
+// Whether the particles of an emitter give lights: those of a Light layer,
+// whose program may give them, or of one whose light has an intensity and a
+// range. Those of an effect view have no place in the world: none.
+emitter_lights :: proc "contextless" (d:^Emitter_Desc) -> bool {
+    return d.view==0 && (d.info.render==.Light || d.info.light.intensity>0 && d.info.light.range>0)
 }
 
 // What the passes of a world draw its particles with: the pipelines of the
@@ -953,12 +982,15 @@ Program_Group :: struct {
 @(private)
 pool_kinds :: proc(pool:^Pool) {
     pool.sprites,pool.meshes,pool.views,pool.mesh_count=false,false,false,0
+    pool.lights,pool.light_layers=false,false
     for at in pool.order[:pool.order_count] {
         s:=&pool.slots[at]
         d:=&s.desc
         pool.meshes||=d.info.render==.Mesh && !d.blended
-        pool.sprites||=d.info.render!=.Mesh || d.blended || d.mixed
+        pool.sprites||=d.info.render!=.Mesh && d.info.render!=.Light || d.blended || d.mixed
         pool.views||=d.view!=0
+        pool.lights||=emitter_lights(d)
+        pool.light_layers||=emitter_lights(d) && d.info.render==.Light
         if d.info.render==.Mesh {
             pool.meshed[pool.mesh_count]=u16(at)
             pool.mesh_count+=1
@@ -1017,19 +1049,31 @@ programs_find :: proc(sync:^Particle_Sync,renderer:^erender.Renderer,assets:^hos
     }
     next:u32
     for &group in p.groups {group.first=next;next+=group.count}
-    for at in pool.order[:pool.order_count] {
-        group:=&p.groups[p.by_program[pool.slots[at].desc.program.id]]
-        pool.frame_slots[group.first+group.cursor]=u32(at)
-        group.cursor+=1
+    // Light layers first in each group: their lights are written before the others.
+    for layers in ([]bool{true,false}) {
+        for at in pool.order[:pool.order_count] {
+            d:=&pool.slots[at].desc
+            if (emitter_lights(d) && d.info.render==.Light)!=layers {continue}
+            group:=&p.groups[p.by_program[d.program.id]]
+            pool.frame_slots[group.first+group.cursor]=u32(at)
+            group.cursor+=1
+            if layers {group.lights+=1}
+        }
     }
     return true
 }
 
 // The pipelines of the frame, and its passes for the particles of a world.
 // False while the shaders in use have no stages of the plugin.
-particles_frame :: proc(sync:^Particle_Sync,app:^host.App) -> bool {
+particles_frame :: proc(sync:^Particle_Sync,app:^host.App,lights:=u32(PARTICLE_LIGHTS)) -> bool {
     pool:=&sync.pool
     if pool.regroup {pool_kinds(pool)}
+    // The lights of the particles: the emitters that give them are told again when their number changes.
+    if capacity:=min(lights,erender.DYNAMIC_LIGHTS_MAX);capacity!=pool.light_capacity {
+        if (capacity==0)!=(pool.light_capacity==0) {pool_dirty_all(pool)}
+        pool.light_capacity=capacity
+    }
+    if pool.lights && pool.light_capacity>0 && pool.slot_end>0 {erender.frame_dynamic_lights(app.renderer,pool.light_capacity)}
     if pool.retire_data {
         erender.buffer_release(app.renderer,sync.world_id,particle_data_name(pool.data_side~1))
         pool.retire_data=false
@@ -1188,9 +1232,25 @@ particles_simulate :: proc(pass:^erender.Pass,user:rawptr) {
         erender.pass_dispatch_indirect(pass,events,u64(16+16*params.parity))
     }
     params.parity~=1
+    // What each particle shows, and the lights they give: those of Light layers first, in passes of their own.
+    lights:=pool.lights && pool.light_capacity>0
     for group in programs {
         params.program=group.program
-        particle_work(sync,pass,&params,group.span,.Alive,group.simulate,1)
+        span:=group.span
+        if lights && pool.light_layers {
+            if span.lights==0 {continue}
+            span.count=span.lights
+        }
+        particle_work(sync,pass,&params,span,.Alive,group.simulate,1)
+    }
+    if lights && pool.light_layers {
+        for group in programs {
+            if group.count<=group.lights {continue}
+            params.program=group.program
+            span:=group.span
+            span.first,span.count=span.first+span.lights,span.count-span.lights
+            particle_work(sync,pass,&params,span,.Alive,group.simulate,1)
+        }
     }
     erender.pass_timestamp(pass,"particle finish")
     erender.pass_pipeline(pass,p.finish)
@@ -1198,6 +1258,7 @@ particles_simulate :: proc(pass:^erender.Pass,user:rawptr) {
     erender.pass_params(pass,&params,size_of(params))
     erender.pass_counters(pass,9,"particles")
     erender.pass_dispatch(pass,groups(all.count,64))
+    if lights {erender.pass_dynamic_lights_copy(pass,events,LIGHTS_AT,pool.light_capacity)}
     erender.pass_pipeline(pass,p.sort)
     params.mode=0
     erender.pass_params(pass,&params,size_of(params))
@@ -1350,7 +1411,7 @@ draw_list :: proc(pool:^Pool,pass:^erender.Pass,meshes:bool,view:erender.Texture
     frustum:=mm.frustum_from_matrix(pass.view_projection)
     for at in pool.order[:pool.order_count] {
         s:=&pool.slots[at]
-        if s.desc.view!=view || s.desc.culled || s.desc.owner==pool.left_out && pool.left_out!=core.NONE {continue}
+        if s.desc.view!=view || s.desc.culled || s.desc.info.render==.Light || s.desc.owner==pool.left_out && pool.left_out!=core.NONE {continue}
         mesh:=s.desc.info.render==.Mesh
         if meshes && (!mesh || s.desc.blended) ||
             !meshes && mesh && !s.desc.blended && !s.desc.mixed {continue}

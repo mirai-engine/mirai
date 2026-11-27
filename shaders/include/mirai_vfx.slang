@@ -115,6 +115,15 @@ struct Mirai_Vfx_Visual {
     // The turn of a Mesh particle in the world, a unit quaternion (xyzw), in
     // place of the facing of its effect. Zero, as it starts, leaves that facing.
     float4 orientation;
+    // The point light the particle gives where it is, while its effect gives
+    // its particles lights (Particle_Light, or a Light layer): linear color,
+    // intensity in candelas, the range and the radius of its sphere in metres.
+    // They start from its Particle_Light, by the color and the alpha of the
+    // particle; an intensity or a range of 0 gives none.
+    float3 light_color;
+    float light_intensity;
+    float light_range;
+    float light_radius;
 };
 // A point of a surface: where it is in the world, its normal, how fast it
 // moves, its uv, and the triangle and barycentrics (of its second and third

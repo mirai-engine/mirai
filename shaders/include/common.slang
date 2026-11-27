@@ -121,6 +121,7 @@ struct Frame_Data {
     float4 moved_boxes[OCCLUDER_CHANGES_MAX * 2]; // low (w: the instance, as bits; OCCLUDERS_MANY: several), then high, relative to the origin
     uint4 moved_lights[LIGHT_MOVES_MAX / 4];
     float4 sun_shares;       // x what of the light of the sun the probes gather, y what of it media scatter (Sun_Desc.indirect and scattering); zw 0
+    uint4 dynamic_lights;    // the lights an extension writes on the GPU (render.frame_dynamic_lights): x the index of their header in lights, 0: none; y the most of them; z the index of the first; w 0 (dynamic_light_count of lighting.slang)
     uint4 sun_maps;          // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (sun_shadow_seen of shadow_maps.slang), 0: none; y where the rows of the maps start in their buffer; z the side of their atlas, texels, while the view drew maps, else 0; w the bits of the texel of a point at the reach of what sways (render.shadow_sway_texel): a map no wider where it reads a point draws what sways as it sways
     uint4 sun_map_rows[SUN_MAP_ROWS];
 #ifdef MIRAI_FRAME_NESTED

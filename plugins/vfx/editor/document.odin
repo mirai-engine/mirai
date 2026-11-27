@@ -35,8 +35,8 @@ KEY_EFFECT :: u64(0x7061727469636c65) // of its values among those the rows of D
 
 // The groups of the rows: a field of Particle_Info is in the group its tag
 // names (`mirai:"section=Look"`), or in that of the field before it.
-Particle_Group :: enum u8 {Spawn,Shape,Motion,Look,Collision,Program}
-PARTICLE_GROUP_TITLES :: [Particle_Group]string{.Spawn="SPAWN",.Shape="SHAPE",.Motion="MOTION",.Look="LOOK",.Collision="COLLISION AND EVENTS",.Program="PROGRAM"}
+Particle_Group :: enum u8 {Spawn,Shape,Motion,Look,Collision,Light,Program}
+PARTICLE_GROUP_TITLES :: [Particle_Group]string{.Spawn="SPAWN",.Shape="SHAPE",.Motion="MOTION",.Look="LOOK",.Collision="COLLISION AND EVENTS",.Light="LIGHT",.Program="PROGRAM"}
 
 // A texture parameter as a row of Details shows it.
 Particle_Texture :: struct {texture:base.Asset_Id}

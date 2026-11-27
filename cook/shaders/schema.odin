@@ -260,6 +260,8 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"LIGHT_WEIGHT_ROWS",abi.LIGHT_WEIGHT_ROWS)
     u(&b,"LIGHT_LIST_TILE",abi.LIGHT_LIST_TILE)
     u(&b,"LIGHT_LIST_WORDS",abi.LIGHT_LIST_WORDS)
+    u(&b,"DYNAMIC_LIGHTS_MAX",abi.DYNAMIC_LIGHTS_MAX)
+    u(&b,"LIGHT_ENTRY_DYNAMIC",abi.LIGHT_ENTRY_DYNAMIC)
     u(&b,"TRANSLUCENT_LIST_COLUMNS",abi.TRANSLUCENT_LIST_COLUMNS)
     i(&b,"DIRECT_TILE",abi.DIRECT_TILE)
     i(&b,"DIRECT_SPREAD_RUN",abi.DIRECT_SPREAD_RUN)

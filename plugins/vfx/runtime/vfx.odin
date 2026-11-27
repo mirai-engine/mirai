@@ -56,7 +56,6 @@ Particle_Clocks :: struct {
     channels:[dynamic]Channel_Clock,
     seen_channels:core.Seen,
     seen_emitters,seen_worlds:core.Seen, // what the clocks of the emitters that went are pruned from
-    lit:[dynamic]core.Entity,            // the emitters with a layer that gives a light, as the last tick found them
     playing:bool,                        // of a world that plays
 }
 
@@ -64,10 +63,10 @@ Particle_Clocks :: struct {
 @(storage,setting)
 Particle_Settings :: struct {
     capacity:u32 `mirai:"min=1024,max=16777216,advanced"`, // the device may take less: then the renderer keeps the pool it has
-    max_lights:u32 `mirai:"min=0,max=32,advanced"`,        // point lights of particle layers at once, those nearest a simulation source; 0 disables
+    max_lights:u32 `mirai:"min=0,max=512,advanced"`,       // lights of particles at once (effect.Particle_Light), those of Light layers first; 0 disables
 }
 
-PARTICLE_SETTINGS_DEFAULT :: Particle_Settings{capacity=CAPACITY,max_lights=PARTICLE_LIGHTS_MAX}
+PARTICLE_SETTINGS_DEFAULT :: Particle_Settings{capacity=CAPACITY,max_lights=PARTICLE_LIGHTS}
 
 // What the renderer was told of an emitter.
 Emitter_Shown :: struct {
@@ -222,7 +221,6 @@ particles_tick :: proc(
         if most>0 {append(&sync.culls,Emitter_Cull{particle=emitter.particle,preset=emitter.preset,distance=near,entity=e,most=most})}
     }
     culls_rank(clocks,sync.culls[:])
-    clear(&clocks.lit)
     ticked:=core.join(emitters,worlds)
     for e,emitter,world in core.each_joined(&ticked) {
         clock:=clock_find(clocks,e)
@@ -230,16 +228,13 @@ particles_tick :: proc(
         listener,listens:=core.get(listeners,e)
         if !listens {listener={}}
         all_done:=true
-        has_light:=false
         for layer in 0..=int(clock.layers) {
             layer_clock:=clock_find(clocks,e,layer)
             if layer_clock==nil {continue}
             emits_preview:=layer==0
             if !clock.culled {emitter_tick(layer_clock,emitter,listener,world,dt,time,clocks,sync,emits_preview)}
             all_done&&=layer_clock.done
-            has_light||=layer_clock.emission.has_light
         }
-        if has_light {append(&clocks.lit,e)}
         if time.playing && all_done && emitter.destroy_when_done {append(&done,e)}
     }
     for e in done {
@@ -409,7 +404,16 @@ particles_sync :: proc(
     effects_prune(sync)
     if !pooled {return}
     host.assets_commit(a)
-    particles_frame(sync,app)
+    particles_frame(sync,app,settings.max_lights)
+    lights_report(problems,app.renderer,&sync.pool)
+}
+
+// Reports the lights the particles of a world gave past the most it shows,
+// as the finish pass counted them two frames before (particle_finish).
+lights_report :: proc(problems:^core.Problems,renderer:^erender.Renderer,pool:^Pool) {
+    counted,ok:=erender.counters(renderer,"particles")
+    if !ok || counted[2]==0 || !pool.lights {return}
+    core.report(problems,core.NONE,"vfx.lights_over","particles gave %d lights and %d are shown (Particle_Settings.max_lights), those of Light layers first: raise max_lights, or give fewer particles a light (Particle_Light.fraction and max_lights)",counted[2]+counted[3],counted[3])
 }
 
 // What particles_sync reads to tell the pool of an emitter.

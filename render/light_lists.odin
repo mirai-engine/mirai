@@ -26,13 +26,18 @@ Light_List_Stats :: struct {
 	longest: u32, // the entries of the longest list
 }
 
+// Whether a frame has lights the lists hold: those without shadows of the
+// scene, or those extensions write on the GPU (frame_dynamic_lights).
+@(private)
+lights_listed :: proc "contextless" (f: Gpu_Frame) -> bool {return f.shadowless_lights != 0 || f.dynamic_lights.x != 0}
+
 // Lists the tiles of the view, after its G-buffer, and returns the lists for
 // the pass that sums them; while no light is without shadows, none: no pass
 // reads a list then. False without memory for them.
 @(private)
 light_lists_record :: proc(p: ^Pass) -> (lists: rhi.Texture, ok: bool) {
 	r, cmd, t := p.r, p.cmd, p.t
-	if p.frame.shadowless_lights == 0 {return r.dummy_uint, true}
+	if !lights_listed(p.frame) {return r.dummy_uint, true}
 	tiles := [2]u32{groups(t.width, LIGHT_LIST_TILE), groups(t.height, LIGHT_LIST_TILE)}
 	target(r, cmd, &t.light_lists, tiles.x * LIGHT_LIST_TILE, tiles.y * LIGHT_LIST_ROWS, .R32_Uint, {.Sampled, .Storage}, "light lists", shared = true) or_return
 	Params :: struct {tiles: [2]u32, pad: [2]u32}

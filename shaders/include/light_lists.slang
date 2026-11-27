@@ -17,6 +17,10 @@
 // many groups listed before it that may open lie over it, the last of which
 // hands it the share it opens by.
 //
+// After the nodes, the lights extensions write on the GPU that may reach a
+// point of the cell (dynamic_lights_lighting): each an entry of
+// LIGHT_ENTRY_DYNAMIC and the light, which a point takes whole.
+//
 // A list keeps as many nodes of each walk as the walk visits at most
 // (LIGHT_WALK_MAX): where the bounds of a cell are those of a point, what a
 // walk gives the point fits its list. A cell with more to list has none: its
@@ -64,7 +68,7 @@ int2 light_list_of_pixel(int2 p) { return (p / int(LIGHT_LIST_TILE)) * LIGHT_LIS
 // share does not wait for the estimate: one that stands with no group that
 // may open over it. A second pass takes the others, where there are any.
 float3 light_list_lighting(Shading s, float known, int2 block, uint share = LIGHT_SHARE_ALL) {
-    if (frame.shadowless_lights == 0u) return float3(0.0);
+    if (!shadowless_lights_any()) return float3(0.0);
     uint count = block.x < 0 ? LIGHT_LIST_WALK : light_lists.Load(int3(block, 0));
     if (count == LIGHT_LIST_WALK) return shadowless_lighting(s, known, share);
     count = min(count, LIGHT_LIST_WORDS - 1u);
@@ -77,6 +81,11 @@ float3 light_list_lighting(Shading s, float known, int2 block, uint share = LIGH
     [loop]
     for (uint i = 0u; i < count; i++) {
         uint entry = light_lists.Load(int3(light_list_texel(block, 1u + i), 0));
+        if ((entry & LIGHT_ENTRY_DYNAMIC) != 0u) {
+            uint k = entry & ~LIGHT_ENTRY_DYNAMIC;
+            if (k < dynamic_light_count()) result += dynamic_light_lighting(k, s, share);
+            continue;
+        }
         uint rough = entry >> LIGHT_ENTRY_ROUGH;
         bool settled = (entry & (SETTLED | LIGHT_ENTRY_UNDER)) == SETTLED;
         if ((entry & LIGHT_ENTRY_IN) != 0u && !settled) waiting++;
@@ -120,7 +129,7 @@ float3 light_list_lighting(Shading s, float known, int2 block, uint share = LIGH
     total = max(total, 1e-8);
     for (uint i = 0u; i < count; i++) {
         uint entry = light_lists.Load(int3(light_list_texel(block, 1u + i), 0));
-        if ((entry & LIGHT_ENTRY_IN) == 0u || (entry & (SETTLED | LIGHT_ENTRY_UNDER)) == SETTLED) continue;
+        if ((entry & LIGHT_ENTRY_DYNAMIC) != 0u || (entry & LIGHT_ENTRY_IN) == 0u || (entry & (SETTLED | LIGHT_ENTRY_UNDER)) == SETTLED) continue;
         uint under = entry & LIGHT_ENTRY_UNDER;
         float weight = under > 0u ? shares[under - 1u] : 1.0;
         float opened = 0.0;

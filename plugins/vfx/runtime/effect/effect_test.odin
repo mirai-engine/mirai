@@ -15,7 +15,7 @@ particle_effects_keep_their_values_parameters_hidden_fields_and_assets :: proc(t
     info.bursts[1]={time=0.5,count=9,cycles=2,interval=0.1}
     info.velocity={{-1,2,0},{1,3,0}}
     info.size_over_life.values[1]=0.25
-    info.light={color={1,0.5,0.2},intensity=400,range=8,radius=0.1,offset={0,0.3,0},shadows=true,indirect=1,scattering=0.5}
+    info.light={color={1,0.5,0.2},intensity=400,range=8,radius=0.1,fraction=0.5,max_lights=12,indirect=1,scattering=0.5}
     base.text_set(info.program[:],"Swirl")
     hidden:[2]Particle_Field
     base.text_set(hidden[0].name[:],"noise")
@@ -48,6 +48,20 @@ particle_effects_keep_their_values_parameters_hidden_fields_and_assets :: proc(t
     testing.expect(t,found!=nil && found.texture==base.Asset_Id{9,10})
     testing.expect_value(t,len(a.dependencies),3) // its material, its sub particle and the texture of a parameter
     testing.expect_value(t,a.blob.header.kind_version,u16(PARTICLE_VERSION))
+
+    // An effect of the version before is not read: there is no reading of old ones.
+    old:asset.Document
+    testing.expect_value(t,particle_document(&old,&types,{id={7,8},info=info}),asset.Error.None)
+    old.kind_version=PARTICLE_VERSION-1
+    old_path:=fmt.tprintf("%s/old.particle",base.test_folder(t,"effect"))
+    testing.expect_value(t,asset.document_save(&old,old_path),asset.Error.None)
+    asset.document_destroy(&old)
+    b:asset.Asset
+    if testing.expect_value(t,asset.asset_load(&b,old_path),asset.Error.None) {
+        _,old_error:=particle_view(&b,&types)
+        testing.expect(t,old_error!=.None,"a v11 effect is refused")
+        asset.asset_close(&b)
+    }
 
     bad:=info
     bad.rate=math.nan_f32()
@@ -126,6 +140,9 @@ invalid_effects_say_which_field_and_how_to_correct_it :: proc(t:^testing.T) {
         {proc(p:^Particle_Info) {p.light.indirect=-1},"light"},
         {proc(p:^Particle_Info) {p.light.scattering=-1},"light"},
         {proc(p:^Particle_Info) {p.light.intensity=math.nan_f32()},"light"},
+        {proc(p:^Particle_Info) {p.light.fraction=1.5},"light"},
+        {proc(p:^Particle_Info) {p.light.fraction=-0.1},"light"},
+        {proc(p:^Particle_Info) {p.render=Particle_Render(7)},"render"},
     }
     for c in cases {
         info:=PARTICLE_DEFAULTS
@@ -145,6 +162,11 @@ invalid_effects_say_which_field_and_how_to_correct_it :: proc(t:^testing.T) {
     testing.expect(t,!particle_field_applies(&info,"blend") && particle_field_applies(&info,"facing") && !particle_field_applies(&info,"ribbon_tile"))
     info.render=.Ribbon
     testing.expect(t,particle_field_applies(&info,"blend") && particle_field_applies(&info,"ribbon_axis") && !particle_field_applies(&info,"facing"))
+    // A Light particle draws nothing: only its light and its motion mean anything.
+    info.render=.Light
+    testing.expect(t,!particle_field_applies(&info,"blend") && !particle_field_applies(&info,"material") && !particle_field_applies(&info,"lit"))
+    testing.expect(t,particle_field_applies(&info,"light") && particle_field_applies(&info,"velocity"))
+    testing.expect_value(t,particle_validate({info=info}).message,"")
     info.render=PARTICLE_DEFAULTS.render
     // Some particles of a range may die as they are born.
     info.lifetime={0,2}
@@ -182,10 +204,13 @@ particle_values_are_named_by_their_paths :: proc(t:^testing.T) {
     testing.expect(t,has_light_intensity && light_intensity.top=="light" && light_intensity.kind==.Float && light_intensity.offset==offset_of(Particle_Info,light)+offset_of(Particle_Light,intensity))
     light_color,has_light_color:=particle_value_at("light.color")
     testing.expect(t,has_light_color && light_color.size==12 && light_color.top=="light")
-    light_offset,has_light_offset:=particle_value_at("light.offset")
-    testing.expect(t,has_light_offset && light_offset.kind==.Float && light_offset.size==12 && light_offset.offset==offset_of(Particle_Info,light)+offset_of(Particle_Light,offset))
-    light_shadows,has_light_shadows:=particle_value_at("light.shadows")
-    testing.expect(t,has_light_shadows && light_shadows.kind==.Bool && light_shadows.size==1)
+    fraction,has_fraction:=particle_value_at("light.fraction")
+    testing.expect(t,has_fraction && fraction.kind==.Float && fraction.size==4 && fraction.offset==offset_of(Particle_Info,light)+offset_of(Particle_Light,fraction))
+    most,has_most:=particle_value_at("light.max_lights")
+    testing.expect(t,has_most && most.kind==.Integer && most.size==2 && most.offset==offset_of(Particle_Info,light)+offset_of(Particle_Light,max_lights))
+    _,has_offset:=particle_value_at("light.offset")
+    _,has_shadows:=particle_value_at("light.shadows")
+    testing.expect(t,!has_offset && !has_shadows,"a light of particles has no offset and casts no shadows")
     _,missing:=found("colors")
     testing.expect(t,!missing)
     _,program:=found("program")

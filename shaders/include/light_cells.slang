@@ -203,11 +203,49 @@ float rough_least() {
     return sums[0];
 }
 
+// Whether a light the GPU wrote (dynamic_light), a sphere of `radius` at
+// `center` that reaches `range` from it, may reach some point of the cell
+// and rise over its plane.
+bool cell_reaches_light(float3 center, float range, float radius) {
+    if (!(length(clamp(center, cell.low, cell.high) - center) < range)) return false;
+    float3 from = center - cell.high, to = center - cell.low;
+    float3 a = from * cell.normal_low, b = from * cell.normal_high, c = to * cell.normal_low, d = to * cell.normal_high;
+    float3 high = max(max(a, b), max(c, d));
+    return high.x + high.y + high.z > -radius;
+}
+
+// Lists after the `count` entries in the block the lights the GPU wrote that
+// may reach the cell. False, with LIGHT_LIST_WALK, when they do not fit.
+bool cell_dynamic(int2 block, inout uint count) {
+    uint lights = dynamic_light_count();
+    if (lights == 0u) return true;
+    float3 low, high;
+    dynamic_light_bounds(low, high);
+    if (any(cell.high < low) || any(cell.low > high)) return true;
+    [loop]
+    for (uint k = 0u; k < lights; k++) {
+        Light light = dynamic_light(k);
+        if (!cell_reaches_light(light.position_range.xyz, light.position_range.w, light.size.x)) continue;
+        if (count + 1u >= LIGHT_LIST_WORDS) {
+            out_lists[block] = LIGHT_LIST_WALK;
+            return false;
+        }
+        count++;
+        out_lists[light_list_texel(block, count)] = LIGHT_ENTRY_DYNAMIC | k;
+    }
+    return true;
+}
+
 // Writes the list of the cell into the block of out_lists that starts at
 // `block`: how many entries, then the entries. False, with LIGHT_LIST_WALK,
 // when it would list more than a list holds: each of its points walks.
 bool cell_list(int2 block, out uint count) {
     count = 0u;
+    if (frame.shadowless_lights == 0u) {
+        if (!cell_dynamic(block, count)) return false;
+        out_lists[block] = count;
+        return true;
+    }
     uint rough[LIGHT_LIST_ROUGH];
     bool fits = cell_walk(false, 0.0, LIGHT_LIST_ROUGH);
     uint rough_count = walk_count;
@@ -239,6 +277,7 @@ bool cell_list(int2 block, out uint count) {
         count++;
         out_lists[light_list_texel(block, count)] = entry;
     }
+    if (!cell_dynamic(block, count)) return false;
     out_lists[block] = count;
     return true;
 }

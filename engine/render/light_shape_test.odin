@@ -109,39 +109,3 @@ the_shares_and_shadows_of_the_lights_and_the_bounce_of_the_world_reach_the_rende
 	sync_frame(f)
 	testing.expect_value(t, f.renderer.scene.indirect, 5)
 }
-
-// An extra light the renderer refuses starves the frame: the next one gives
-// the renderer everything again, and the lights given before the refused one
-// go with the rest.
-@(test)
-a_refused_extra_light_leaves_none_lit_after_the_next_frame :: proc(t:^testing.T) {
-    f:=new(Sync_Fixture);defer free(f)
-    if !sync_fixture_init(t,f) {return}
-    defer sync_fixture_destroy(f)
-
-    e:=core.create(&f.world.entities)
-    core.add(&f.world.worlds,e,core.World_Transform{transform={position={0,2,0},rotation=1,scale=1},previous={position={0,2,0},rotation=1,scale=1}})
-    core.add(&f.world.points,e,POINT_LIGHT_DEFAULT)
-    sync_frame(f)
-    s:=&f.renderer.scene
-    testing.expect_value(t,len(s.lights),1)
-    // Room for two lights and no memory for a third.
-    room :: proc(list:^[dynamic]$T,count:int) {
-        reserve(list,count)
-        shrink(list,count)
-        list.allocator=mem.nil_allocator()
-    }
-    room(&s.lights,2);room(&s.light_shadowless,2);room(&s.light_leaves,2);room(&s.light_keys,2);room(&s.light_tree,4)
-    defer s.lights.allocator,s.light_shadowless.allocator,s.light_leaves.allocator,s.light_keys.allocator,s.light_tree.allocator=context.allocator,context.allocator,context.allocator,context.allocator,context.allocator
-    l1:=Light_Desc{position={2,1,0},color={1,0.5,0.2},intensity=400,range=8,radius=0.1,shadowless=true}
-    l2:=Light_Desc{position={4,1,0},color={0.2,0.5,1},intensity=250,range=6,radius=0.1,shadowless=true}
-    testing.expect(t,light_add(&f.app.extras,l1) && light_add(&f.app.extras,l2))
-    sync_frame(f)
-    f.app.extras.light_count=0
-    testing.expect_value(t,len(s.lights),2)
-    testing.expect(t,!f.sync.synced,"the frame starved")
-    sync_frame(f)
-    testing.expect_value(t,len(s.lights),1)
-    testing.expect_value(t,f.sync.extra_lights,0)
-    testing.expect_value(t,len(f.sync.light_owners),1)
-}

@@ -825,16 +825,75 @@ float3 local_lighting(Shading s, float total, uint root = 0u, uint share = LIGHT
     return local_lighting_of(s, total, root, share);
 }
 
+// The lights an extension writes on the GPU each frame
+// (render.frame_dynamic_lights), in the tail of lights: a header, then at
+// most frame.dynamic_lights.y of them. They cast no shadows and form no tree:
+// a point that lies in the box of what they reach takes each that reaches it.
+// The header holds how many there are (its first word), then the low corner
+// of that box and its high one, each coordinate a word that orders as its
+// float does (dynamic_light_order), so that the pass that writes them grows
+// the box with atomic minima and maxima.
+uint dynamic_light_order(float value) {
+    uint bits = asuint(value);
+    return (bits & 0x80000000u) != 0u ? ~bits : bits | 0x80000000u;
+}
+float dynamic_light_value(uint order) {
+    return asfloat((order & 0x80000000u) != 0u ? order & 0x7FFFFFFFu : ~order);
+}
+uint dynamic_light_count() {
+    if (frame.dynamic_lights.x == 0u) return 0u;
+    return min(asuint(lights[frame.dynamic_lights.x].position_range.x), frame.dynamic_lights.y);
+}
+void dynamic_light_bounds(out float3 low, out float3 high) {
+    Light header = lights[frame.dynamic_lights.x];
+    uint3 a = asuint(header.position_range.yzw), b = asuint(header.color_intensity.xyz);
+    low = float3(dynamic_light_value(a.x), dynamic_light_value(a.y), dynamic_light_value(a.z));
+    high = float3(dynamic_light_value(b.x), dynamic_light_value(b.y), dynamic_light_value(b.z));
+}
+Light dynamic_light(uint k) { return lights[frame.dynamic_lights.z + k]; }
+// What of its light a light gives a walk of `share` (LIGHT_SHARE_*).
+float light_share_of(Light light, uint share) {
+    if (share == LIGHT_SHARE_ALL) return 1.0;
+    float2 shares = light_shares(light);
+    return share == LIGHT_SHARE_BOUNCED ? shares.x : shares.y;
+}
+// Whether a frame has lights without shadows: of the scene, or those extensions write.
+bool shadowless_lights_any() { return frame.shadowless_lights != 0u || frame.dynamic_lights.x != 0u; }
+
+// What dynamic light k sends from the point towards its viewer, by `share`.
+float3 dynamic_light_lighting(uint k, Shading s, uint share) {
+    Light light = dynamic_light(k);
+    float shared = light_share_of(light, share);
+    float3 to = light.position_range.xyz - s.position;
+    if (!(shared > 0.0) || !(dot(to, to) < light.position_range.w * light.position_range.w)) return float3(0.0);
+    float3 diffuse, specular;
+    light_lobes(light, s, diffuse, specular);
+    return (diffuse + specular) * shared;
+}
+// What all the dynamic lights send from the point towards its viewer.
+float3 dynamic_lights_lighting(Shading s, uint share) {
+    uint count = dynamic_light_count();
+    if (count == 0u) return float3(0.0);
+    float3 low, high;
+    dynamic_light_bounds(low, high);
+    if (any(s.position < low) || any(s.position > high)) return float3(0.0);
+    float3 result = float3(0.0);
+    for (uint k = 0u; k < count; k++) result += dynamic_light_lighting(k, s, share);
+    return result;
+}
+
 // The light the local lights that cast no shadows send from the point
-// towards its viewer: whatever stands in their way, with no rays and out of
-// the budgets of shadows. `known`: the light of the others that reaches it,
-// as lights_estimate sums it, which a group may err against with theirs.
+// towards its viewer, with those extensions write (dynamic_lights_lighting):
+// whatever stands in their way, with no rays and out of the budgets of
+// shadows. `known`: the light of the others that reaches it, as
+// lights_estimate sums it, which a group may err against with theirs.
 // `share`: as for local_lighting.
 float3 shadowless_lighting(Shading s, float known, uint share = LIGHT_SHARE_ALL) {
+    float3 result = dynamic_lights_lighting(s, share);
     uint root = frame.shadowless_lights;
-    if (root == 0u) return float3(0.0);
+    if (root == 0u) return result;
     float total = max(known, 0.0) + lights_estimate(s.position, s.normal, root, share);
-    return local_lighting_of(s, total, root, share);
+    return result + local_lighting_of(s, total, root, share);
 }
 
 // Whether a node is one of the lights that cast no shadows.
@@ -1149,9 +1208,15 @@ float3 light_through(float seen, bool mapped, float3 origin, float3 direction, f
 #endif
 
 // Whether a light that moved since the frame before (light_moved) reaches
-// the point where it is now.
+// the point where it is now. The lights extensions write move in every
+// frame: within the box of what they reach, they did.
 bool lights_moved_near(float3 position) {
     if ((frame.moved.z & MOVED_LIGHTS_ALL) != 0u) return true;
+    if (dynamic_light_count() > 0u) {
+        float3 low, high;
+        dynamic_light_bounds(low, high);
+        if (all(position >= low) && all(position <= high)) return true;
+    }
     for (uint i = 0u; i < frame.moved.y; i++) {
         float4 place = lights[frame.moved_lights[i / 4u][i % 4u]].position_range;
         float3 to = place.xyz - position;
@@ -1185,7 +1250,7 @@ uint cut_ray(uint at, float3 position, float3 normal, uint share, out float3 dir
 // change. It tests every node of the cut, also those whose light it would
 // leave out.
 bool lights_changed(float3 position, float3 normal, float bias, uint budget, uint which) {
-    if (all(frame.moved.xyz == 0u)) return false;
+    if (all(frame.moved.xyz == 0u) && dynamic_light_count() == 0u) return false;
     float3 origin = offset_origin(position, normal, bias);
     if ((which & LIGHTS_SUN) != 0u && frame.sun_direction.w > 0.5) {
         if ((frame.moved.z & MOVED_SUN) != 0u || occluder_changed(origin, frame.sun_direction.xyz, sun_reach(origin, frame.sun_direction.xyz), INVALID, FLT_MAX)) return true;
@@ -1364,7 +1429,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
 #ifdef MIRAI_HOOK_LIGHTS
         known += extension;
 #endif
-        if (frame.shadowless_lights != 0u) local += point_shadowless_lighting(s, luminance(known) / luminance(max(s.diffuse + specular_albedo(s), float3(0.02))), share);
+        if (shadowless_lights_any()) local += point_shadowless_lighting(s, luminance(known) / luminance(max(s.diffuse + specular_albedo(s), float3(0.02))), share);
         if (changes) changed = changed || lights_moved_near(s.position);
     }
 #ifdef MIRAI_HOOK_LIGHTS

@@ -214,7 +214,7 @@ choices ([`fsr`](../../mirai-plugins/references/render-plugins.md#fsr)).
 | `Geometry` | 1x/frame (no view) / `Geometry` | Deformable vertices: `pass_vertices_begin`, `pass_deformable`, `pass_dispatch`. |
 | `Instances` | Per view, before its cull (only with a [filled batch](#batches) drawn) / `Geometry` | Instances of batches the GPU fills: `pass_batch_target` (pool bound to write, `Batch_Target`), `batch_instance_write` of `batch_instance.slang`; the view zeroed their counts. |
 | `Decal` | Per view / `Geometry` | Before the resolve, after the decals of the scene: `pass_decal_targets`, `pass_decal_begin` (decal targets, no depth attached), `pass_surface_read .Depth`; `frame_decal_emission` asks for the emission target ([decals](materials.md#decals)). |
-| `Simulate` | 1st view (not `ui_only`) / `Geometry` | GPU sim with scene tables, HW rays, probes, `pass_surface_read` depth/normal. |
+| `Simulate` | 1st view (not `ui_only`) / `Geometry` | GPU sim with scene tables, HW rays, probes, `pass_surface_read` depth/normal; `pass_dynamic_lights_copy` hands the frame the lights it wrote (`frame_dynamic_lights`, [dynamic lights](lights.md#local-lights)). |
 | `Gbuffer` | Per view / `Geometry` | Lit custom geometry: `pass_gbuffer_begin`, `pass_gbuffer_pipeline`, `pass_depth_pyramid`, `pass_rest_write`. |
 | `Mask` | Per view / `Nested` | Nested views: `pass_nested_add`/`pass_nested_faces`, `pass_mask_begin`..`pass_end`. |
 | `Lit` | Per view (no inspect) / `Lit` | Read-write `rgba16f` opaque image (`pass_image_bind`), runs `Behind`/`Front` if glass (`Glass_Depth`). |

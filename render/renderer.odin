@@ -182,6 +182,7 @@ AUTO_EXPOSURE_RANGE :: [2]f32{2, 16}
 // The calibration of a reflected-light meter, cd/m^2 at ISO 100 and EV 0 times 100.
 LIGHT_METER_K :: f32(12.5)
 MIDDLE_GRAY :: abi.MIDDLE_GRAY
+DYNAMIC_LIGHTS_MAX :: abi.DYNAMIC_LIGHTS_MAX
 // EV a view is exposed above what its meter or its camera gives under ACES 2.0, a bias
 // of the middle gray: ACES 2.0 shows a middle gray at the meter's value dim on an SDR display. Another
 // transform calibrates to it (display_exposure_bias).
@@ -712,6 +713,7 @@ Renderer :: struct {
 	readbacks:       [EXTENSION_READBACK_CAPACITY]Extension_Readback, // of pass_readback, by world
 	gbuffer_asked:   bit_set[Gbuffer_Target], // of frame_gbuffer_mesh for the next frame
 	decal_emission_asked: bool, // of frame_decal_emission for the next frame
+	dynamic_lights:  Dynamic_Lights, // of frame_dynamic_lights and pass_dynamic_lights_copy
 	table_textures:  [EXTENSION_TABLE_TEXTURE_CAPACITY]Extension_Table_Texture, // of pass_table_texture, by world
 	quad_indices:    rhi.Buffer, // the six of a quad, for the draws of pass_indices
 	scene:           Scene_State,

@@ -29,15 +29,22 @@
   that light (`hit_on_light`) to prevent double counting. Emissives without lights bounce via GI.
 - **Shadowless (`Light_Desc.shadowless`, `Sun_Desc.shadowless`):** Skips shadow maps, grid,
   cuts, and rays (`SUN_UNSHADOWED` for sun); routed to the shadowless tree.
-- **CPU-known, stateless:** No light reservoirs or history — changes apply immediately. Lights
-  are strictly scene-owned on CPU (never GPU-written or per-particle) so trees, grids, and
-  shadow caches persist while lights stay still.
-- **Lights of the frame (`Frame_Extras.lights`, `light_add`):** Take the first slots of the
-  renderer, before entity lights (`extra_lights_settle`), up to the most a frame gave; entity
-  lights that come or go never move them. A slot the frame leaves empty is turned off
-  (`scene_light_off`: power 0, place and kind kept), so a flash that ends refits one leaf and
-  changes no set; a slot reused by a light of another kind or reach class rebuilds the tree.
-  Shadow maps and the light grid skip lights that are off.
+- **CPU-known, stateless:** No light reservoirs or history — changes apply immediately. The
+  lights of the scene are scene-owned on CPU, so trees, grids, and shadow caches persist while
+  they stay still. Shadow maps and the light grid skip lights that are off (power 0).
+- **Dynamic lights (`frame_dynamic_lights`, `pass_dynamic_lights_copy`):** Up to
+  `DYNAMIC_LIGHTS_MAX` (512) shadowless point lights an extension writes on the GPU each frame
+  (the lights of [particles](../../mirai-world/references/vfx.md#particle-lights)), with no tree,
+  no CPU copy and no slot of their own: they live in the tail of `SLOT_LIGHTS`, past
+  `light_capacity`, a header (count, then the box of what they reach as order-preserving uints,
+  `dynamic_light_order`) and then a `Gpu_Light` each in render units. `frame.dynamic_lights`
+  gives the header, the most and the first; 0 without a request (zero cost; the `unlisted`
+  constants stay). A copy in `Simulate` fills them; passes before it see those of the frame
+  before (lit particles: one frame late), and `dynamic_lights_settle` empties the header when
+  the last frame did not copy them in this world and origin. They light what the shadowless lights
+  light (`dynamic_lights_lighting` in `shadowless_lighting`: probes, media, glass, overlays, lit
+  particles), enter tile and blended-cell [lists](#lists-of-a-cell), and mark points inside
+  their box as moved (`lights_moved_near`).
 
 ```odin
 // Game components (engine/render) and low-level Light_Desc:
@@ -104,7 +111,10 @@ rect := render.Light_Desc{
   (omitting sun/shadowed light). Overflow falls back to per-pixel walk
   (`Stats.light_lists.walked`). Lists assume `LIGHT_SHARE_ALL` (probes/media require
   share-specific estimates).
-- **Blended cells (`translucent_draws.comp`, `light_cells.slang`):** When the scene has shadowless
+- **Dynamic lights:** After the nodes, a list holds `LIGHT_ENTRY_DYNAMIC | k` for each dynamic
+  light whose sphere reaches the cell and rises over its plane (`cell_dynamic`), taken whole by
+  each point; a cell they overflow walks, which sums every dynamic light inside their box.
+- **Blended cells (`translucent_draws.comp`, `light_cells.slang`):** With shadowless or dynamic
   lights, per-blended-instance (or subdivided from `TRANSLUCENT_CELLS`) cells hold the shadowless
   list. For shadowed lights, forward blends read the world [light grid](#direct-light-of-a-view)
   up to `light_budget` brightest reaching lights (falling back to `light_cut` past `DIRECT_FEW`),

@@ -489,7 +489,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     base.profile_end(zone)
     // What the extensions asked of this frame lasts for it alone.
     defer {
-        r.pass_count=0;r.main_pipeline=0;r.gbuffer_asked={};r.decal_emission_asked=false;r.eye_taken={}
+        r.pass_count=0;r.main_pipeline=0;r.gbuffer_asked={};r.decal_emission_asked=false;r.eye_taken={};r.dynamic_lights.asked=0
         r.antialiasing_offered=r.antialiasing
         r.antialiasing_offered_count=r.antialiasing_count
         r.antialiasing_count=0
@@ -926,6 +926,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 		frame_index = u32(p.view.turn),
 		light_nodes = u32(len(s.light_tree)),
 		shadowless_lights = light_tree_shadowless(s.light_tree[:]),
+		dynamic_lights = dynamic_lights_of(r),
 		instance_count = u32(len(s.instances)),
 		cut = {settings.lod_error_pixels, settings.batch_min_pixels if settings.lod_error_pixels > 0 else 0, 0, 0},
 		batches = {s.batch.slots, s.batch.groups.first, u32(len(s.batch.drawn)), u32(len(s.batch.traced))},
@@ -1674,7 +1675,7 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	base.profile_end(zone)
 	if !listed {return false}
 	rhi.cmd_timestamp(cmd, "direct pixels")
-	filter := unlayered + ({DIRECT_FILTER_COMP_UNLISTED} if p.frame.shadowless_lights == 0 else {}) + ({} if p.subsurface else {DIRECT_FILTER_COMP_UNSCATTERED})
+	filter := unlayered + ({} if lights_listed(p.frame) else {DIRECT_FILTER_COMP_UNLISTED}) + ({} if p.subsurface else {DIRECT_FILTER_COMP_UNSCATTERED})
 	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Filter, filter, {DIRECT_FILTER_COMP_UNLAYERED, DIRECT_FILTER_COMP_UNLISTED, DIRECT_FILTER_COMP_UNSCATTERED})^)
 	set_params(cmd, &params)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)

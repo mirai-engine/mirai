@@ -29,7 +29,7 @@ static float media_across = 0.0;
 // light that reaches the point moved, or what casts shadows changed on the
 // way of a ray, since the frame before (occluder_changed of trace.slang).
 float3 media_local_light(float3 position, float3 eye_ray, float g, inout bool changed) {
-    if (frame.light_nodes == 0u) return float3(0.0);
+    if (frame.light_nodes == 0u && frame.dynamic_lights.x == 0u) return float3(0.0);
     return direct_lighting(shading_medium(position, -eye_ray, g, media_across), 0.0, MEDIA_LIGHT_BUDGET, LIGHTS_LOCAL | LIGHTS_SCATTERED | LIGHTS_CHANGES, float2(-1.0, 0.0), changed);
 }
 float3 media_local_light(float3 position, float3 eye_ray, float g) {
@@ -40,7 +40,7 @@ float3 media_local_light(float3 position, float3 eye_ray, float g) {
 // Whether what media_local_light gives a point may have changed since the
 // frame before, without taking it.
 bool media_local_changed(float3 position) {
-    return frame.light_nodes != 0u && lights_changed(position, float3(0.0), 0.0, MEDIA_LIGHT_BUDGET, LIGHTS_LOCAL | LIGHTS_SCATTERED);
+    return (frame.light_nodes != 0u || frame.dynamic_lights.x != 0u) && lights_changed(position, float3(0.0), 0.0, MEDIA_LIGHT_BUDGET, LIGHTS_LOCAL | LIGHTS_SCATTERED);
 }
 
 // The light around a point of a medium: the mean of what reaches a surface

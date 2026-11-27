@@ -33,7 +33,6 @@ import stbi "vendor:stb/image"
 FRAME_LAYER_CAPACITY :: 16
 FRAME_PANEL_CAPACITY :: 1024
 FRAME_DEBUG_CAPACITY :: 8
-FRAME_LIGHT_CAPACITY :: 64
 // Room made once for the instances of a frame; there may be more, and the list grows.
 FRAME_INSTANCE_RESERVE :: 256
 FRAME_UI_TEXTURE_CAPACITY :: 32
@@ -54,8 +53,6 @@ Frame_Extras :: struct {
     panel_count:int,
     debug:[FRAME_DEBUG_CAPACITY]render.Debug_Lines,
     debug_count:int,
-    lights:[FRAME_LIGHT_CAPACITY]render.Light_Desc,
-    light_count:int,
     instances:[dynamic]render.Instance_Desc, // no limit: every animated actor may add skinned copies
     ui_textures:[FRAME_UI_TEXTURE_CAPACITY]render.Ui_Texture_Draw,
     ui_texture_count:int,
@@ -531,7 +528,7 @@ app_frame_end :: proc(app:^App) {
     app_gpu_failure_check(app)
     capacities_frame(app)
     base.profile_end(zone)
-    app.extras.layer_count,app.extras.panel_count,app.extras.debug_count,app.extras.light_count=0,0,0,0
+    app.extras.layer_count,app.extras.panel_count,app.extras.debug_count=0,0,0
     clear(&app.extras.instances)
     app.extras.ui_texture_count,app.extras.effect_view_count,app.extras.probe_count=0,0,0
     app.camera_cut=false
@@ -711,19 +708,6 @@ extras_instance_add :: proc(extras:^Frame_Extras,instances:..render.Instance_Des
 }
 
 extras_instances :: proc(extras:^Frame_Extras) -> []render.Instance_Desc {return extras.instances[:]}
-
-// Local lights for this frame, without entities in a world.
-extras_light_add :: proc(extras:^Frame_Extras,light:render.Light_Desc) -> bool {
-    if extras.light_count>=len(extras.lights) {
-        extras.dropped+=1
-        return false
-    }
-    extras.lights[extras.light_count]=light
-    extras.light_count+=1
-    return true
-}
-
-extras_lights :: proc(extras:^Frame_Extras) -> []render.Light_Desc {return extras.lights[:extras.light_count]}
 
 // Frees what the extras of the frames hold; app_destroy does it.
 extras_free :: proc(extras:^Frame_Extras) {
@@ -932,7 +916,7 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
         seen:=[1]render.Frame_View{{camera=app.camera,camera_cut=frame==0,rect={0,0,size.x,size.y},texture=texture,inspection=app.inspection}}
         if alone {desc.ui,desc.views,desc.panels,desc.debug=nil,seen[:],nil,debug}
         drawn=render.renderer_frame(r,desc)
-        extras.layer_count,extras.panel_count,extras.debug_count,extras.light_count=0,0,0,0
+        extras.layer_count,extras.panel_count,extras.debug_count=0,0,0
         clear(&extras.instances)
         extras.ui_texture_count,extras.effect_view_count,extras.probe_count=0,0,0
         app.camera_cut=false
@@ -1020,7 +1004,7 @@ app_world_draw :: proc(app:^App,world,editor:rawptr,texture:render.Texture_Handl
         run_phase(app,.Game,.Render,{.Render},world,nil)
         seen:=[1]render.Frame_View{{camera=app.camera,camera_cut=cut && frame==0,rect={0,0,size.x,size.y},texture=texture}}
         drawn=render.renderer_frame(r,{camera=app.camera,camera_cut=cut && frame==0,time=app.time+f32(frame)*max(dt,0),views=seen[:],offscreen=true})
-        extras.layer_count,extras.panel_count,extras.debug_count,extras.light_count=0,0,0,0
+        extras.layer_count,extras.panel_count,extras.debug_count=0,0,0
         clear(&extras.instances)
         extras.ui_texture_count,extras.effect_view_count,extras.probe_count=0,0,0
         if !drawn {return}

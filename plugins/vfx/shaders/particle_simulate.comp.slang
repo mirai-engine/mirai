@@ -85,6 +85,43 @@ bool respond(inout float3 velocity, float3 n, float3 a, float h, float2 collide)
     return hit;
 }
 
+// The point light a particle gives, after the look of its program: one of
+// the fraction of its emitter by its seed, while its emitter gives fewer than
+// its most and the frame fewer than it shows; each one more counts in the
+// header, also past those (particle_finish).
+void light_give(uint slot, Particle p, Particle_Look look) {
+    float range = look.light_range;
+    float power = look.light_intensity * INV_PI * light_scale();
+    if (!(power > 0.0) || !(range > 0.0) || !(luminance(look.light_color) > 0.0) || !(power < 1e30) || !(range < 1e30)) return;
+    float fraction = particle_emitters[slot].light_reach.z;
+    if (fraction > 0.0 && float(hash_u32(p.seed ^ 0x6C696768u) >> 8) * (1.0 / 16777216.0) >= fraction) return;
+    uint mine;
+    InterlockedAdd(particle_states[slot].lights, 1u, mine);
+    uint most = particle_emitters[slot].light_limit.x;
+    if (most != 0u && mine >= most) return;
+    uint at;
+    InterlockedAdd(particle_queue[PARTICLE_LIGHTS_WORD], 1u, at);
+    if (at >= min(particle_frame_lights(), DYNAMIC_LIGHTS_MAX)) return;
+    float3 position = particle_world(slot, p.position);
+    float3 color = min(look.light_color, float3(65504.0));
+    for (uint i = 0u; i < 3u; i++) {
+        InterlockedMin(particle_queue[PARTICLE_LIGHTS_WORD + 1u + i], dynamic_light_order(position[i] - range));
+        InterlockedMax(particle_queue[PARTICLE_LIGHTS_WORD + 4u + i], dynamic_light_order(position[i] + range));
+    }
+    uint word = PARTICLE_LIGHTS_WORD + (1u + at) * PARTICLE_LIGHT_WORDS;
+    uint radius = asuint(max(look.light_radius, LIGHT_RADIUS_MIN));
+    uint4 rows[5] = {
+        uint4(asuint(position), asuint(range)),
+        uint4(asuint(color), asuint(power)),
+        uint4(0u, 0u, 0u, asuint(LIGHT_POINT)),
+        uint4(radius, 0u, 0u, 0u),
+        uint4(0u, 0u, 0u, asuint(particle_emitters[slot].light_reach.w)),
+    };
+    for (uint r = 0u; r < 5u; r++) {
+        for (uint c = 0u; c < 4u; c++) particle_queue[word + r * 4u + c] = rows[r][c];
+    }
+}
+
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID) {
@@ -97,8 +134,10 @@ void main(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID) {
     uint4 range = particle_emitters[slot].range;
     uint2 program = particle_emitters[slot].program.xy;
     if (params.mode == 1u) {
-        particle_draw_look_store(slot, index, particle_program_look(slot, index, p));
+        Particle_Look look = particle_program_look(slot, index, p);
+        particle_draw_look_store(slot, index, look);
         particle_lists[program.y + range.x + work.item] = index;
+        if ((range.w & FLAG_LIGHT) != 0u) light_give(slot, p, look);
         return;
     }
     if (!(p.lifetime > 0.0)) { release(index, slot, range.xy); return; }

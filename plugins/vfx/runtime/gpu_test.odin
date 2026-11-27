@@ -79,7 +79,7 @@ gpu_fixture_destroy :: proc(f: ^Gpu_Fixture) {
 // put in the pool and those it does not name leave it. False when one found
 // no room.
 @(private = "file")
-frame_emitters :: proc(f: ^Gpu_Fixture, sync: ^Particle_Sync, emitters: []Emitter_Desc, dt: f32, capacity: u32 = CAPACITY) -> bool {
+frame_emitters :: proc(f: ^Gpu_Fixture, sync: ^Particle_Sync, emitters: []Emitter_Desc, dt: f32, capacity: u32 = CAPACITY, lights: u32 = PARTICLE_LIGHTS) -> bool {
 	pool := &sync.pool
 	ok := pool_frame(pool, dt, capacity, erender.max_storage_range(&f.app), false, len(emitters) > 0)
 	for &desc in emitters {ok = pool_put(pool, &desc) && ok}
@@ -88,7 +88,7 @@ frame_emitters :: proc(f: ^Gpu_Fixture, sync: ^Particle_Sync, emitters: []Emitte
 		for desc in emitters {if desc.id == id {continue listed}}
 		pool_remove(pool, id)
 	}
-	particles_frame(sync, &f.app)
+	particles_frame(sync, &f.app, lights)
 	return ok
 }
 
@@ -2841,5 +2841,255 @@ particle_programs_see_the_life_and_the_color_of_their_particle_apart_from_its_me
 			testing.expectf(t, (got[channel] > 100) == shows && (got[channel] < 80) != shows, "%s shows %v of red (its life), green (the color of its particle) and blue (the life left by the color of its mesh): %v", c.name, c.shows, got)
 		}
 	}
+	expect_clean(t, f.device)
+}
+
+// What the particles of a world wrote of their lights in a frame, read back
+// with the particles of one emitter in the same frame: the lights they gave
+// (also those past the most shown) and the first LIGHTS_READ of them.
+@(private = "file")
+Lights_Read :: struct {
+	sync:  ^Particle_Sync,
+	id:    u64, // an emitter whose particles come back with them; 0: none
+	count: u32,
+	time:  f32, // of the frames so far
+}
+
+@(private = "file")
+LIGHTS_READ :: 16
+
+@(private = "file")
+lights_read_pass :: proc(pass: ^erender.Pass, user: rawptr) {
+	r := cast(^Lights_Read)user
+	if pass.world != r.sync.world {return}
+	erender.pass_readback(pass, pool_buffer(&r.sync.pool, .Events), LIGHTS_AT, {"vfx test lights", (1 + LIGHTS_READ) * LIGHT_BYTES})
+	if r.id == 0 {return}
+	if ranges, ok := emitter_ranges(&r.sync.pool, r.id, r.count); ok {
+		erender.pass_readback(pass, ranges.particles.buffer, ranges.particles.offset, {"vfx test lit particles", ranges.particles.size})
+	}
+}
+
+// Frames of the emitters, each read back, and what came back of the last
+// of them; first: the emitters of the first frame start their bursts.
+@(private = "file")
+lights_frames :: proc(t: ^testing.T, f: ^Gpu_Fixture, emitters: []Emitter_Desc, frames: int, camera: gpu.Camera, read: ^Lights_Read, dt: f32 = 1.0 / 60, lights: u32 = PARTICLE_LIGHTS) -> (given: u32, shown: []gpu.Gpu_Light, particles: []Gpu_Particle) {
+	for _ in 0 ..< frames {
+		testing.expect(t, frame_emitters(f, &f.sync, emitters, dt, lights = lights))
+		for &e in emitters {e.spawns = {}}
+		erender.frame_pass(f.app.renderer, .Simulate, lights_read_pass, read)
+		read.time += dt
+		testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera, time = read.time}), f.renderer.error)
+	}
+	rhi.device_wait_idle(f.device)
+	data, _, ok := gpu.readback(&f.renderer, f.sync.world, "vfx test lights")
+	if !testing.expect(t, ok, "the lights come back") {return}
+	given = (^u32)(raw_data(data))^
+	all := mem.slice_data_cast([]gpu.Gpu_Light, data[LIGHT_BYTES:])
+	shown = all[:min(int(given), int(lights), len(all))]
+	if read.id != 0 {
+		if bytes, _, have := gpu.readback(&f.renderer, f.sync.world, "vfx test lit particles"); have {particles = mem.slice_data_cast([]Gpu_Particle, bytes)}
+	}
+	return
+}
+
+// A Light emitter of `count` particles at `position` that start with
+// `velocity`, each with a white light of `intensity` cd that reaches `range`.
+@(private = "file")
+light_emitter :: proc(id: u64, position, velocity: [3]f32, intensity, range: f32, count: u32 = 1) -> Emitter_Desc {
+	e := test_emitter(id, position)
+	e.capacity = max(count, 1)
+	e.info.render, e.info.lifetime, e.info.speed = .Light, {100, 100}, {0, 0}
+	e.info.velocity = {velocity, velocity}
+	e.info.light = {color = {1, 1, 1}, intensity = intensity, range = range, radius = 0.05, indirect = 1, scattering = 1}
+	e.spawns = test_burst(count)
+	return e
+}
+
+// Two lights of particles that fly apart light the wall where each is in the
+// same frame (its place is that of its particle when the frame draws), not
+// where they started, and a blended panel beside them; the light tree of the
+// CPU is not built again for them. Without the lights, the same frame is dark.
+@(test)
+particle_lights_light_opaque_and_translucent_surfaces_where_they_fly :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 96, 64, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	panel := gpu.DEFAULT_MATERIAL
+	panel.opacity, panel.alpha_mode, panel.roughness = 0.9, .Blend, 0.8
+	gpu.materials_set(r, {panel})
+	gpu.scene_set_environment(r, {}, {sky = {0.001, 0.001, 0.001}})
+	// A wall on the left; on the right, a panel with nothing behind it.
+	gpu.scene_update(r, 0, {
+		{object_id = 1, mesh = f.cube, transform = trs({-3, 0, -1}, {6, 12, 0.2}), tint = {0.8, 0.8, 0.8}},
+		{object_id = 2, mesh = f.cube, transform = trs({1.2, 0, -0.6}, {1.6, 1.6, 0.05}), material = 1},
+	}, true)
+	left := light_emitter(1, {0, 0, -0.3}, {-2, 0, 0}, 2, 1)
+	right := light_emitter(2, {0, 0, -0.3}, {2, 0, 0}, 10, 1)
+	emitters := [2]Emitter_Desc{left, right}
+	read := Lights_Read{sync = &f.sync, id = 1, count = 1}
+	_, _, _ = lights_frames(t, f, emitters[:], 4, FRONT, &read)
+	sets := r.scene.light_revision
+	given, shown, particles := lights_frames(t, f, emitters[:], 26, FRONT, &read)
+	testing.expect_value(t, given, u32(2))
+	if !testing.expect(t, len(shown) == 2 && len(particles) == 1 && particles[0].lifetime > 0) {return}
+	flew := particles[0].position
+	testing.expectf(t, flew.x < -0.8, "the particle flew left: %v", flew)
+	matched := false
+	for l in shown {matched ||= linalg.length(l.position_range.xyz - flew) < 1e-4}
+	testing.expectf(t, matched, "a light is where its particle is in the same frame: %v, lights %v %v", flew, shown[0].position_range, shown[1].position_range)
+	testing.expect_value(t, r.scene.light_revision, sets)
+	lit, w, _, ok := gpu.renderer_capture(r)
+	if !testing.expect(t, ok, r.error) {return}
+	defer delete(lit)
+	// The same frame without them.
+	testing.expect(t, frame_emitters(f, &f.sync, emitters[:], 0, lights = 0))
+	testing.expect(t, gpu.renderer_frame(r, {camera = FRONT, time = read.time}), r.error)
+	dark, _, _, have := gpu.renderer_capture(r)
+	if !testing.expect(t, have, r.error) {return}
+	defer delete(dark)
+	for c in ([]struct {at: [3]f32, lit: bool, what: string}{
+		{{flew.x, 0, -0.9}, true, "the wall where the left light flew"},
+		{{-flew.x, 0, -0.575}, true, "the blended panel before the right light"},
+		{{-0.15, 0, -0.9}, false, "the wall where they started"},
+		{{-3, 0, -0.9}, false, "the wall out of their reach"},
+	}) {
+		p := project(r, FRONT, c.at)
+		on, off := pixel(lit, w, p), pixel(dark, w, p)
+		if c.lit {testing.expectf(t, on.x > off.x + 30, "%s is lit: %v over %v", c.what, on, off)}
+		else {testing.expectf(t, abs(on.x - off.x) <= 4, "%s is not: %v and %v", c.what, on, off)}
+	}
+	expect_clean(t, f.device)
+}
+
+// A Light layer draws no sprite of its particles, red as they are, and gives
+// the lights its program gives (testdata/beacon.slang): none while they are
+// young, then blue.
+@(test)
+particle_lights_of_a_light_layer_come_from_its_program_and_draw_nothing :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 96, 64, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	program := erender.program_find(&f.assets, "Beacon", .Vfx)
+	if !testing.expect(t, program != nil, "testdata has the Vfx program Beacon") {return}
+	gpu.scene_set_environment(r, {}, {sky = {0.001, 0.001, 0.001}})
+	gpu.scene_update(r, 0, {{object_id = 1, mesh = f.cube, transform = trs({0, 0, -1}, {12, 12, 0.2}), tint = {0.8, 0.8, 0.8}}}, true)
+	beacon := light_emitter(1, {0, 0, -0.4}, {}, 0, 0)
+	beacon.info.colors, beacon.info.intensity, beacon.info.size = {{1, 0, 0, 1}, {1, 0, 0, 1}}, 50, {0.6, 0.6}
+	beacon.program.id, beacon.program.attributes = program.id, u32(program.attributes)
+	base.text_set(beacon.info.program[:], program.name)
+	emitters := [1]Emitter_Desc{beacon}
+	read := Lights_Read{sync = &f.sync}
+	given, _, _ := lights_frames(t, f, emitters[:], 6, FRONT, &read)
+	testing.expect_value(t, given, u32(0))
+	given2, shown, _ := lights_frames(t, f, emitters[:], 34, FRONT, &read)
+	testing.expect_value(t, given2, u32(1))
+	if len(shown) == 1 {
+		testing.expectf(t, shown[0].color_intensity.z > shown[0].color_intensity.x * 5 && shown[0].position_range.w == 2, "blue, as far as its program says: %v", shown[0])
+	}
+	pixels, w, _, ok := gpu.renderer_capture(r)
+	if !testing.expect(t, ok, r.error) {return}
+	defer delete(pixels)
+	at := pixel(pixels, w, project(r, FRONT, {0, 0, -0.4}))
+	near := pixel(pixels, w, project(r, FRONT, {0.5, 0.3, -0.9}))
+	testing.expectf(t, at.z > at.x + 30, "no red sprite where the particle is, the wall lit blue behind it: %v", at)
+	testing.expectf(t, near.z > near.x + 20, "the wall around it lit blue: %v", near)
+	expect_clean(t, f.device)
+}
+
+// Past the most lights a world shows, those of a Light layer stay and the
+// others are left out, counted and reported (vfx.lights_over); a fraction
+// gives the same particles a light in every frame, and the most of an
+// emitter holds.
+@(test)
+particle_lights_keep_light_layers_first_within_the_most_the_world_shows :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 64, 48, settings) {return}
+	defer gpu_fixture_destroy(f)
+	gpu.scene_set_environment(&f.renderer, {}, {sky = {0.001, 0.001, 0.001}})
+	sparks := light_emitter(1, {2, 0, 0}, {}, 1, 0.5, 300)
+	sparks.info.render, sparks.info.shape, sparks.info.shape_size = .Velocity, .Sphere, {0.3, 0.3, 0.3}
+	beacon := light_emitter(2, {-2, 0, 0}, {}, 5, 1, 3)
+	beacon.info.shape, beacon.info.shape_size = .Sphere, {0.2, 0.2, 0.2}
+	emitters := [2]Emitter_Desc{sparks, beacon}
+	read := Lights_Read{sync = &f.sync}
+	given, shown, _ := lights_frames(t, f, emitters[:], 6, FRONT, &read, lights = 8)
+	testing.expect_value(t, given, u32(303))
+	if testing.expect_value(t, len(shown), 8) {
+		for l, i in shown {
+			if i < 3 {testing.expectf(t, l.position_range.x < -1.5, "light %d is of the Light layer: %v", i, l.position_range)}
+			else {testing.expectf(t, l.position_range.x > 1.5, "light %d is of the sparks: %v", i, l.position_range)}
+		}
+	}
+	counted, _ := erender.counters(f.app.renderer, "particles")
+	testing.expect_value(t, counted[2], u32(295))
+	testing.expect_value(t, counted[3], u32(8))
+	problems: core.Problems
+	lights_report(&problems, f.app.renderer, &f.sync.pool)
+	testing.expect(t, core.problem_find(&problems, core.NONE, "vfx.lights_over") != nil, "the lights left out are reported")
+
+	// A half of the particles of one, by their seeds, and at most five of another.
+	half := light_emitter(3, {-2, 0, 0}, {}, 1, 0.5, 64)
+	half.info.shape, half.info.shape_size, half.info.light.fraction = .Sphere, {0.3, 0.3, 0.3}, 0.5
+	few := light_emitter(4, {2, 0, 0}, {}, 1, 0.5, 64)
+	few.info.shape, few.info.shape_size, few.info.light.max_lights = .Sphere, {0.3, 0.3, 0.3}, 5
+	read2 := Lights_Read{sync = &f.sync}
+	halves := [1]Emitter_Desc{half}
+	first_given, first, _ := lights_frames(t, f, halves[:], 6, FRONT, &read2)
+	again_given, again, _ := lights_frames(t, f, halves[:], 3, FRONT, &read2)
+	testing.expectf(t, first_given > 16 && first_given < 48, "about a half of 64: %d", first_given)
+	testing.expect_value(t, again_given, first_given)
+	for l in first {
+		kept := false
+		for m in again {kept ||= l.position_range == m.position_range}
+		testing.expectf(t, kept, "the same particles keep their lights: %v", l.position_range)
+	}
+	fews := [1]Emitter_Desc{few}
+	few_given, _, _ := lights_frames(t, f, fews[:], 6, FRONT, &read2)
+	testing.expect_value(t, few_given, u32(5))
+	expect_clean(t, f.device)
+}
+
+// Paused, the lights of particles stay where they are in every frame; once
+// the origin of the renderer jumps, they are where their particles are,
+// relative to it.
+@(test)
+particle_lights_hold_while_paused_and_follow_an_origin_jump :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 64, 48, settings) {return}
+	defer gpu_fixture_destroy(f)
+	camera := FRONT
+	camera.far = 14000
+	moving := light_emitter(1, {0, 0, 0}, {1, 0, 0}, 2, 1)
+	emitters := [1]Emitter_Desc{moving}
+	read := Lights_Read{sync = &f.sync, id = 1, count = 1}
+	_, before, _ := lights_frames(t, f, emitters[:], 12, camera, &read)
+	if !testing.expect_value(t, len(before), 1) {return}
+	emitters[0].paused = true
+	_, held, _ := lights_frames(t, f, emitters[:], 4, camera, &read, dt = 0)
+	_, still, _ := lights_frames(t, f, emitters[:], 4, camera, &read, dt = 0)
+	if !testing.expect(t, len(held) == 1 && len(still) == 1) {return}
+	testing.expect_value(t, held[0].position_range, still[0].position_range)
+	world := held[0].position_range.xyz + gpu.renderer_origin(&f.renderer)
+	camera.position.x = 8192
+	_, jumped, particles := lights_frames(t, f, emitters[:], 4, camera, &read, dt = 0)
+	origin := gpu.renderer_origin(&f.renderer)
+	testing.expect(t, origin.x != 0, "the origin jumped")
+	if !testing.expect(t, len(jumped) == 1 && len(particles) == 1) {return}
+	testing.expectf(t, linalg.length(jumped[0].position_range.xyz + origin - world) < 1e-2, "the light stays where it was in the world: %v + %v, was %v", jumped[0].position_range.xyz, origin, world)
+	testing.expectf(t, linalg.length(jumped[0].position_range.xyz - particles[0].position) < 1e-4, "and where its particle is: %v", particles[0].position)
 	expect_clean(t, f.device)
 }

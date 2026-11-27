@@ -200,7 +200,7 @@ translucent_draws_record :: proc(p: ^Pass) -> bool {
 	if instances.ptr == nil {return false}
 	for entry, k in p.translucent {([^]u32)(instances.ptr)[k] = entry.instance}
 	// The cells of those split for shadowless lights, a thread each, in a pass after; skipped without shadowless lights.
-	shadowless := p.frame.shadowless_lights != 0
+	shadowless := lights_listed(p.frame)
 	cells := pipeline_of(r, .Translucent_Draws, {TRANSLUCENT_DRAWS_COMP_CELLS})^ if shadowless else 0
 	Params :: struct {count, hiz_levels, occlusion, cells, split, pad0, pad1, pad2: u32}
 	params := Params{

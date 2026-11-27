@@ -38,7 +38,7 @@ vfx_editor_ready :: proc(v:^Vfx_Editor) {
     if v.ready {return}
     v.ready=true
     v.document.playback={speed=1,loop=true,playing=true}
-    v.document.open={.Spawn=true,.Shape=true,.Motion=true,.Look=true,.Collision=true,.Program=true}
+    v.document.open={.Spawn=true,.Shape=true,.Motion=true,.Look=true,.Collision=true,.Light=true,.Program=true}
 }
 
 // The storage of the plugin in the editor of a session.

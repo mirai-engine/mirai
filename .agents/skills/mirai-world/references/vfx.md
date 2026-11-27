@@ -85,26 +85,30 @@ core.birth(births, core.Birth{
 ## Particle lights
 
 `Particle_Info.light` (`effect.Particle_Light`: `color`, `intensity`, `range`, `radius`,
-`offset`, `shadows`, `indirect`, `scattering`) gives a layer one point light at the entity of its
-emitter (`offset` in its axes), never per particle:
+`fraction`, `max_lights`, `indirect`, `scattering`) gives each particle of a layer a shadowless
+point light where it is, written by the GPU in the frame it draws
+([dynamic lights](../../mirai-rendering/references/lights.md#local-lights)); a
+`Particle_Render.Light` layer draws nothing and gives only its lights:
 
-- **Resolved with the clock**: `emission_of` copies the light, its tint (`light.color`, or the
-  midpoint of `colors`) and the `color_over_life` curve into `Emission.light`. The tick lists
-  the emitters with a lit layer in `Particle_Clocks.lit`;
-  `particles_lights` (`render`, before `render_sync`) visits only those and asks `is_hidden` only
-  of one whose layer gives a light now.
-- **Envelope**: at the mean age of the particles alive (`Emitter_Clock.births`, or the last birth
-  of a program that starts them on the GPU or of a channel the emitter listens to)
-  `color_over_life` scales intensity (alpha) and tints the color; no live particles, no light.
-  `range` stays, so the slot keeps its reach class and the light tree only refits. It does not
-  follow where particles fly: the light stays at the emitter.
-- **Budget**: `min(Particle_Settings.max_lights, PARTICLE_LIGHTS_MAX)` (32) per world, nearest a
-  `scene.Simulation_Sources` first; the dropped ones are reported (`vfx.lights_over`, and
-  `vfx.light_dropped` when the frame's `host.FRAME_LIGHT_CAPACITY` is full).
-- **Renderer slots**: the lights go to `host.Frame_Extras` (`erender.light_add`), which the
-  renderer keeps in fixed slots that turn off instead of going
-  ([extra lights](../../mirai-rendering/references/lights.md#local-lights)), so a flash that ends
-  rebuilds no light tree.
+- **Who gives them**: `emitter_lights` (a Light layer, or a light with intensity and range; never
+  an effect view) sets `FLAG_LIGHT`. `particles_frame` asks `erender.frame_dynamic_lights` for
+  `Particle_Settings.max_lights` (default `PARTICLE_LIGHTS`, 128; at most
+  `erender.DYNAMIC_LIGHTS_MAX`, 512; 0 disables) only while some live emitter gives them.
+- **What each is**: mode 1 of `particle_simulate` (the look of the frame, after the program's
+  `render`) calls `light_give`: `Mirai_Vfx_Visual.light_color`, `light_intensity` (cd),
+  `light_range` and `light_radius` start from the light (its color, else the particle's before
+  `intensity`; its intensity by the particle's alpha) and a program may change them; intensity or
+  range 0 gives none. `fraction` keeps the particles whose seed falls under it (the same ones every
+  frame), `max_lights` caps an emitter (`Gpu_State.lights`), and the frame keeps the first
+  `max_lights` of the world: the slots of Light layers come first (`Program_Span.lights`) and
+  write in a pass before the others, so sparks never take their place.
+- **Where they go**: `Pool_Buffer.Events` from `LIGHTS_AT` holds the header (count of every
+  light given, then the box of what they reach) and a `Gpu_Light` each in render units;
+  `particle_begin` mode 2 empties the header, `pass_dynamic_lights_copy` hands it to the renderer
+  after `particle_finish`. A paused frame (dt 0) writes them again where the particles stay; after
+  an origin jump `particles_shift` moves the particles first, so the lights follow.
+- **Budget**: `particle_finish` counts those past the most shown (`counters("particles")[2]`)
+  and those shown (`[3]`); `lights_report` turns the first into `vfx.lights_over`.
 
 ## Animation spans
 

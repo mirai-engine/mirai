@@ -83,6 +83,11 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         float3 normal = gbuffer_normal(p);
         uint count = lights_reaching(pixel.position, normal, 0u, params.lights_scale);
         if (frame.shadowless_lights != 0u && count < params.lights_scale) count += lights_reaching(pixel.position, normal, frame.shadowless_lights, params.lights_scale - count);
+        for (uint k = 0u; k < dynamic_light_count() && count < params.lights_scale; k++) {
+            float4 place = dynamic_light(k).position_range;
+            float3 to = place.xyz - pixel.position;
+            if (dot(to, to) < place.w * place.w && dot(to, normal) > -dynamic_light(k).size.x) count++;
+        }
         color = count == 0u ? float3(0.03) : heat(float(count) / float(params.lights_scale));
         break;
     }

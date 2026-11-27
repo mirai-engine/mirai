@@ -34,7 +34,8 @@ PARTICLE_EFFECT_PARAMETERS :: 256 // of all the layers of an effect
 PARTICLE_MESHES :: 4
 
 Particle_Shape :: enum u32 {Point,Sphere,Hemisphere,Cone,Box,Circle,Line,Surface}
-Particle_Render :: enum u32 {Billboard,Velocity,Horizontal,Ribbon,Mesh,Beam}
+// Light: the particles draw nothing and give only their lights (light).
+Particle_Render :: enum u32 {Billboard,Velocity,Horizontal,Ribbon,Mesh,Beam,Light}
 // How a sprite, a ribbon or a beam covers what is behind it: Additive adds
 // its light, Alpha covers it by its opacity, Multiply darkens it by its color.
 // A Mesh particle blends as the alpha mode of its material says.
@@ -74,19 +75,22 @@ Particle_Gradient :: struct {
     times:[PARTICLE_CURVE_KEYS]f32 `mirai:"min=0,max=1"`,
 }
 
-// The point light a layer of an effect gives at the entity of its emitter
-// while its particles live: its intensity and color follow color_over_life,
-// at the mean age of the particles alive. intensity or range of 0: none, at
-// no cost.
+// The point lights the particles of a layer give, one at each particle that
+// gives one, where it is: they cast no shadows, follow the particles as the
+// GPU moves them and light what the lights without shadows light. Their color
+// and intensity follow those of each particle at its age (its color, by
+// color_over_life), and its Vfx program may give its own
+// (Mirai_Vfx_Visual.light_*). intensity or range of 0: none, at no cost,
+// unless a Light layer's program gives them.
 Particle_Light :: struct {
-    color:[3]f32 `mirai:"color"`,          // tint; {0,0,0} uses the effect's particle color
-    intensity:f32 `mirai:"min=0,unit=cd"`, // at full color_over_life alpha; 0 disables
+    color:[3]f32 `mirai:"color"`,          // tint; {0,0,0}: the color of each particle
+    intensity:f32 `mirai:"min=0,unit=cd"`, // at an alpha of 1 of the particle; 0 disables
     range:f32 `mirai:"min=0,unit=m"`,      // attenuation range; 0 disables
-    radius:f32 `mirai:"min=0,unit=m"`,     // source sphere radius for soft highlights and shadows
-    offset:[3]f32 `mirai:"unit=m"`,        // from the entity, in its axes
-    shadows:bool,                          // whether the light casts shadows
-    indirect:f32 `mirai:"min=0"`,         // indirect GI bounce multiplier
-    scattering:f32 `mirai:"min=0"`,       // volumetric fog scattering multiplier
+    radius:f32 `mirai:"min=0,unit=m"`,     // source sphere radius, which widens its highlights
+    fraction:f32 `mirai:"min=0,max=1"`,    // of the particles that give one, picked by their seed; 0: all
+    max_lights:u16,                        // of an emitter at once; 0: as many as the world shows (vfx.Particle_Settings.max_lights)
+    indirect:f32 `mirai:"min=0"`,          // indirect GI bounce multiplier
+    scattering:f32 `mirai:"min=0"`,        // volumetric fog scattering multiplier
 }
 
 // The shape faces +Y of the entity, where a cone opens; the particles leave
@@ -154,7 +158,7 @@ Particle_Info :: struct {
     sub_count:u32,                            // its particles per event
     beam_end:[3]f32 `mirai:"section=Look,unit=m"`, // endpoint offset in the emitter's axes
     beam_arc:f32 `mirai:"unit=m"`, // midpoint offset along the emitter's +Y
-    light:Particle_Light, // a point light at the entity while particles live; intensity or range 0 disables
+    light:Particle_Light `mirai:"section=Light"`, // a point light at each particle; intensity or range 0 disables
     program:[PARTICLE_NAME_BYTES]u8 `mirai:"section=Program,text"`, // a Vfx program of the shaders; "" for none
 }
 
@@ -275,7 +279,7 @@ particle_validate :: proc(desc:Particle_Desc) -> Particle_Problem {
 particle_info_problem :: proc(p:^Particle_Info,coupled:bool) -> Particle_Problem {
     if field,ok:=particle_finite(p);!ok {return {field,"Use finite numbers"}}
     if p.shape>max(Particle_Shape) {return {"shape","Use Point, Sphere, Hemisphere, Cone, Box, Circle, Line or Surface"}}
-    if p.render>max(Particle_Render) {return {"render","Use Billboard, Velocity, Horizontal, Ribbon, Mesh or Beam"}}
+    if p.render>max(Particle_Render) {return {"render","Use Billboard, Velocity, Horizontal, Ribbon, Mesh, Beam or Light"}}
     if p.blend>max(Particle_Blend) {return {"blend","Use Additive, Alpha or Multiply"}}
     if p.collision>max(Particle_Collision) {return {"collision","Use None or World"}}
     if p.facing>max(Particle_Facing) {return {"facing","Use Tumble, Velocity or Emitter"}}
@@ -313,6 +317,7 @@ particle_info_problem :: proc(p:^Particle_Info,coupled:bool) -> Particle_Problem
     if p.light.intensity<0 || p.light.range<0 || p.light.radius<0 || p.light.indirect<0 || p.light.scattering<0 {
         return {"light","Use zero or more for light intensity, range, radius, indirect and scattering"}
     }
+    if p.light.fraction<0 || p.light.fraction>1 {return {"light","Use a light fraction from 0 to 1; 0 gives every particle a light"}}
     return {}
 }
 
@@ -335,11 +340,12 @@ particle_scale :: proc "contextless" (info:^Particle_Info) -> [3]f32 {
 }
 
 // Whether a field of Particle_Info means anything to what the effect draws:
-// a Mesh particle blends as its material does, and only a ribbon has an axis
-// and a tile.
+// a Mesh particle blends as its material does, only a ribbon has an axis and
+// a tile, and a Light particle draws nothing.
 particle_field_applies :: proc(info:^Particle_Info,top:string) -> bool {
     switch top {
-    case "blend": return info.render!=.Mesh
+    case "blend": return info.render!=.Mesh && info.render!=.Light
+    case "lit","sort","material","soft","stretch","flipbook","flipbook_speed","scale": return info.render!=.Light
     case "ribbon_axis","ribbon_tile": return info.render==.Ribbon
     case "facing","meshes","mesh_weights": return info.render==.Mesh
     }

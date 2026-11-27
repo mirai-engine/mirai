@@ -40,7 +40,7 @@ struct Params_Block { uint count; uint hiz_levels; uint occlusion; uint cells; u
 // Lists the shadowless lights of the cell of the thread in `block`; false when
 // they take more than a block holds.
 bool block_lights(uint block) {
-    if (frame.shadowless_lights == 0u) return true;
+    if (!shadowless_lights_any()) return true;
     cell.middle = 0.5 * (cell.low + cell.high);
     cell.radius = 0.5 * length(cell.high - cell.low);
     uint listed;
@@ -97,7 +97,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     draws[at + 3u] = 0u;
     draws[at + 4u] = index;
     entries[index] = uint2(k, translucent_cells_word(uint3(1u)));
-    if (!shown || frame.shadowless_lights == 0u) return;
+    if (!shown || !shadowless_lights_any()) return;
     cell.low = inst.bounds_min.xyz;
     cell.high = inst.bounds_max.xyz;
     cell.normal_low = float3(-1.0);

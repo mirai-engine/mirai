@@ -56,7 +56,7 @@ debug_view_status :: proc(r: ^Renderer, plan: ^Render_Plan, mode: Debug_View) ->
 	case .Probes:
 		if !s.gi_enabled || !r.ddgi.valid {return false, "The probe volume is off or empty"}
 	case .Lights:
-		if len(r.scene.lights) == 0 {return false, "The scene has no local lights"}
+		if len(r.scene.lights) == 0 && r.dynamic_lights.asked == 0 {return false, "The scene has no local lights"}
 	}
 	return true, ""
 }

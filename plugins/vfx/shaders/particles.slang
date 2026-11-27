@@ -10,6 +10,8 @@
 //! mirai constant POSE_AT uint ../runtime/gpu.odin
 //! mirai constant TURN_AT uint ../runtime/gpu.odin
 //! mirai constant FLAG_MULTIPLY uint ../runtime/gpu.odin
+//! mirai constant FLAG_LIGHT uint ../runtime/gpu.odin
+//! mirai constant LIGHTS_AT uint ../runtime/gpu.odin
 //! mirai constant RIBBON_PIECES uint ../runtime/gpu.odin
 //! mirai constant TRAILS_PER_SECOND uint ../runtime/gpu.odin
 //! mirai constant MESH_CHOICE_SHIFT uint ../runtime/gpu.odin
@@ -74,6 +76,9 @@ struct Particle_Emitter {
     uint4 mesh_handles;   // and the meshes, whose indices the frame lists (render.frame_mesh_whole)
     float4 scale;         // of every particle; w metres a ribbon repeats its texture over (0: once over its length)
     uint4 ribbons[2];     // the ribbon each group of births joins
+    float4 light;         // of its Particle_Light: color (0: that of each particle), intensity (cd)
+    float4 light_reach;   // its range and radius (m), fraction (0: every particle), shares (light_shares_bits)
+    uint4 light_limit;    // lights of the emitter at once (0: as many as the world shows)
 };
 
 struct Particle_State {
@@ -83,7 +88,7 @@ struct Particle_State {
     // An indexed draw; that of a mesh, without indices: vertex count, instance count, first vertex, first instance.
     uint index_count; uint instance_count; uint first_index; int vertex_offset; uint first_instance;
     uint live_count[2];
-    uint pad;
+    uint lights;          // lights its particles gave this frame, also those left out
     uint2 drained;
 };
 
@@ -126,6 +131,7 @@ struct Particle_Event {
 #define PARTICLE_RENDER_RIBBON 3u
 #define PARTICLE_RENDER_MESH 4u
 #define PARTICLE_RENDER_BEAM 5u
+#define PARTICLE_RENDER_LIGHT 6u
 
 #define PARTICLE_COLLISION_WORLD 1u
 #define PARTICLE_FACING_TUMBLE 0u
@@ -213,6 +219,16 @@ float4 particle_frame_row(uint at) { return asfloat(particle_frame.Load4(at)); }
 float4 particle_frame_step() { return particle_frame_row(0u); }
 uint particle_frame_births() { return particle_frame.Load(16u); }
 uint particle_frame_slot(uint index) { return particle_frame.Load(particle_frame.Load(20u) + index * 4u); }
+// The most lights the particles of the frame give (vfx.Pool.light_capacity).
+uint particle_frame_lights() { return particle_frame.Load(24u); }
+
+// The lights the particles give, in particle_queue from LIGHTS_AT as the
+// renderer copies them (render.frame_dynamic_lights): a header of
+// PARTICLE_LIGHT_WORDS words, its first how many lights were given (also
+// those past the most the frame shows), then the box of what they reach,
+// low corner and high (dynamic_light_order); then each light, a Light.
+#define PARTICLE_LIGHTS_WORD (LIGHTS_AT / 4u)
+#define PARTICLE_LIGHT_WORDS 20u
 
 // The gravity and the wind of the world in the rows of the frame (vfx.Gpu_Fields): the
 // gravity where no Gravity rules, then every Gravity and every Wind in the order they apply.
@@ -654,6 +670,11 @@ struct Particle_Look {
     float random;
     float3 scale;       // Mirai_Vfx_Visual.scale: over that of its effect
     float4 orientation; // Mirai_Vfx_Visual.orientation: zero, the facing of its effect
+    // The light it gives (Mirai_Vfx_Visual.light_*), with FLAG_LIGHT.
+    float3 light_color;
+    float light_intensity; // cd
+    float light_range;     // m
+    float light_radius;    // m
 };
 Particle_Look particle_look(uint slot, Particle p) {
     Particle_Look look;
@@ -661,6 +682,13 @@ Particle_Look particle_look(uint slot, Particle p) {
     float4 shown = particle_emitters[slot].look;
     uint2 flipbook = particle_emitters[slot].flipbook.xy;
     look.color = particle_color(p) * particle_gradient(slot, life);
+    // Its light: the color of the light, else its own before the intensity of the effect, by its alpha.
+    float4 light = particle_emitters[slot].light;
+    float4 reach = particle_emitters[slot].light_reach;
+    look.light_color = any(light.rgb > 0.0) ? light.rgb : max(look.color.rgb, float3(0.0));
+    look.light_intensity = light.w * saturate(look.color.a);
+    look.light_range = reach.x;
+    look.light_radius = reach.y;
     look.color.rgb *= shown.z;
     look.size = p.size * particle_curve(particle_emitters[slot].size_curve, particle_emitters[slot].size_times, life);
     float frames = float(flipbook.x * flipbook.y);

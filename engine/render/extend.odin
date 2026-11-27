@@ -233,6 +233,15 @@ pass_depth_pyramid_build :: gpu.pass_depth_pyramid_build
 frame_gbuffer_mesh :: proc(renderer:^Renderer,mesh:Mesh_Handle,material:Material_Handle) {
     if renderer!=nil {gpu.frame_gbuffer_mesh(renderer,mesh,material)}
 }
+// The next frame has up to `capacity` lights the plugin writes on the GPU
+// (gpu.DYNAMIC_LIGHTS_MAX at most): lights without shadows, which a pass of
+// its Simulate stage copies into the renderer (pass_dynamic_lights_copy) from
+// a buffer of its own. Ask in each frame that has them; 0 asks for none.
+frame_dynamic_lights :: proc(renderer:^Renderer,capacity:u32) {
+    if renderer!=nil {gpu.frame_dynamic_lights(renderer,capacity)}
+}
+DYNAMIC_LIGHTS_MAX :: gpu.DYNAMIC_LIGHTS_MAX
+pass_dynamic_lights_copy :: gpu.pass_dynamic_lights_copy
 // Tells the frame that the plugin draws every cluster of level 0 of a mesh
 // (the meshes of particles): a mesh that streams loads its pages and keeps
 // them. Ask in each frame that draws it.
@@ -412,8 +421,6 @@ instance_colors_set :: proc(renderer:^Renderer,index:int,colors:Colors_Handle) -
 }
 // Visual instances for this frame, without an entity of their own in the renderer.
 instance_add :: proc(extras:^host.Frame_Extras,instances:..Instance_Desc) -> bool {return host.extras_instance_add(extras,..instances)}
-// Local lights for this frame, without an entity of their own in the world.
-light_add :: proc(extras:^host.Frame_Extras,light:Light_Desc) -> bool {return host.extras_light_add(extras,light)}
 
 Highlight_Levels :: gpu.Highlight_Levels
 

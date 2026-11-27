@@ -488,6 +488,7 @@ Scene_State :: struct {
 	light_tree_cost:      f64,          // of the tree now (light_tree_cost)
 	light_tree_built:     f64,          // of the tree when it was built
 	light_capacity:       int,
+	dynamic_light_capacity: int, // lights the tail of light_buffer holds after its header, past light_capacity (frame_dynamic_lights)
 	light_tree_capacity:  int,
 	light_buffer:         rhi.Buffer,
 	light_tree_buffer:    rhi.Buffer,
@@ -2462,37 +2463,6 @@ scene_light_update :: proc(r: ^Renderer, index: u32, desc: Light_Desc) -> bool {
 	return true
 }
 
-// Turns off the light at index: it keeps its place, its shape and its kind,
-// so its leaf of the tree only refits, and gives no light until
-// scene_light_update gives it some again. For a slot whose light comes and
-// goes (a flash) without changing the set. Nothing for an index past the last
-// or a light already off.
-scene_light_off :: proc(r: ^Renderer, index: u32) {
-	s := &r.scene
-	if int(index) >= len(s.lights) || s.lights[index].color_intensity.w == 0 {return}
-	light := &s.lights[index]
-	scene_changed_near(s, light.position_range.xyz, light.position_range.w)
-	light.color_intensity.w = 0
-	s.lights_changed = true
-	light_refit(s, index)
-}
-
-// Adds a light one past the last that gives what the light at index gives.
-// False for an index past the last or without memory: nothing changes.
-scene_light_duplicate :: proc(r: ^Renderer, index: u32) -> bool {
-	s := &r.scene
-	if int(index) >= len(s.lights) {return false}
-	if !lights_reserve(s, len(s.lights) + 1) {
-		set_error(r, "%d lights: out of memory", len(s.lights) + 1)
-		return false
-	}
-	append(&s.lights, s.lights[index])
-	append(&s.light_shadowless, s.light_shadowless[index])
-	s.lights_stale, s.lights_changed = true, true
-	occluder_light_moved(s, u32(len(s.lights) - 1))
-	return true
-}
-
 // The leaf of the light at index and the groups above it as it is now, while
 // the set holds; past LIGHT_REFITS_MAX in a frame the whole tree is refit
 // once (scene_lights_settle).
@@ -2809,12 +2779,16 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		s.instances_dirty = true
 	}
 	lights := max(len(s.lights), 1)
-	if lights > s.light_capacity || s.light_buffer == 0 {
-		capacity := max(lights + lights / 2, 32)
+	// The lights extensions write on the GPU keep the tail, after a header: it grows and stays.
+	tail_lights := max(s.dynamic_light_capacity, int(r.dynamic_lights.asked))
+	if lights > s.light_capacity || tail_lights > s.dynamic_light_capacity || s.light_buffer == 0 {
+		capacity := max(lights + lights / 2, 32) if lights > s.light_capacity || s.light_buffer == 0 else s.light_capacity
+		tail := 1 + tail_lights if tail_lights > 0 else 0
 		if s.light_buffer != 0 {rhi.buffer_destroy(d, s.light_buffer)}
-		s.light_buffer = rhi.buffer_create(d, {size = u64(capacity * size_of(Gpu_Light)), usage = {.Storage}, name = "lights"})
-		s.light_capacity = capacity
+		s.light_buffer = rhi.buffer_create(d, {size = u64((capacity + tail) * size_of(Gpu_Light)), usage = {.Storage}, name = "lights"})
+		s.light_capacity, s.dynamic_light_capacity = capacity, tail_lights
 		s.lights_dirty = true
+		r.dynamic_lights.copied = 0
 	}
 	if len(s.light_tree) > s.light_tree_capacity || s.light_tree_buffer == 0 {
 		capacity := max(len(s.light_tree) + len(s.light_tree) / 2, 64)
@@ -2989,6 +2963,7 @@ upload_scene :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 			clear(&s.light_node_ranges)
 		} else {ok = false}
 	}
+	dynamic_lights_settle(r, cmd)
 	// The programs of the instances read the tables just uploaded.
 	zone = render_zone_begin(r, "programs")
 	if ok && !displaced_record(r, cmd) {ok = false}

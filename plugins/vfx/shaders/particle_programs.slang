@@ -555,6 +555,7 @@ Particle_Look particle_draw_look(uint slot, uint index) {
     uint4 placed = particle_data.Load4(at + TURN_AT);
     look.orientation = any(placed.xy != uint2(0u)) ? particle_pose_unpack(placed.xy) : float4(0.0);
     look.scale = float3(particle_halves_unpack(placed.z), particle_halves_unpack(placed.w).x);
+    look.light_color = float3(0.0); look.light_intensity = 0.0; look.light_range = 0.0; look.light_radius = 0.0;
     return look;
 }
 // Whether the program of a particle gives the turn of its mesh, and the scale
@@ -589,11 +590,13 @@ Particle_Look particle_program_look(uint slot, uint index, Particle p) {
     Mirai_Vfx_Visual visual;
     visual.color = look.color; visual.size = look.size; visual.frame = look.frame; visual.data = look.data; visual.given = look.given; visual.random = look.random;
     visual.scale = look.scale; visual.orientation = look.orientation;
+    visual.light_color = look.light_color; visual.light_intensity = look.light_intensity; visual.light_range = look.light_range; visual.light_radius = look.light_radius;
     Mirai_Vfx_Context ctx = particle_program_context(slot, particle_frame_step().w, 0.0);
     ctx.particle = index;
     if (mirai_vfx_render(program, packed, particle_attributes(slot, index), ctx, particle_program_value(slot, p), visual)) {
         look.color = visual.color; look.size = max(visual.size, 0.0); look.frame = visual.frame; look.data = visual.data; look.given = visual.given; look.random = saturate(visual.random);
         look.scale = max(visual.scale, float3(0.0)); look.orientation = visual.orientation;
+        look.light_color = max(visual.light_color, float3(0.0)); look.light_intensity = visual.light_intensity; look.light_range = visual.light_range; look.light_radius = visual.light_radius;
     }
     return look;
 }
