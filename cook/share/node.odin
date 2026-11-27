@@ -232,7 +232,9 @@ node_take :: proc(n:^Node) -> (commands:[]wire.Command,complete:bool) {
     clear(&n.taken.bytes)
     n.taken.lost=false
     sync.mutex_lock(&n.kept_lock)
-    n.kept,n.taken=n.taken,n.kept
+    kept:=n.kept
+    n.kept=n.taken
+    n.taken=kept
     sync.mutex_unlock(&n.kept_lock)
     for &command,i in n.taken.commands {
         size:=len(command.data)

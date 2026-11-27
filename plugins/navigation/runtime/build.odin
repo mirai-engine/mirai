@@ -855,7 +855,10 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
     }
     b.unloaded_seen=revision
     b.idle.looked=r.count>0 && count==0
-    if b.idle.looked {b.idle.marked,b.idle.reach=marked,r^}
+    if b.idle.looked {
+        b.idle.marked=marked
+        b.idle.reach=r^
+    }
     for entry in nearest[:count] {
         mark:=base.hash_map_ptr(&n.classes[entry.class].marks,entry.key)
         if mark!=nil && !build_start(&start,entry.class,entry.key,mark) {return}

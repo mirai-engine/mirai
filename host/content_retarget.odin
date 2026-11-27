@@ -54,7 +54,8 @@ content_animation_retarget :: proc(app:^App,id,skeleton:base.Asset_Id) -> (conte
     entry,fresh:=content_slot(c,&c.animations,key,.Animation)
     if entry==nil {fault={.Out_Of_Memory,skeleton};return}
     if fresh {
-        entry.id,entry.retarget=id,{skeleton=skeleton,key=key}
+        entry.id=id
+        entry.retarget={skeleton=skeleton,key=key}
         entry.retarget.stamp=content_retarget_stamp(app.assets,id,skeleton)
         if !content_animation_start(app,entry) {entry.retarget.failure=.Invalid;content_loaded(c,entry,false)}
     }

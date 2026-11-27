@@ -1114,7 +1114,8 @@ source_set :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listeners:^M
 @(private)
 entry_speed :: proc "contextless" (entry:^Voice_Entry,source:Audio_Source,now:u64) {
     if now>entry.clock {
-        entry.times,entry.clock=entry_times(entry,now),now
+        entry.times=entry_times(entry,now)
+        entry.clock=now
     }
     pitch:=(source.pitch>0?source.pitch:1)*entry.sound.pitch
     for i in 0..<clamp(entry.sound.count,0,LAYERS) {
@@ -1313,9 +1314,9 @@ voice_desc :: proc "contextless" (source:Audio_Source,pick:[2]f32,position:[3]f3
 // start. The layers of a Layered set reach the mixer together, so their
 // delays are exact to the sample. None, with the problem of e (NONE: of a
 // request), when it does not start.
-voice_start :: proc(m:^Mixer,app:^host.App,source:Audio_Source,e:core.Entity,problems:^core.Problems,position:[3]f32={},listener:u8=0) -> Sound_Voices {
+voice_start :: proc(m:^Mixer,app:^host.App,source:Audio_Source,e:core.Entity,problems:^core.Problems,position:[3]f32={},listener:u8=0) -> (v:Sound_Voices) {
     pick,ok:=sound_pick(m,app,source,e,problems)
-    if !ok {return {}}
+    if !ok {return}
     return voices_picked(m,app,source,pick,e,problems,position,listener)
 }
 
@@ -1333,7 +1334,7 @@ voices_picked :: proc(m:^Mixer,app:^host.App,source:Audio_Source,pick:host.Sound
         } else {
             core.report(problems,e,"audio.voices","%s did not start: every voice of the mixer plays a sound of the same or a higher priority; play fewer sounds at once, raise its priority, or raise the voices of the mixer",e==core.NONE?"audio.play":"its Audio_Source")
         }
-        return {}
+        v={}
     }
     return
 }

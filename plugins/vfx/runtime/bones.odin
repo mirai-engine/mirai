@@ -119,15 +119,18 @@ bones_given :: proc(bones:^Particle_Bones,e:core.Entity) -> ^Bones_Entry {
 // A bones resource of an entity: its bones among those of the frame, gathered
 // once however many emitters read them. Kind None without them.
 @(private)
-bones_resource :: proc(sync:^Particle_Sync,bones:^Particle_Bones,e:core.Entity) -> Resource_Desc {
+bones_resource :: proc(sync:^Particle_Sync,bones:^Particle_Bones,e:core.Entity) -> (resource:Resource_Desc) {
     for known in sync.bone_sources {
-        if known.entity==e {return {kind=.Bones,first=known.first,count=known.count}}
+        if known.entity==e {
+            resource.kind,resource.first,resource.count=.Bones,known.first,known.count
+            return
+        }
     }
     entry:=bones_given(bones,e)
-    if entry==nil || len(entry.world)==0 {return {}}
+    if entry==nil || len(entry.world)==0 {return}
     first:=len(sync.bones)
-    if reserve(&sync.bones,first+len(entry.world))!=nil {return {}}
-    if _,error:=append(&sync.bone_sources,Bone_Source{e,u32(first),u32(len(entry.world))});error!=nil {return {}}
+    if reserve(&sync.bones,first+len(entry.world))!=nil {return}
+    if _,error:=append(&sync.bone_sources,Bone_Source{e,u32(first),u32(len(entry.world))});error!=nil {return}
     for bone,i in entry.world {
         append(&sync.bones,Gpu_Bone{
             position=bone.position,parent=entry.parents[i],
@@ -135,5 +138,6 @@ bones_resource :: proc(sync:^Particle_Sync,bones:^Particle_Bones,e:core.Entity) 
             scale=bone.scale,velocity=entry.velocity[i],
         })
     }
-    return {kind=.Bones,first=u32(first),count=u32(len(entry.world))}
+    resource.kind,resource.first,resource.count=.Bones,u32(first),u32(len(entry.world))
+    return
 }

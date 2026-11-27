@@ -74,13 +74,11 @@ animation_retarget :: proc(view:Animation_View,types:^Types,open:Skeleton_Open,d
     ids:=make([dynamic]base.Asset_Id,scratch)
     for clip in view.clips {if clip.skeleton!={} && clip.skeleton!=skeleton && !slice.contains(ids[:],clip.skeleton) {append(&ids,clip.skeleton)}}
     if len(ids)==0 {out.direct=true;return}
-    target,target_read:=retarget_skeleton(types,open,data,skeleton)
-    if !target_read {out.failure,out.failed=.Unread,skeleton;return}
+    target:Retarget_Skeleton
+    if !retarget_skeleton(&target,types,open,data,skeleton) {out.failure,out.failed=.Unread,skeleton;return}
     sources:=make([]Retarget_Skeleton,len(ids),scratch)
     for id,i in ids {
-        read:bool
-        sources[i],read=retarget_skeleton(types,open,data,id)
-        if !read {out.failure,out.failed=.Unread,id;return}
+        if !retarget_skeleton(&sources[i],types,open,data,id) {out.failure,out.failed=.Unread,id;return}
     }
     library:anim.Library
     desc:=animation_library_desc(view);desc.allocator=scratch
@@ -282,22 +280,22 @@ Retarget_Skeleton :: struct {
 }
 
 @(private="file")
-retarget_skeleton :: proc(types:^Types,open:Skeleton_Open,data:rawptr,id:base.Asset_Id) -> (out:Retarget_Skeleton,ok:bool) {
+retarget_skeleton :: proc(out:^Retarget_Skeleton,types:^Types,open:Skeleton_Open,data:rawptr,id:base.Asset_Id) -> bool {
     scratch:=context.temp_allocator
     file:Asset
-    if !open(data,id,&file) {return}
+    if !open(data,id,&file) {return false}
     view,error:=skeleton_view(&file,types)
-    if error!=.None || !skeleton_check(view) {return}
+    if error!=.None || !skeleton_check(view) {return false}
     // The file closes with the scratch it was opened in: its rows are copied.
     out.bones=slice.clone(view.bones,scratch)
     out.body=skeleton_body_map(out.bones,view.body,view.body_parts)
     rig,made:=skeleton_anim(view,scratch)
-    if !made {return}
+    if !made {return false}
     out.rig=rig
     out.aliases=make([]u64,len(out.bones),scratch)
     for &bone,i in out.bones {out.aliases[i]=base.name_hash(base.text_get(bone.name[:]))}
     out.sorted=retarget_sorted(out.bones)
-    return out,true
+    return true
 }
 
 // How the bones of a target take those of a skeleton its clips were made on.

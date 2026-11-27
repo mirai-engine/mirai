@@ -217,8 +217,11 @@ places_run :: proc(
 // the tick (Behavior_Settings.queries, shared with those that wait) are not
 // spent: its best places, Found or Empty, without a request. Waiting when they
 // are: it asks again at the next tick. The querier is the agent.
-place_pick :: proc(a:^$T,w:Place_World,query:Place_Query) -> Place_Result {
-    if !place_spend(w) {return {status=.Waiting,offers=-1}}
+place_pick :: proc(a:^$T,w:Place_World,query:Place_Query) -> (result:Place_Result) {
+    if !place_spend(w) {
+        result.status,result.offers=.Waiting,-1
+        return
+    }
     query:=query
     query.querier,query.request=agent(a),0
     world:=world_of(a)

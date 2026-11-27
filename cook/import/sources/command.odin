@@ -316,7 +316,8 @@ import_file :: proc(run:^Import_Run,file:string) -> int {
     kind:=source_kind(origin)
     if (kind==.None || kind==.Model) && run.library!=nil && root!="" {
         if !run.loaded {
-            run.plugins,run.loaded=run.library(root,options.store,context.temp_allocator),true
+            run.plugins=run.library(root,options.store,context.temp_allocator)
+            run.loaded=true
             all:=make([dynamic]importer.Format,0,len(FORMATS)+len(run.plugins.formats),context.temp_allocator)
             append(&all,..FORMATS[:])
             append(&all,..run.plugins.formats)
