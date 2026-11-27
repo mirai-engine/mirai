@@ -21,7 +21,7 @@ memory_limit_proc :: proc(data: rawptr, mode: runtime.Allocator_Mode, size, alig
 
 @(private = "file")
 MEMORY_PROGRAMS :: `[{"id":3,"name":"Paint","domain":"Vfx","attributes":8,"size":24,
-	"resources":[{"name":"field","kind":"Grid"},{"name":"words","kind":"Data","words":4}],
+	"resources":[{"name":"field","kind":"Grid"},{"name":"path","kind":"Channel"}],
 	"stages":[{"name":"spread","iterations":2,"over":0,"writes":1}],
 	"parameters":[
 		{"name":"image","kind":"Texture","components":1,"offset":0,"srgb":true},
