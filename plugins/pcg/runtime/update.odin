@@ -278,7 +278,8 @@ pcg_update :: proc(
             if tile.absent && !has_points {
                 // No ground known yet and no authored points: it waits for its tile, and places nothing.
                 if cell.built && (len(cell.placed)>0 || cell.occupied_hash!=0) {clear(&cell.placed);cell.revision+=1;graph.revision+=1}
-                cell.occupied,cell.occupied_hash={},0
+                cell.occupied={}
+                cell.occupied_hash=0
                 cell.built,cell.key,cell.ground,cell.suppressed=true,key,revision,hash
                 continue
             }
@@ -322,7 +323,8 @@ pcg_update :: proc(
             cell:=&x.g.graphs[b.graph].cells[b.cell]
             clear(&cell.placed)
             b.ok=cell_generate(&b.input,scratch,&cell.placed)
-            cell.occupied,cell.occupied_hash=scratch.occupied,scratch.occupied_hash
+            cell.occupied=scratch.occupied
+            cell.occupied_hash=scratch.occupied_hash
         }
     }
     building:=Building{g,builds_now}

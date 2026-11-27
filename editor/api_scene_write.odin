@@ -78,7 +78,13 @@ Api_Write :: struct {
     call:^api.Call,
     w:core.World_Ref,
     run:^Run,     // of the game it writes; nil: the document
-    scratch:[]u8, // two values of the largest component
+    scratch:[]u8, // four values of the largest component, in slots (api_write_slot)
+}
+
+// Slot i of the scratch of a write, as a value of size bytes.
+@(private="file")
+api_write_slot :: proc(a:^Api_Write,i,size:int) -> []u8 {
+    return a.scratch[i*(len(a.scratch)/4):][:size]
 }
 
 @(private)
@@ -186,14 +192,14 @@ api_write_component :: proc(a:^Api_Write,reading:^author.Reading,e:core.Entity,t
     s,w:=a.s,a.w
     st:=api_state(s)
     size:=t.info.size
-    start,bytes:=a.scratch[:size],a.scratch[len(a.scratch)/2:][:size]
+    start,bytes:=api_write_slot(a,0,size),api_write_slot(a,1,size)
     component_start(t,start)
     if from==nil && a.run==nil {component_start_of(s,e,t,start)}
     copy(start,from)
     current:=core.raw_find(core.world_table_at(w,t),t.info,e)
     r:serial.Text_Reader
     author.reading_reader(reading,&r,text)
-    message,read:=component_value_read(w,t,current,&st.schema,st.types[api_table_index(s,t)],&r,bytes,path,reading.allocator,read_only_kept=true,from=nil if merge && current!=nil else start,handles=a.run!=nil)
+    message,read:=component_value_read(w,t,current,&st.schema,st.types[api_table_index(s,t)],&r,bytes,path,reading.allocator,read_only_kept=true,from=nil if merge && current!=nil else start,handles=a.run!=nil,scratch=a.scratch[2*(len(a.scratch)/4):])
     if !read {author.reading_fail(reading,message);return}
     if current!=nil && mem.compare(bytes,([^]u8)(current)[:size])==0 {return false,true}
     if a.run!=nil {core.raw_add(core.world_table_at(w,t),t.info,e,raw_data(bytes))} else {component_add(s,e,t,raw_data(bytes))}
@@ -208,7 +214,7 @@ api_write_target :: proc(a:^Api_Write) -> (target:author.Scene_Target,ok:bool) {
     s,call:=a.s,a.call
     st:=api_state(s)
     memory:runtime.Allocator_Error
-    if a.scratch,memory=make([]u8,2*max(st.largest,1),call.allocator);memory!=nil {api.call_fail(call,api.INTERNAL_ERROR,"the request needs more scratch memory than the server has");return}
+    if a.scratch,memory=make([]u8,4*max(st.largest,1),call.allocator);memory!=nil {api.call_fail(call,api.INTERNAL_ERROR,"the request needs more scratch memory than the server has");return}
     tables:=make([dynamic]^core.Table_Info,call.allocator)
     for &t in s.info.tables {
         if api_component_listed(s,&t,a.run!=nil) {append(&tables,&t)}
@@ -265,7 +271,7 @@ api_write_target :: proc(a:^Api_Write) -> (target:author.Scene_Target,ok:bool) {
             a:=(^Api_Write)(user)
             st:=api_state(a.s)
             size:=t.info.size
-            value,start:=a.scratch[:size],a.scratch[len(a.scratch)/2:][:size]
+            value,start:=api_write_slot(a,0,size),api_write_slot(a,1,size)
             api_value_out(a.w,t.info,core.raw_find(core.world_table_at(a.w,t),t.info,core.Entity(node)),value,a.run!=nil)
             component_start(t,start)
             if a.run==nil {component_start_of(a.s,core.Entity(node),t,start)}

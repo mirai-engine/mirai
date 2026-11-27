@@ -177,6 +177,8 @@ Peer :: struct {
     cc_acked,cc_lost:u64,               // acked and lost datagrams at its start
     delivered,cc_delivered:u64,         // bytes of datagrams acknowledged, and at the interval's start
     cc_limited:bool,                    // the connection ran out of rate in it
+    cc_outage:bool,                     // an acknowledgement came again after an outage
+    acked_time:f64,                     // when an acknowledgement last took a datagram
     rate_time:f64,
     rate_sent,rate_received:u64,
     channels:[MAX_CHANNELS]Channel,
@@ -364,7 +366,7 @@ peer_reset :: proc(h:^Host,p:^Peer,address:Address) {
     p.rate,p.starting=CC_START_RATE,true
     p.tokens,p.token_time=send_burst(h,p.rate),now
     p.min_rtt,p.window_min,p.window_time=0,0,now
-    p.cc_time,p.cc_rtt,p.cc_rtt2,p.cc_samples,p.cc_acked,p.cc_lost,p.cc_limited=now,0,0,0,0,0,false
+    p.cc_time,p.cc_rtt,p.cc_rtt2,p.cc_samples,p.cc_acked,p.cc_lost,p.cc_limited,p.cc_outage,p.acked_time=now,0,0,0,0,0,false,false,now
     p.delivered,p.cc_delivered,p.channel_turn=0,0,0
     p.rate_time,p.rate_sent,p.rate_received=now,0,0
     p.stats={}
@@ -558,7 +560,8 @@ peer_service :: proc(h:^Host,p:^Peer) {
 // finds no queue: connections that share a path converge to equal shares, and the queue stays short for
 // what else travels on it. A slow path grows by at most a quarter of its rate each interval. Losses
 // without a queue do not cut the rate, so a link that drops datagrams at random keeps it. An
-// interval that delivered next to nothing, as after an outage, starts again.
+// interval that delivered next to nothing, or that ends an outage, starts again: what its
+// acknowledgements deliver was sent before the outage, and as much as one datagram covers.
 @(private)
 congestion_update :: proc(h:^Host,p:^Peer) {
     now:=h.back.now
@@ -581,7 +584,10 @@ congestion_update :: proc(h:^Host,p:^Peer) {
     }
     queued:=n>0 && mean-spread-p.min_rtt>CC_QUEUE_DELAY+2*PACKET_BYTES/p.rate
     overrun:=acked+lost>=16 && f64(lost)>CC_OVERRUN_SHARE*f64(acked+lost)
-    if queued || overrun {
+    if p.cc_outage {
+        p.rate,p.starting,p.cc_outage=min(p.rate,CC_START_RATE),true,false
+        p.stats.send_limit_cuts+=1
+    } else if queued || overrun {
         congested:=overrun || lost>0 && f64(lost)>CC_LOSS_SHARE*f64(acked+lost)
         p.rate=clamp(min(p.rate,delivered)*(congested?0.7:0.8),CC_MIN_RATE,CC_MAX_RATE)
         // Nothing delivered is an outage, not a path that narrowed: start again.
@@ -1145,11 +1151,16 @@ peer_settle :: proc(h:^Host,p:^Peer) {
 acks_take :: proc(h:^Host,p:^Peer,ack:u16,ack_bits:^Ack_Bits,ack_count,arrival:u64,delay:f64) -> bool {
     now:=h.back.now
     in_flight:=u16(p.send_seq-p.sent_tail)
+    // No datagram taken for longer than a probe waits, while one sent before the last that was stayed
+    // in flight: the path was out (congestion_update).
+    outage:=in_flight>0 && p.sent[p.sent_tail%SENT_WINDOW].time<=p.acked_time && now-p.acked_time>probe_delay(p)
     for behind:u64=0;behind<=ack_count;behind+=1 {
         seq:=ack-u16(behind)
         if u16(p.send_seq-seq)>SENT_WINDOW {break}
         if behind>0 && !ack_bit(ack_bits,behind) || sent_flag(&p.sent_acked,seq) {continue}
         sent_mark(&p.sent_acked,seq,true)
+        if outage {p.cc_outage,outage=true,false}
+        p.acked_time=now
         if behind==arrival {
             sample:=max(now-p.sent[seq%SENT_WINDOW].time-delay,0)
             if !p.has_rtt {
@@ -1242,6 +1253,12 @@ peer_receive :: proc(h:^Host,p:^Peer,r:^serial.Bit_Reader,counter:u64) -> bool {
     return !r.error
 }
 
+// How long a connection with datagrams in flight waits for an acknowledgement before it probes.
+@(private)
+probe_delay :: proc "contextless" (p:^Peer) -> f64 {
+    return clamp(p.rtt*2+p.rtt_variance*4,0.1,1)
+}
+
 @(private)
 peer_wants_send :: proc(h:^Host,p:^Peer) -> bool {
     b:=&h.back
@@ -1254,7 +1271,7 @@ peer_wants_send :: proc(h:^Host,p:^Peer) -> bool {
         p.flush=false
     }
     if u16(p.send_seq-p.sent_tail)<RECORD_WINDOW && min(p.tokens+(b.now-p.token_time)*p.rate,send_burst(h,p.rate))>=PACKET_BYTES && channels_streaming(p) {return true}
-    return p.sent_tail!=p.send_seq && idle>=clamp(p.rtt*2+p.rtt_variance*4,0.1,1)
+    return p.sent_tail!=p.send_seq && idle>=probe_delay(p)
 }
 
 // The body of a datagram of a connection: the acknowledgement, the clock or the inputs, the channels and

@@ -121,7 +121,9 @@ water_nearest :: proc "contextless" (fluids:[]phys.Fluid_Info,at:[3]f32,count:in
         for j in i+1..<len(fluids) {
             if d:=distance(fluids[j],at);before(fluids[j],fluids[best],d,best_distance) {best,best_distance=j,d}
         }
-        fluids[i],fluids[best]=fluids[best],fluids[i]
+        nearest:=fluids[best]
+        fluids[best]=fluids[i]
+        fluids[i]=nearest
     }
     return taken
 }

@@ -368,12 +368,16 @@ component_start :: proc(t:^core.Table_Info,bytes:[]u8) {
 // hidden, transient and read-only fields. An Entity field holds the id it
 // names, which must be an entity of the scene of w; with handles, of a game
 // that plays, it holds the handle of a live entity. path names the value in
-// the messages.
-component_value_read :: proc(w:core.World_Ref,t:^core.Table_Info,current:rawptr,schema:^serial.Schema,type:serial.Type_Index,r:^serial.Text_Reader,bytes:[]u8,path:string,allocator:runtime.Allocator,read_only_kept:=false,from:[]u8=nil,handles:=false) -> (message:string,ok:bool) {
+// the messages. scratch holds the two values from with a current one and
+// read_only_kept compare against, however many values a request reads.
+component_value_read :: proc(w:core.World_Ref,t:^core.Table_Info,current:rawptr,schema:^serial.Schema,type:serial.Type_Index,r:^serial.Text_Reader,bytes:[]u8,path:string,allocator:runtime.Allocator,read_only_kept:=false,from:[]u8=nil,handles:=false,scratch:[]u8=nil) -> (message:string,ok:bool) {
+    if (read_only_kept || from!=nil && current!=nil) && len(scratch)<2*len(bytes) {
+        return fmt.aprintf("%s: no scratch to compare its value with",path,allocator=allocator),false
+    }
     if from!=nil {
         copy(bytes,from)
         if current!=nil {
-            kept:=make([]u8,len(bytes),allocator)
+            kept:=scratch[:len(bytes)]
             api_value_out(w,t.info,current,kept,handles)
             author.fields_kept(schema,type,bytes,kept)
         }
@@ -382,7 +386,8 @@ component_value_read :: proc(w:core.World_Ref,t:^core.Table_Info,current:rawptr,
     } else {
         component_start(t,bytes)
     }
-    before:=read_only_kept?slice.clone(bytes,allocator):nil
+    before:=scratch[len(bytes):][:len(bytes)] if read_only_kept else nil
+    copy(before,bytes)
     if !serial.text_read(r,schema,type,bytes) {
         line,column:=serial.text_position(r.text,r.error.offset)
         return fmt.aprintf("%s at line %d column %d",serial.text_error_message(r,path,allocator),line,column,allocator=allocator),false

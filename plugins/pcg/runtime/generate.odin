@@ -157,7 +157,8 @@ scratch_init :: proc(s:^Pcg_Scratch,allocator:=context.allocator) -> bool {
     s.points=make([dynamic]Point);s.spaced=make([dynamic]pcg_lib.Spacing_Point);s.spaced_points=make([dynamic]u32)
     s.candidates=make([dynamic]u32);s.viability=make([dynamic]f32);s.weights=make([dynamic]f32)
     s.stood=make([dynamic]Stood);s.stood_spacing=make([dynamic]pcg_lib.Spacing_Point);s.fresh=make([dynamic]Stood)
-    s.grid,s.stood_grid=pcg_lib.spacing_grid_make(),pcg_lib.spacing_grid_make()
+    s.grid=pcg_lib.spacing_grid_make()
+    s.stood_grid=pcg_lib.spacing_grid_make()
     if e0!=nil || e1!=nil || e2!=nil || s.field==nil || s.tile==nil || len(s.modules)!=GRAMMAR_PLACED_MAX {scratch_destroy(s);return false}
     return true
 }

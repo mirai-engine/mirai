@@ -125,9 +125,11 @@ skin_instance_free :: proc(renderer:^erender.Renderer,instance:^Skin_Instance) {
     delete(instance.local);delete(instance.world);delete(instance.palette);delete(instance.morph_weights)
     delete(instance.in_part);delete(instance.part_palette)
     // What its entity shows stays its own until the curves stop giving it.
-    shown,count:=instance.shown,instance.shown_count
+    shown:=instance.shown
+    count:=instance.shown_count
     instance^={}
-    instance.shown,instance.shown_count=shown,count
+    instance.shown=shown
+    instance.shown_count=count
 }
 
 // Makes the copy of the mesh of an instance that the renderer deforms.
@@ -634,7 +636,8 @@ material_curves_apply :: proc(cache:^Skin_Runtime,instance:^Skin_Instance,
         }
         if live^=={} {core.remove(lives,entity)}
     }
-    instance.shown,instance.shown_count=shown,u8(count)
+    instance.shown=shown
+    instance.shown_count=u8(count)
     if !fits {
         core.report(problems,entity,"animation.material_values","the @field/Material_Live curves of the rig of this entity give it more than %d material values, so some are not drawn; move fewer values, or fewer slots",erender.MATERIAL_VALUES_CAPACITY)
     }

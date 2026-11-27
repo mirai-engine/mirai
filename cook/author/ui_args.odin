@@ -35,12 +35,21 @@ tree_malformed :: proc(reading:^Reading,r:^serial.Text_Reader) -> bool {
     return false
 }
 
-// The keys of an object and the texts of their values.
+// The keys of an object and the texts of their values, as many as it has: a
+// document of many objects keeps no more than they say. A key without escapes
+// is a part of text.
 tree_object :: proc(reading:^Reading,text:string,what:string) -> (keys,values:[dynamic]string,ok:bool) {
-    keys,values=make([dynamic]string,reading.allocator),make([dynamic]string,reading.allocator)
     r:serial.Text_Reader
     serial.text_reader_init(&r,text,reading.allocator)
     if !serial.text_accept(&r,'{') {reading_failf(reading,"%s must be an object",what);return}
+    count:=0
+    for counter:=r;serial.text_skip(&counter) && serial.text_accept(&counter,':') && serial.text_skip(&counter);count+=1 {
+        if !serial.text_accept(&counter,',') {count+=1;break}
+    }
+    memory:runtime.Allocator_Error
+    keys,memory=make([dynamic]string,0,count,reading.allocator)
+    if memory==nil {values,memory=make([dynamic]string,0,count,reading.allocator)}
+    if memory!=nil {reading_brokef(reading,"%s could not be read: memory ran out",what);return}
     if serial.text_accept(&r,'}') {return keys,values,true}
     for {
         key,read:=serial.text_string(&r)
@@ -48,8 +57,10 @@ tree_object :: proc(reading:^Reading,text:string,what:string) -> (keys,values:[d
         serial.text_space(&r)
         start:=r.offset
         if !serial.text_skip(&r) {return keys,values,tree_malformed(reading,&r)}
-        append(&keys,strings.clone(key,reading.allocator))
-        append(&values,text[start:r.offset])
+        inside:=uintptr(raw_data(key))>=uintptr(raw_data(text)) && uintptr(raw_data(key))+uintptr(len(key))<=uintptr(raw_data(text))+uintptr(len(text))
+        if !inside {key=strings.clone(key,reading.allocator)}
+        if _,error:=append(&keys,key);error!=nil {reading_brokef(reading,"%s could not be read: memory ran out",what);return}
+        if _,error:=append(&values,text[start:r.offset]);error!=nil {reading_brokef(reading,"%s could not be read: memory ran out",what);return}
         if serial.text_accept(&r,',') {continue}
         if !serial.text_accept(&r,'}') {return keys,values,tree_malformed(reading,&r)}
         return keys,values,true

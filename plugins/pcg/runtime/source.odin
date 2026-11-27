@@ -471,6 +471,15 @@ Pcg_Issue :: struct {
     grammar:pcg_lib.Grammar_Error,
 }
 
+// An issue of kind, of the layer of that id; built field by field, as a
+// constant of more than 64 bytes returned whole is stored at once (odin-lang/Odin#7937).
+@(private)
+issue_of :: proc "contextless" (kind:Pcg_Issue_Kind,layer:=u32(0)) -> (issue:Pcg_Issue) {
+    issue.kind=kind
+    issue.layer=layer
+    return
+}
+
 @(private)
 params_valid :: proc "contextless" (s:^Pcg_Source,l:Pcg_Layer_Params,index:int) -> bool {
     values:=[?]f32{l.density,l.radius,l.scale[0],l.scale[1],l.height[0],l.height[1],l.yaw,l.tilt,l.align,l.cull_distance,l.fade_distance,l.impostor_distance}
@@ -500,49 +509,53 @@ params_valid :: proc "contextless" (s:^Pcg_Source,l:Pcg_Layer_Params,index:int) 
 @(private)
 source_shape_issue :: proc(s:^Pcg_Source) -> Pcg_Issue {
     i:=s.info
-    if !finite(i.cell_size) || i.cell_size<CELL_SIZE_MIN || i.cell_size>CELL_SIZE_MAX || i.next_layer==0 || i.next_point==0 || i.next_point>=AUTHORED_POINT_BIT || i.ecotopes>ECOTOPES_MAX {return {kind=.Info}}
-    if len(s.layers)>LAYERS_MAX || len(s.cells)>CELLS_MAX {return {kind=.Info}}
+    if !finite(i.cell_size) || i.cell_size<CELL_SIZE_MIN || i.cell_size>CELL_SIZE_MAX || i.next_layer==0 || i.next_point==0 || i.next_point>=AUTHORED_POINT_BIT || i.ecotopes>ECOTOPES_MAX {return issue_of(.Info)}
+    if len(s.layers)>LAYERS_MAX || len(s.cells)>CELLS_MAX {return issue_of(.Info)}
     for &l,k in s.layers {
-        if !params_valid(s,l.params,k) || len(l.field_expr)>TEXT_MAX || len(l.grammar_expr)>TEXT_MAX || len(l.grammar_symbols)>SYMBOLS_MAX {return {kind=.Layer,layer=l.id}}
-        for other in s.layers[:k] {if other.id==l.id {return {kind=.Layer,layer=l.id}}}
+        if !params_valid(s,l.params,k) || len(l.field_expr)>TEXT_MAX || len(l.grammar_expr)>TEXT_MAX || len(l.grammar_symbols)>SYMBOLS_MAX {return issue_of(.Layer,l.id)}
+        for other in s.layers[:k] {if other.id==l.id {return issue_of(.Layer,l.id)}}
         if l.kind==.Scatter && l.dither_group!=0 {
             members:=0
             for other in s.layers {members+=int(other.kind==.Scatter && other.tier==l.tier && other.dither_group==l.dither_group)}
-            if members>DITHER_MEMBERS_MAX {return {kind=.Layer,layer=l.id}}
+            if members>DITHER_MEMBERS_MAX {return issue_of(.Layer,l.id)}
         }
-        if l.kind!=.Grammar && (len(l.grammar_expr)>0 || len(l.grammar_symbols)>0) {return {kind=.Layer,layer=l.id}}
-        if l.kind==.Grammar && (len(l.grammar_expr)==0 || len(l.grammar_symbols)==0) {return {kind=.Grammar,layer=l.id,grammar={kind=.Unexpected_End,symbol=-1}}}
+        if l.kind!=.Grammar && (len(l.grammar_expr)>0 || len(l.grammar_symbols)>0) {return issue_of(.Layer,l.id)}
+        if l.kind==.Grammar && (len(l.grammar_expr)==0 || len(l.grammar_symbols)==0) {
+            issue:=issue_of(.Grammar,l.id)
+            issue.grammar={kind=.Unexpected_End,symbol=-1}
+            return issue
+        }
         for &def in l.grammar_symbols {
-            if len(serial.text_field(def.name[:]))>=len(def.name) {return {kind=.Layer,layer=l.id}}
+            if len(serial.text_field(def.name[:]))>=len(def.name) {return issue_of(.Layer,l.id)}
         }
     }
     side:=PAINT_SAMPLES*PAINT_SAMPLES
     total_points:=0
     for &cell,k in s.cells {
-        if abs(cell.coord.x)>COORD_MAX || abs(cell.coord.y)>COORD_MAX {return {kind=.Cell}}
-        if k>0 && !coord_before(s.cells[k-1].coord,cell.coord) {return {kind=.Cell}}
-        if len(cell.density)!=0 && len(cell.density)!=side {return {kind=.Cell}}
-        if len(cell.ecotopes)!=0 && len(cell.ecotopes)!=int(i.ecotopes)*side {return {kind=.Cell}}
-        if len(cell.points)>POINTS_CELL_MAX {return {kind=.Cell}}
+        if abs(cell.coord.x)>COORD_MAX || abs(cell.coord.y)>COORD_MAX {return issue_of(.Cell)}
+        if k>0 && !coord_before(s.cells[k-1].coord,cell.coord) {return issue_of(.Cell)}
+        if len(cell.density)!=0 && len(cell.density)!=side {return issue_of(.Cell)}
+        if len(cell.ecotopes)!=0 && len(cell.ecotopes)!=int(i.ecotopes)*side {return issue_of(.Cell)}
+        if len(cell.points)>POINTS_CELL_MAX {return issue_of(.Cell)}
         total_points+=len(cell.points)
-        if total_points>POINTS_MAX {return {kind=.Cell}}
+        if total_points>POINTS_MAX {return issue_of(.Cell)}
         for pt in cell.points {
-            if pt.point==0 || pt.point>=i.next_point || !source_point_valid(s,pt.layer,pt.position,pt.rotation,pt.scale) {return {kind=.Cell,layer=pt.layer}}
+            if pt.point==0 || pt.point>=i.next_point || !source_point_valid(s,pt.layer,pt.position,pt.rotation,pt.scale) {return issue_of(.Cell,pt.layer)}
             q:=[4]f32{pt.rotation.x,pt.rotation.y,pt.rotation.z,pt.rotation.w}
-            if abs(linalg.dot(q,q)-1)>1e-3 {return {kind=.Cell,layer=pt.layer}}
+            if abs(linalg.dot(q,q)-1)>1e-3 {return issue_of(.Cell,pt.layer)}
             expected,_:=cell_of(i.cell_size,pt.position.xz)
-            if expected!=cell.coord {return {kind=.Cell,layer=pt.layer}}
+            if expected!=cell.coord {return issue_of(.Cell,pt.layer)}
         }
     }
     if total_points>1 {
         ids,err:=make([]u32,total_points,context.temp_allocator)
-        if err!=nil {return {kind=.Memory}}
+        if err!=nil {return issue_of(.Memory)}
         n:=0
         for &cell in s.cells {for pt in cell.points {ids[n]=pt.point;n+=1}}
         slice.sort(ids)
-        for k in 1..<len(ids) {if ids[k]==ids[k-1] {return {kind=.Cell}}}
+        for k in 1..<len(ids) {if ids[k]==ids[k-1] {return issue_of(.Cell)}}
     }
-    return {}
+    return issue_of(.None)
 }
 
 // The programs of the texts of each layer, in s.compiled; on an issue none
@@ -550,7 +563,7 @@ source_shape_issue :: proc(s:^Pcg_Source) -> Pcg_Issue {
 source_compile :: proc(s:^Pcg_Source) -> Pcg_Issue {
     source_compiled_free(s)
     if issue:=source_shape_issue(s);issue.kind!=.None {return issue}
-    if resize(&s.compiled,len(s.layers))!=nil {return {kind=.Memory}}
+    if resize(&s.compiled,len(s.layers))!=nil {return issue_of(.Memory)}
     for &c in s.compiled {c={}}
     symbols:[SYMBOLS_MAX]pcg_lib.Grammar_Symbol
     for &l,k in s.layers {
@@ -559,7 +572,9 @@ source_compile :: proc(s:^Pcg_Source) -> Pcg_Issue {
             program,err:=pcg_lib.field_compile(l.field_expr,s.allocator)
             if err.kind!=.None {
                 source_compiled_free(s)
-                return {kind=Pcg_Issue_Kind.Memory if err.kind==.Out_Of_Memory else .Field,layer=l.id,field=err}
+                issue:=issue_of(.Memory if err.kind==.Out_Of_Memory else .Field,l.id)
+                issue.field=err
+                return issue
             }
             c.field,c.has_field=program,true
             for instr in program.code {
@@ -571,16 +586,19 @@ source_compile :: proc(s:^Pcg_Source) -> Pcg_Issue {
             program,err:=pcg_lib.grammar_compile(l.grammar_expr,symbols[:len(l.grammar_symbols)],s.allocator)
             if err.kind!=.None {
                 source_compiled_free(s)
-                return {kind=Pcg_Issue_Kind.Memory if err.kind==.Out_Of_Memory else .Grammar,layer=l.id,grammar=err}
+                issue:=issue_of(.Memory if err.kind==.Out_Of_Memory else .Grammar,l.id)
+                issue.grammar=err
+                return issue
             }
-            c.grammar,c.has_grammar=program,true
+            c.grammar=program
+            c.has_grammar=true
         }
     }
     if !source_units(s) {
         source_compiled_free(s)
-        return {kind=.Memory}
+        return issue_of(.Memory)
     }
-    return {}
+    return issue_of(.None)
 }
 
 // Why a source cannot be saved and shown; kind None when it can. Its texts
@@ -823,10 +841,10 @@ data_stamp :: proc(a:^host.Assets,id:base.Asset_Id) -> Pcg_File_Stamp {
 // Reads a source as the registry of the assets holds it.
 data_read :: proc(s:^Pcg_Source,a:^host.Assets,id:base.Asset_Id,allocator:=context.allocator) -> Pcg_Issue {
     file:asset.Asset
-    if host.assets_file(a,id,PCG_KIND,&file)!=.None {return {kind=.Unread}}
+    if host.assets_file(a,id,PCG_KIND,&file)!=.None {return issue_of(.Unread)}
     defer asset.asset_close(&file)
     read,issue:=source_read(s,&file,&a.types,allocator)
-    if issue.kind==.None && read!=id {return {kind=.Unread}}
+    if issue.kind==.None && read!=id {return issue_of(.Unread)}
     return issue
 }
 

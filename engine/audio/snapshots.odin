@@ -166,10 +166,12 @@ mix_blend_step :: proc(b:^Mix_Blend,settings:^Audio_Settings,snapshot:int,second
         return true
     }
     if snapshot!=b.snapshot {
-        b.from,b.t=b.now,0
+        b.from=b.now
+        b.t=0
         b.seconds=seconds if seconds>=0 && seconds<=max(f32) else 0
     } else if medium!=b.medium {
-        b.from,b.t,b.seconds=b.now,0,REVERB_FADE
+        b.from=b.now
+        b.t,b.seconds=0,REVERB_FADE
     }
     b.snapshot,b.medium=snapshot,medium
     if b.t<1 {b.t=min(b.t+max(dt,0)/b.seconds,1) if b.seconds>0 else 1}

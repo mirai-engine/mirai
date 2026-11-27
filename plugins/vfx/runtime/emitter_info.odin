@@ -56,7 +56,8 @@ emitter_info_intern :: proc(cache:^map[u64]^Emitter_Info,value:^Emitter_Info) ->
 @(private)
 emitter_info_own :: proc(held:^Emitter_Info,value:^Emitter_Info) -> ^Emitter_Info {
     if held!=nil && held.owned {
-        held.info,held.program=value.info,value.program
+        held.info=value.info
+        held.program=value.program
         emitter_info_keep(held)
         return held
     }

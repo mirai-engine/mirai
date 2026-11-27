@@ -697,7 +697,10 @@ content_sound_pick :: proc(app:^App,id:base.Asset_Id) -> (pick:Sound_Pick) {
     }
     if info.no_repeat && others && set.last>=0 {weights[set.last]=0}
     for weight in weights {total+=weight}
-    if total<=0 {return {}}
+    if total<=0 {
+        pick={}
+        return
+    }
     at:=mm.random_f32(&c.rng)*total
     chosen:=-1
     for weight,i in weights {

@@ -207,9 +207,18 @@ Scene_Entity :: struct {
 scene_entities_read :: proc(reading:^Reading,text:string,parent:int,path:string,out:^[dynamic]Scene_Entity) -> bool {
     items,listed:=doc_items(reading,text,path,"entities")
     if !listed {return false}
+    // Room for the entities of this list at once: a large document does not leave behind the copies
+    // of a list that grows one entity at a time.
+    if len(out)+len(items)>cap(out) && reserve(out,max(len(out)+len(items),2*cap(out)))!=nil {
+        reading_brokef(reading,"%s could not be read: memory ran out",path)
+        return false
+    }
     for item,at in items {
         index:=len(out)
-        append(out,Scene_Entity{path=fmt.aprintf("%s[%d]",path,at,allocator=reading.allocator),parent=parent,recipe={local=core.TRANSFORM_IDENTITY}})
+        if _,memory:=append(out,Scene_Entity{path=fmt.aprintf("%s[%d]",path,at,allocator=reading.allocator),parent=parent,recipe={local=core.TRANSFORM_IDENTITY}});memory!=nil {
+            reading_brokef(reading,"%s could not be read: memory ran out",path)
+            return false
+        }
         keys,values:=tree_object(reading,item,out[index].path) or_return
         vector :: proc(reading:^Reading,text,what:string,value:[]f32) -> bool {
             items:=doc_items(reading,text,what,fmt.tprintf("%d numbers",len(value))) or_return
