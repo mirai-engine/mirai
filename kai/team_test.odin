@@ -923,3 +923,119 @@ an_agent_reaches_online_when_the_router_maps_its_port :: proc(t:^testing.T) {
     other:Agent
     testing.expect_value(t,agent_start(&other,&m.team,bad),Error.Invalid_Argument)
 }
+
+// A peer joined over TCP with no beacons remembers the inviter's dialed
+// address, and the inviter remembers a listening joiner's address: when the
+// inviter restarts on the same port and publishes a new change, the joiner
+// reconnects automatically and pulls it whole.
+@(test)
+a_joined_peer_reconnects_after_the_inviter_restarts :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-reconnect")
+    if folder=="" {return}
+    mac,pc,box:Machine
+    if !machine_open(t,&mac,folder,"Ana") || !machine_open(t,&pc,folder,"Ben") || !machine_open(t,&box,folder,"Cal") {return}
+    defer machine_close(&mac)
+    defer machine_close(&pc)
+    defer machine_close(&box)
+    org,_:=vcs_org(t,&mac)
+    if !machine_start(t,&mac,0) || !machine_start(t,&pc,-1) || !machine_start(t,&box,0) {return}
+    mac_port:=agent_port(&mac.agent)
+    mac_addr:=fmt.tprintf("127.0.0.1:%d",mac_port)
+    box_addr:=fmt.tprintf("127.0.0.1:%d",agent_port(&box.agent))
+
+    inv_pc,_:=team_invite(&mac.team,org,.Writer,"",{mac_addr},context.temp_allocator)
+    if _,je:=agent_join(&pc.agent,inv_pc);!testing.expectf(t,je==.None,"pc joins: %v %s",je,pc.agent.team.why) {return}
+    testing.expect(t,slice.contains(team_peer_addresses(&pc.team,mac.team.identity.key),mac_addr),"joiner saves the inviter's dialed address")
+
+    inv_box,_:=team_invite(&mac.team,org,.Writer,"",{mac_addr},context.temp_allocator)
+    if _,je:=agent_join(&box.agent,inv_box);!testing.expectf(t,je==.None,"box joins: %v %s",je,box.agent.team.why) {return}
+    testing.expect(t,slice.contains(team_peer_addresses(&mac.team,box.team.identity.key),box_addr),"inviter saves a listening joiner's address")
+    agent_stop(&box.agent)
+    box.running=false
+
+    repo:=random_id(Repo_Id)
+    team_repo_set(&mac.team,org,{id=repo,name="game"})
+    v1:=change_of(t,&mac.s,&mac.team.identity,{{"a.txt","v1\n"}})
+    team_publish(&mac.team,org,repo,{{"main",v1}})
+    agent_changed(&mac.agent)
+    team_link(&pc.team,{local=random_id(Repo_Id),org=org,repo=repo})
+    agent_changed(&pc.agent)
+
+    State :: struct {s:^store.Store,a:^Agent,rev:Revision}
+    st:=State{&pc.s,&pc.agent,v1}
+    if !testing.expect(t,until(15,&st,proc(data:rawptr) -> bool {
+        x:=(^State)(data)
+        missing:=make([dynamic]store.Hash,context.temp_allocator)
+        closure_walk(x.s,{x.rev},nil,&missing)
+        return len(missing)==0 && object_kind(x.s,x.rev)==.Change
+    }),"pc pulls v1 before restart") {return}
+
+    // Inviter stops completely; wait until pc drops the connection.
+    agent_stop(&mac.agent)
+    mac.running=false
+    if !testing.expect(t,until(5,&st,proc(data:rawptr) -> bool {
+        x:=(^State)(data)
+        peers:=make([dynamic]Peer_Info,context.temp_allocator)
+        agent_peers(x.a,&peers,context.temp_allocator)
+        return len(peers)==0
+    }),"pc notices the inviter stopped") {return}
+
+    // Inviter restarts on the same port and publishes v2; pc reconnects on its own.
+    if !machine_start(t,&mac,mac_port) {return}
+    v2:=change_of(t,&mac.s,&mac.team.identity,{{"a.txt","v2 after restart\n"}})
+    team_publish(&mac.team,org,repo,{{"main",v2}})
+    agent_changed(&mac.agent)
+    st.rev=v2
+    testing.expect(t,until(25,&st,proc(data:rawptr) -> bool {
+        x:=(^State)(data)
+        missing:=make([dynamic]store.Hash,context.temp_allocator)
+        closure_walk(x.s,{x.rev},nil,&missing)
+        return len(missing)==0 && object_kind(x.s,x.rev)==.Change
+    }),"pc reconnects after inviter restart and pulls v2 whole")
+}
+
+// Offline invite records (Invite_Grant, Invite_Claim, Admission) refuse
+// hostile bytes, and org_signs enforces monotonic revoke_epoch for admins and
+// immutable revoke_epoch for writers.
+@(test)
+offline_invite_records_enforce_signatures_and_revoke_epoch :: proc(t:^testing.T) {
+    ana,cal,ben:=identity_make(),identity_make(),identity_make()
+    members:=[]Member{{ana.key,.Admin,"Ana","Mac",""},{cal.key,.Writer,"Cal","PC",""}}
+    slice.sort_by(members,proc(a,b:Member) -> bool {return key_less(a.key,b.key)})
+    org:=random_id(Org_Id)
+    base_org:=Org{id=org,version=1,revoke_epoch=2,name="studio",members=members}
+    base_bytes:=org_encode_signed(t,&base_org,&ana)
+    base_rec,_:=org_decode(base_bytes,context.temp_allocator)
+    dummy_prev:=store.address_of_bytes(base_bytes)
+
+    Epoch_Case :: struct {name:string,by:^Identity,epoch:u64,ok:bool}
+    for c in ([]Epoch_Case{
+        {"admin keeps revoke_epoch",&ana,2,true},
+        {"admin bumps revoke_epoch",&ana,3,true},
+        {"admin lowers revoke_epoch",&ana,1,false},
+        {"writer keeps revoke_epoch",&cal,2,true},
+        {"writer bumps revoke_epoch",&cal,3,false},
+    }) {
+        next:=base_rec
+        next.version,next.prev,next.revoke_epoch=2,dummy_prev,c.epoch
+        b:=org_encode_signed(t,&next,c.by)
+        dec,de:=org_decode(b,context.temp_allocator)
+        testing.expect_value(t,de,Error.None)
+        testing.expectf(t,org_signs(&base_rec,&dec)==c.ok,"%s: expected %v",c.name,c.ok)
+    }
+
+    secret:[32]u8
+    crypto.rand_bytes(secret[:])
+    grant:=Invite_Grant{org=org,secret_hash=secret_digest(secret),role=.Writer,revoke_epoch=2,expires=time.now()._nsec+i64(time.Hour),signer=ana.key,name="Ben"}
+    gb,ge:=invite_grant_encode(&grant,&ana,context.temp_allocator)
+    testing.expect_value(t,ge,Error.None)
+    claim:=Invite_Claim{org=org,secret=secret,key=ben.key,name="Ben",device="laptop"}
+    cb,ce:=invite_claim_encode(&claim,&ben,context.temp_allocator)
+    testing.expect_value(t,ce,Error.None)
+    ab,ae:=admission_encode(gb,cb,context.temp_allocator)
+    testing.expect_value(t,ae,Error.None)
+
+    expect_refused(t,gb,proc(b:[]u8) -> Error {_,e:=invite_grant_decode(b);return e},"invite grant")
+    expect_refused(t,cb,proc(b:[]u8) -> Error {_,e:=invite_claim_decode(b);return e},"invite claim")
+    expect_refused(t,ab,proc(b:[]u8) -> Error {_,e:=admission_decode(b);return e},"offline admission")
+}

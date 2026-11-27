@@ -24,8 +24,9 @@ import "mirai:store"
 // that device's role in each org lets it see; the pages are made on the
 // server, with no script.
 
-SERVE_USAGE :: "kai serve [--root <folder>] [--port N] [--http host:port] [--public host:port] [--join <invite>]... [--name <name>] [--ddc-quota <bytes>]"
+SERVE_USAGE :: "kai serve [--root <folder>] [--port N] [--http host:port] [--public host:port] [--join <invite>]... [--name <name>] [--ddc-quota <bytes>] [--max-orgs N]"
 HTTP_DEFAULT :: "127.0.0.1:7351"
+MAX_ORGS_DEFAULT :: 64
 CONNECTIONS_MAX :: 256
 REQUEST_SECONDS :: 30  // to receive one request whole, the wait before it included
 SEND_SECONDS :: 30     // of one send to a client
@@ -60,10 +61,12 @@ Client :: struct {
 
 Hub_Options :: struct {
     root:string,
-    port:int,       // the agent's TCP port; 0: kai.KAI_PORT
+    host:string,    // IPv4 to bind the agent to; "" for every interface
+    port:int,       // the agent's TCP port; 0: kai.KAI_PORT (ephemeral on loopback)
     http:string,    // host:port of the web view
     public:string,  // host:port where members reach the agent
     name:string,    // the server's device name
+    max_orgs:int,   // orgs self-registered by admins; 0 defaults to MAX_ORGS_DEFAULT, <0 disables
 }
 
 // Opens the server's stores and starts its agent and its web view.
@@ -85,7 +88,8 @@ hub_start :: proc(h:^Hub,options:Hub_Options,allocator:=context.allocator) -> (w
     h.team.tenants=&h.tenants
     name:=options.name!=""?options.name:"server"
     if h.team.name!=name {kai.team_profile_set(&h.team,name,name)}
-    agent_options:=kai.Agent_Options{port=options.port,node=true,public=options.public,web_login=account_set,web_data=h}
+    max_orgs:=options.max_orgs==0?MAX_ORGS_DEFAULT:max(options.max_orgs,0)
+    agent_options:=kai.Agent_Options{host=options.host,port=options.port,node=true,public=options.public,max_orgs=max_orgs,web_login=account_set,web_data=h}
     if ae:=kai.agent_start(&h.agent,&h.team,agent_options,allocator);ae!=.None {
         hub_free(h)
         return h.team.why,false
@@ -117,11 +121,12 @@ hub_start :: proc(h:^Hub,options:Hub_Options,allocator:=context.allocator) -> (w
 
 // Stops the web view and the agent and closes the stores.
 hub_stop :: proc(h:^Hub) {
-    // A client between requests waits in a receive: shut its socket so it ends
-    // now. Its thread frees the slot under the lock before it closes the
-    // socket, so no socket number here is another's.
+    // A client between requests waits in a receive: shut its socket and set
+    // stopping so it ends immediately on every OS (including Winsock). Its
+    // thread frees the slot under the lock before it closes the socket, so no
+    // socket number here is another's.
     sync.mutex_lock(&h.lock)
-    h.stopping=true
+    sync.atomic_store(&h.stopping,true)
     for c in h.clients {
         if c.open {net.shutdown(c.socket,.Both)}
     }
@@ -241,12 +246,16 @@ hub_connection :: proc(h:^Hub,socket:net.TCP_Socket) {
                 continued=true
                 if !send_all(socket,transmute([]u8)string("HTTP/1.1 100 Continue\r\n\r\n")) {return}
             }
+            if sync.atomic_load(&h.stopping) {return}
             // One deadline for the whole request, not one per receive, so a
             // client sending a byte now and then does not hold the thread.
+            // Slice SO_RCVTIMEO so hub_stop wakes idle clients immediately on
+            // Windows Winsock, where shutdown alone does not abort recv.
             left:=REQUEST_SECONDS*time.Second-time.tick_since(started)
             if left<time.Millisecond {return} // a zero timeout would wait forever
-            net.set_option(socket,.Receive_Timeout,left)
+            net.set_option(socket,.Receive_Timeout,min(left,50*time.Millisecond))
             n,e:=net.recv_tcp(socket,input[have:])
+            if e==net.TCP_Recv_Error.Timeout || e==net.TCP_Recv_Error.Would_Block {continue}
             if e!=nil || n<=0 {return}
             have+=n
         }
@@ -316,6 +325,13 @@ serve_command :: proc(program:string,args:[]string,store_root:="") -> int {
         case "--join": append(&joins,value)
         case "--name": options.name=value
         case "--ddc-quota": quota,_=strconv.parse_i64(value)
+        case "--max-orgs":
+            parsed,ok:=strconv.parse_int(value)
+            if !ok || parsed<0 {
+                fmt.eprintfln("Usage: %s %s",program,SERVE_USAGE)
+                return 2
+            }
+            options.max_orgs=parsed==0?-1:parsed
         case:
             fmt.eprintfln("Usage: %s %s",program,SERVE_USAGE)
             return 2

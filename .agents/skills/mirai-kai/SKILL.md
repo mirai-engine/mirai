@@ -100,9 +100,10 @@ read a server's repositories, from a browser.
 
 1. `mirai build kai --target linux_arm64`, copy `bin/mirai-kai-linux-arm64` to the machine and
    follow [deployment](references/server.md#deployment).
-2. On a member's machine `mirai kai invite <org> --role node`; on the server `mirai-kai serve
-   --join <invite> --public <host:port>`. It keeps every repository of the org whole and the
-   derived data its writers publish.
+2. Org admins attach from the editor automatically on new orgs (or with Sync to server, bounded by
+   `--max-orgs`, default 64); manual `--join` also works (`mirai kai invite <org> --role node`,
+   then `mirai-kai serve --join <invite> --public <host:port>`). It keeps every repository of the
+   org whole, redeems offline 1-use invites and mirrors derived data.
 3. Each member that wants the web view sets its sign-in from its device: `mirai kai web-login
    <server host:port> <name>` (the password from `KAI_PASSWORD` or the terminal).
 
@@ -169,14 +170,20 @@ read a server's repositories, from a browser.
   in `cook/kai`.
 - Org and sync: `noise_pq_handshake_proves_both_keys_and_refuses_tampering`,
   `org_records_hold_only_when_signed_by_who_may`,
+  `offline_invite_records_enforce_signatures_and_revoke_epoch`,
   `a_closure_is_whole_only_when_every_chunk_is_here`,
-  `two_machines_pair_by_invite_and_sync_over_tcp` and `a_pull_over_loopback_runs_at_tcp_speed`
+  `two_machines_pair_by_invite_and_sync_over_tcp`,
+  `a_joined_peer_reconnects_after_the_inviter_restarts` and
+  `a_pull_over_loopback_runs_at_tcp_speed`
   (prints seconds and MB/s; `KAI_BENCH_MB` sets the megabytes, 16 by default) in `kai`;
   `a_project_publishes_to_main_and_a_paired_machine_pulls_it` in `cook/kai`;
   `a_cook_takes_derived_data_a_peer_built` in `cook/import/sources`;
   `port_mapping_pcp_and_natpmp_codecs_reject_mismatched_or_truncated_replies` in `net` for TCP
   mappings.
-- Server: `a_server_keeps_an_org_and_its_web_view_shows_what_each_one_may_see` and
+- Server: `a_server_keeps_an_org_and_its_web_view_shows_what_each_one_may_see`,
+  `a_server_registers_an_org_and_admits_offline_invites`,
+  `forged_replayed_or_revoked_offline_admissions_are_refused`,
+  `the_web_view_answers_100_continue_and_stops_with_idle_clients` and
   `hub_http_refuses_hostile_requests` in `kai/hub`.
 - Editor: [its focal tests](../mirai-editor/references/kai.md#verification).
 - Documentation: `uv run scripts/check_docs.py`.

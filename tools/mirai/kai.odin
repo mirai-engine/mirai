@@ -302,8 +302,11 @@ kai_team :: proc(verb:string,t:^vcs.Team,a:^Kai_Args) -> int {
         org,ok:=org_find(t,positionals[0])
         if !ok {return 1}
         if a.revoke {
-            cleared,e:=vcs.team_invites_clear(t,org)
-            if e!=.None {return kai_why(verb,t)}
+            agent:vcs.Agent
+            if vcs.agent_start(&agent,t,{port=-1})!=.None {return kai_why(verb,t)}
+            defer vcs.agent_stop(&agent)
+            cleared,e:=vcs.agent_invites_revoke(&agent,org)
+            if e!=.None {return kai_why(verb,&agent.team)}
             fmt.printfln("%d open invites of the org admit nobody now",cleared)
             return 0
         }
@@ -323,10 +326,29 @@ kai_team :: proc(verb:string,t:^vcs.Team,a:^Kai_Args) -> int {
             }
         }
         name:=a.mine?t.name:""
-        text,e:=vcs.team_invite(t,org,role,name,addresses[:],context.temp_allocator)
-        if e!=.None {return kai_why(verb,t)}
+        text:string
+        via_server:=false
+        e:vcs.Error
+        if a.at=="" {
+            agent:vcs.Agent
+            if vcs.agent_start(&agent,t,{port=-1})==.None {
+                defer vcs.agent_stop(&agent)
+                text,via_server,e=vcs.agent_invite(&agent,org,role,name,addresses[:],context.temp_allocator)
+                if e!=.None {return kai_why(verb,&agent.team)}
+            } else {
+                text,e=vcs.team_invite(t,org,role,name,addresses[:],context.temp_allocator)
+                if e!=.None {return kai_why(verb,t)}
+            }
+        } else {
+            text,e=vcs.team_invite(t,org,role,name,addresses[:],context.temp_allocator)
+            if e!=.None {return kai_why(verb,t)}
+        }
         fmt.println(text)
-        fmt.eprintfln("One device joins with it, within %d hours, while this machine's agent runs (the editor, or mirai kai agent), at %s. A machine outside this LAN needs a host:port the router forwards: --at.",vcs.INVITE_HOURS,strings.join(addresses[:],", ",context.temp_allocator))
+        if via_server {
+            fmt.eprintfln("One device joins with it, within %d hours, through the org's server even while this machine is off.",vcs.INVITE_HOURS)
+        } else {
+            fmt.eprintfln("One device joins with it, within %d hours, while this machine's agent runs (the editor, or mirai kai agent), at %s. A machine outside this LAN needs a host:port the router forwards: --at.",vcs.INVITE_HOURS,strings.join(addresses[:],", ",context.temp_allocator))
+        }
     case "join":
         agent:vcs.Agent
         if vcs.agent_start(&agent,t,{port=-1})!=.None {return kai_why(verb,t)}

@@ -271,9 +271,9 @@ workspace_repo_of :: proc(root:string) -> (repo:Repo_Id,ok:bool) {
 }
 
 // What the workspace at root is on, read without its lock, a snapshot or a
-// hash: the working change of the last operation it wrote, and a bookmark that
-// points at it. False when root holds no workspace of a repository of s.
-workspace_working_of :: proc(s:^store.Store,root:string) -> (change:Change_Id,bookmark:string,ok:bool) {
+// hash: its repo, working revision, working change id, and any bookmark at it.
+// False when root holds no workspace of a repository of s.
+workspace_working_info :: proc(s:^store.Store,root:string) -> (repo:Repo_Id,working:Revision,change:Change_Id,bookmark:string,ok:bool) {
     head:=state_head_of(root) or_return
     names:=Repo{id=head.repo,workspace=head.id}
     repo_names(&names)
@@ -284,7 +284,7 @@ workspace_working_of :: proc(s:^store.Store,root:string) -> (change:Change_Id,bo
     v:View
     view_init(&v,context.temp_allocator)
     if view_get(s,o.view,&v)!=.None {return}
-    working:=view_workspace(&v,head.id)
+    working=view_workspace(&v,head.id)
     if working=={} {return}
     c,f:=change_get(s,working,context.temp_allocator)
     if f!=.None {return}
@@ -294,7 +294,15 @@ workspace_working_of :: proc(s:^store.Store,root:string) -> (change:Change_Id,bo
             break
         }
     }
-    return c.id,bookmark,true
+    return head.repo,working,c.id,bookmark,true
+}
+
+// What the workspace at root is on, read without its lock, a snapshot or a
+// hash: the working change of the last operation it wrote, and a bookmark that
+// points at it. False when root holds no workspace of a repository of s.
+workspace_working_of :: proc(s:^store.Store,root:string) -> (change:Change_Id,bookmark:string,ok:bool) {
+    _,_,change,bookmark,ok=workspace_working_info(s,root)
+    return
 }
 
 // The head of the state of the workspace at root, read without its lock.

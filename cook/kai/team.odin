@@ -291,7 +291,8 @@ Org_View :: struct {
     id:vcs.Org_Id,
     name:string,
     version:u64,
-    role:string, // this machine's
+    role:string,   // this machine's
+    server:string, // attached server host:port, "" when none
     members:[]Member_View,
     repos:[]Repo_View,
 }
@@ -303,6 +304,7 @@ org_view :: proc(t:^vcs.Team,id:vcs.Org_Id,v:^Org_View,allocator:=context.temp_a
     v^={id=id,version=o.version}
     v.name=clone(o.name,allocator) or_return
     if role,ok:=vcs.org_role(&o,t.identity.key);ok {v.role=role_text(role)}
+    if _,addr,has:=vcs.org_server(&o);has {v.server=clone(addr,allocator) or_return}
     members,me:=make([]Member_View,len(o.members),allocator)
     repos,re:=make([]Repo_View,len(o.repos),allocator)
     if me!=nil || re!=nil {return .Out_Of_Memory}
@@ -332,6 +334,66 @@ org_view :: proc(t:^vcs.Team,id:vcs.Org_Id,v:^Org_View,allocator:=context.temp_a
         for l in links {x.linked||=l.org==id && l.repo==r.id}
     }
     return .None
+}
+
+// What a project list row shows of a local Kai workspace's org link and
+// publish state, read without taking the workspace lock or hashing files.
+Project_Sync_State :: struct {
+    kai:string,
+    linked:bool,
+    needs_publish:bool,
+    can_publish:bool,
+}
+
+project_sync_state :: proc(s:^store.Store,t:^vcs.Team,root:string,allocator:=context.temp_allocator) -> (state:Project_Sync_State) {
+    if s==nil || s.root=="" {return}
+    repo,working,change_id,bookmark,ok:=vcs.workspace_working_info(s,root)
+    if !ok {return}
+    state.kai=bookmark!=""?strings.clone(bookmark,allocator):change_text(change_id,allocator)
+    if t==nil {return}
+    l,linked:=vcs.team_link_of(t,repo)
+    if !linked {return}
+    state.linked=true
+    if o,_,oe:=vcs.team_org(t,l.org);oe==.None {
+        if role,member:=vcs.org_role(&o,t.identity.key);member && role>=.Writer {state.can_publish=true}
+    }
+    c,ce:=vcs.change_get(s,working,context.temp_allocator)
+    if ce!=.None {return}
+    main_target:vcs.Revision
+    has_main:=false
+    if org_s,se:=vcs.team_store(t,l.org);se==.None {
+        if refs,_,re:=vcs.repo_refs_head(org_s,l.org,l.repo,context.temp_allocator);re==.None {
+            for b in refs.bookmarks {
+                if b.name==BOOKMARK_DEFAULT {
+                    main_target,has_main=b.target,true
+                    break
+                }
+            }
+        }
+    }
+    if c.description!="" || len(c.parents)!=1 || !has_main || c.parents[0]!=main_target {
+        state.needs_publish=true
+        return
+    }
+    if parent,pe:=vcs.change_get(s,c.parents[0],context.temp_allocator);pe==.None && c.tree!=parent.tree {
+        state.needs_publish=true
+    }
+    return
+}
+
+// Opens the workspace at root, snapshots and publishes to main, then closes it:
+// used from the Launcher so a project can be published without opening the 3D editor.
+project_publish_folder :: proc(s:^store.Store,t:^vcs.Team,root:string,types:^asset.Types=nil,allocator:=context.temp_allocator) -> (change:string,error:vcs.Error) {
+    p:=new(Project,context.temp_allocator)
+    if p==nil {return "",.Out_Of_Memory}
+    if e:=project_open(p,root,s,types);e!=.None {
+        if e==.Locked {t.why="another editor holds this project: publish from that editor"}
+        return "",e
+    }
+    defer project_close(p)
+    revision:=publish(p,t,BOOKMARK_DEFAULT,"",nil) or_return
+    c:=vcs.change_get(s,revision,context.temp_allocator) or_return
+    return change_text(c.id,allocator),.None
 }
 
 @(private)

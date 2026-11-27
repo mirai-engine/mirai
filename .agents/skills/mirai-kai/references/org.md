@@ -24,17 +24,18 @@ Who a machine is, what an org records and how a machine joins one (`kai/team.odi
 ## The org record
 
 - An org is one `Org` record: its id, name, version, the address of the version before (`prev`),
-  the signer, members sorted by key and repositories sorted by id. A member is a device key, a
-  role, the person's and the device's names and an optional address (`host:port` where every
-  member reaches it: a server's). A repository is an id, a name and whether it is public. A name
-  is 1 to 64 bytes of UTF-8 without control characters (`name_valid`); a repository's is also a
-  folder's on every system, where a pull puts it: no separator, colon or wildcard, not `.` or
-  `..`, no dot or space last and no Windows device name (`repo_name_valid`).
-- Each version names `prev` and is signed by an admin of the version before, or by one of its
-  writers when it only adds repositories (the name, the members and the repositories there keep as
-  they were); the first is signed by an admin it lists (`org_signs`). An admin edits a copy of the
-  newest and writes the next version (`team_org_edit`, `team_member_set`, `team_member_remove`,
-  which keeps at least one admin, `team_repo_set`).
+  the signer, `revoke_epoch`, members sorted by key and repositories sorted by id. A member is a
+  device key, a role, the person's and the device's names and an optional address (`host:port`
+  where every member reaches it: a server's). A repository is an id, a name and whether it is
+  public. A name is 1 to 64 bytes of UTF-8 without control characters (`name_valid`); a
+  repository's is also a folder's on every system, where a pull puts it: no separator, colon or
+  wildcard, not `.` or `..`, no dot or space last and no Windows device name (`repo_name_valid`).
+- Each version names `prev` and is signed by an admin of the version before (who may keep or raise
+  `revoke_epoch`), or by one of its writers when it only adds repositories (the name,
+  `revoke_epoch`, the members and the repositories there keep as they were); the first is signed
+  by an admin it lists (`org_signs`). An admin edits a copy of the newest and writes the next
+  version (`team_org_edit`, `team_member_set`, `team_member_remove`, which keeps at least one
+  admin and bumps `revoke_epoch`, `team_repo_set`).
 - A peer takes a record (`org_accept`) only once every version from it back to one it holds, or
   to the first, is in its store and each follows the one before: a forged or stale record never
   stands, and a removed admin cannot sign a version past its removal because the version that
@@ -99,8 +100,26 @@ Who a machine is, what an org records and how a machine joins one (`kai/team.odi
   removal does not hold admits nobody; expired ones go on the way), writes the next version of the
   org with the new member and sends `Welcome` with its address. The joining machine pulls the record
   back to the first version and holds only if it lists its key.
-- An admin revokes every open invite of an org (`team_invites_clear`, `mirai kai invite <org>
-  --revoke`, Revoke open invites in the editor): one that leaked admits nobody.
+- Offline 1-use invites via an org server (`agent_invite`): when the org lists a `.Node` server
+  with an address, the admin signs a 1-use `Invite_Grant` carrying `sha256(secret)`, role,
+  optional person name, `expires` and `revoke_epoch`, and sends it to the server (`Invite_Grant`).
+  If accepted, the `kai2...` token targets the server's key and address so the invitee can join
+  even while the admin's machine is off; if unreachable, it falls back to a direct local invite.
+- Redeeming an offline invite (`agent_join`, `agent_admit`): the invitee proves `secret` in the
+  handshake and sends a self-signed `Invite_Claim` with `secret`, its key and names. The server
+  verifies `sha256(secret) == grant.secret_hash`, checks `expires` and `revoke_epoch`, removes and
+  commits the 1-use grant first (`grant_take`), stores the paired `(Invite_Grant, Invite_Claim)`
+  as a verified `Admission` under `kai-admit-<org hex>` (`admission_accept`) and replies `Welcome`
+  with both the org head and admission address so the invitee pulls repositories at once.
+- Zero server forgery: every peer (and `team_org` via `org_effective_head`) accepts an `Admission`
+  only when the `Invite_Grant` is signed by a current admin at `revoke_epoch >= org.revoke_epoch`,
+  the `Invite_Claim` is signed by the claimed key, and `sha256(claim.secret) == grant.secret_hash`.
+  A server (`Node`) cannot forge membership. When an admin next connects or edits the org, it
+  folds verified admissions into `Org.members` (`team_admissions_merge`) and prunes their refs.
+- An admin revokes every open invite of an org (`agent_invites_revoke`, `team_invites_clear`,
+  `mirai kai invite <org> --revoke`, Revoke invites in the editor): local invites are removed,
+  `revoke_epoch` bumps on the org record and the server is told (`Invite_Revoke`) to drop pending
+  grants. Removing a member also bumps `revoke_epoch`.
 - A `Node` that names no `--public` address is listed at the address it dialed from and the port
   it listens on, so the org's machines dial the server without anyone typing it.
 - Why no pairing code: the invite text is the secret and travels on a channel the people already

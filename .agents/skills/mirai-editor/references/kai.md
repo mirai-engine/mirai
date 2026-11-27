@@ -60,8 +60,8 @@ pulls what the shared bookmarks reach.
   checked. A conflict of the parents the change did not touch has no check. The check of CHANGES is
   on while any file is: a click then unchecks them all, and with none checks them all.
 - A change is named by `@`, `@-`, a bookmark or a prefix of its id (`ka.revision_find`). A click on
-  a change of the log lists the files it changed, each of which opens its detail; the button of the
-  row starts a new change on it.
+  a change of the log unfolds its changed files (each of which opens its detail) and, for older
+  commits, a labeled Checkout button that starts a new working copy on that change.
 
 ## Team
 
@@ -72,34 +72,35 @@ pulls what the shared bookmarks reach.
   port. A launcher with no project opens it too. A store
   whose Kai state does not open leaves Team saying why; the other views work.
 - What the views show is read into the team's arena only when `vcs.agent_generation` moved, at
-  most every `KAI_READ_EVERY` (a pull moves it at every batch), or this editor wrote
-  (`kai_team_wrote`): a frame that changes nothing reads and allocates nothing. A pull writes its
-  files once the agent says its repository came whole.
-- THIS MACHINE names the person and the device (`kai.profile`), offered from `USER` (`USERNAME` on
-  Windows) and the host name. JOIN AN ORG takes an invite (`kai.join`). Each org lists its members
-  with role and device and its repositories with main and whether all of it is here; an admin sets a
-  role or removes a member (`kai.org`) and makes an invite for a role, for another machine of the
-  same person, and at a host:port when the other machine is on another network (`kai.invite`), to
-  copy, shown under its own org, or revokes the open ones (`kai.invite` with `revoke`). NEW ORG
-  makes one with this machine its admin. A server's web sign-in is set from here (`kai.web_login`);
-  the password goes straight to the agent and is zeroed.
-- A join and a web sign-in run on a thread of the agent (`kai_task_start`), so the frames go on:
-  `kai.join` and `kai.web_login` start one and say its stage (none, waiting, done or failed, with
-  why); called again with no params they say how the last went, as `kai.clone` does.
-- Publish to main (Changes) closes the working change whole and moves main for the org
-  (`kai.publish`). A project in no org yet goes into one in the same call, Public or Org only, after
-  whatever may refuse (the bookmark, the role, the snapshot), so a refused publish leaves the org as
-  it was; with more than one org, the first publish picks which; a public repository lists the files
-  named like secrets it now shows. A publish that fails keeps the typed description.
-- BOOKMARKS lists the workspace's bookmarks, then the repository's shared ones; a click starts a
-  change on one and its arrow moves it to the working copy's parent for the whole org
-  (`kai.bookmarks` with `move`).
-- All projects of the projects screen lists, after the projects of this machine, the
-  repositories of its orgs it has not pulled (the tab counts both), each pulled into a folder of
-  the location with one click (`kai.clone`) and opened once main's files are written, with how
-  far the pull is in chunks and bytes as the agent counts them; Cancel leaves a workspace a later
-  pull goes on with. Team, beside the tabs, shows the Team view in place of the list, so a machine
-  with no project names itself, joins or makes an org.
+  most every `KAI_READ_EVERY` (15 s), on explicit Refresh (`kai_team_refresh`), on local writes
+  (`kai_team_wrote`), or when an active pull finishes `whole` (`agent_pull_of`): a frame that
+  changes nothing reads and allocates nothing. Live pull progress reads `agent_pull_of` directly.
+- The Launcher's Team view (`kai_team_build(s, true)`) manages all orgs of the machine:
+  THIS MACHINE (`kai.profile`, defaulted from `USER`/`USERNAME` and host name), JOIN AN ORG
+  (`kai.join`), every org with its members, server sync status (`Server synced · host:port` or
+  1-click Sync to server via `kai.org` `attach`), repositories and `INVITE` section for admins,
+  NEW ORG (`kai.org` `new`, which silently auto-attaches the default central server off the frame)
+  and WEB SIGN-IN (`kai.web_login`, zeroing the password immediately).
+- Inside an open project, Kai -> Team (`kai_team_build(s, false)`) shows ONLY THIS MACHINE and
+  this project's linked org (or a 1-line note pointing to Changes or Projects -> Team when not in
+  an org yet); NEW ORG, JOIN AN ORG and unrelated orgs never appear inside a project.
+- Each org's `INVITE` section sits under a divider with its own `INVITE` header above the
+  Writer | Reader role switcher, For another machine of mine, Make invite and Revoke invites.
+  The generated read-only invite field sits beside a compact clipboard icon button
+  (`User_Icon.Paste`) that turns into a green checkmark for `KAI_COPIED_SHOW` when copied.
+- Join, web sign-in and server attach run on a thread of the agent (`kai_task_start`), so frames
+  go on: `kai.join` and `kai.web_login` report stage (`none`, `waiting`, `done`, `failed`).
+- Publish to main (Changes) closes the working change whole, moves main for the org (`kai.publish`)
+  and toasts what published; when clean and `@-` matches shared `main`, the button reads
+  `Up to date` (disabled). A project in no org yet goes into one in the same call, Public or Org
+  only, after whatever may refuse, keeping the typed description on failure.
+- BOOKMARKS shows a New branch action (creating a bookmark on `@`), the workspace's bookmarks, and
+  the repository's shared ones (clickable to start a change on one, with no move arrow).
+- The projects screen header includes a Refresh icon button (`kai_team_refresh`). Linked local
+  project rows show a direct Publish button (`kai_launcher_publish`) when ahead of shared main or
+  a calm Synced badge when up to date. All projects also lists unpulled org repositories (counted
+  in its tab), pulled with one click (`kai.clone`). Team beside the tabs opens the Launcher Team
+  view.
 - `kai.peers` gives where the agent listens, the machines connected and each repository's pull.
 - The imports of the editor take derived data the org's machines built on a miss and publish what
   they build (`ka.peers_open`), when the project is a workspace of an org's repository.
@@ -142,8 +143,13 @@ pulls what the shared bookmarks reach.
   joins and pulls the repository from Repositories until its files are there.
 - `editor_kai_team_view_reads_only_when_the_agent_moves` and
   `editor_kai_team_methods_refuse_hostile_params` (`editor/kai_test.odin`): a still frame reads and
-  allocates nothing, the buttons ask for their methods, and every team method says how to fix
-  params that do not fit.
+  allocates nothing, `KAI_READ_EVERY` is 15 s, in-project Team shows only this project's org while
+  Launcher Team shows NEW ORG / JOIN AN ORG, invites use the clipboard icon button, Changes shows
+  Up to date / New branch / expanded log Checkout with no move arrow or `+` icons, and every team
+  method says how to fix params that do not fit.
+- `projects_list_refreshes_and_publishes_linked_workspaces` and
+  `the_launcher_keeps_its_tabs_below_the_bar_that_drags_the_window` (`editor/projects_test.odin`):
+  Refresh icon button below bar height and direct Publish -> Synced transitions.
 - In a session: `kai.status`, `kai.new`, `kai.split`, `kai.conflicts`, `kai.resolve` and
   `kai.undo` once each, and `capture` with `ui` of the Kai tab in each of its views. The rest of
   Kai is verified by [its skill](../../mirai-kai/SKILL.md#verification).

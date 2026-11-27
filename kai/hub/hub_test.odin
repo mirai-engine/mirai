@@ -1,5 +1,6 @@
 package hub
 
+import "core:crypto"
 import "core:fmt"
 import "core:net"
 import "core:os"
@@ -126,7 +127,7 @@ a_server_keeps_an_org_and_its_web_view_shows_what_each_one_may_see :: proc(t:^te
     mac_address:=fmt.tprintf("127.0.0.1:%d",kai.agent_port(&mac.agent))
 
     h:Hub
-    why,ok:=hub_start(&h,{root=strings.concatenate({folder,"/server"},context.temp_allocator),port=0,http="127.0.0.1:0",name="cloud"})
+    why,ok:=hub_start(&h,{root=strings.concatenate({folder,"/server"},context.temp_allocator),host="127.0.0.1",port=0,http="127.0.0.1:0",name="cloud"})
     if !testing.expectf(t,ok,"the server starts: %s",why) {return}
     hub_stopped:=false
     defer if !hub_stopped {hub_stop(&h)}
@@ -441,4 +442,213 @@ the_web_view_answers_100_continue_and_stops_with_idle_clients :: proc(t:^testing
     stopped=true
     took:=time.tick_since(started)
     testing.expectf(t,took<time.Second,"the server stops in %v with clients idle",took)
+}
+
+// An admin registers an org on a server with zero manual --join, publishes a
+// repo, creates an offline 1-use invite and stops completely. A writer joins
+// through the server while the admin is off, pulls the repo whole, and sees
+// the org on the web view. When the admin restarts later, it recognizes the
+// writer and promotes the verified admission into the signed org record.
+// Self-registration stops at --max-orgs.
+@(test)
+a_server_registers_an_org_and_admits_offline_invites :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-hub-offline-invite")
+    if folder=="" {return}
+    mac,pc:Machine
+    if !machine_open(t,&mac,folder,"ana") || !machine_open(t,&pc,folder,"ben") {return}
+    defer machine_close(&mac)
+    defer machine_close(&pc)
+
+    h:Hub
+    why,ok:=hub_start(&h,{root=strings.concatenate({folder,"/server"},context.temp_allocator),host="127.0.0.1",port=0,http="127.0.0.1:0",name="cloud",max_orgs=2})
+    if !testing.expectf(t,ok,"the server starts: %s",why) {return}
+    defer hub_stop(&h)
+    server_addr:=fmt.tprintf("127.0.0.1:%d",kai.agent_port(&h.agent))
+
+    if !testing.expect_value(t,kai.agent_start(&mac.agent,&mac.team,{port=0,host="127.0.0.1"}),kai.Error.None) {return}
+    mac.running=true
+    if !testing.expect_value(t,kai.agent_start(&pc.agent,&pc.team,{port=-1}),kai.Error.None) {return}
+    pc.running=true
+
+    org,oe:=kai.team_org_create(&mac.team,"studio")
+    if !testing.expect_value(t,oe,kai.Error.None) {return}
+    if !testing.expectf(t,kai.agent_server_attach(&mac.agent,org,server_addr)==.None,"admin attaches server: %s",mac.agent.team.why) {return}
+    testing.expect(t,os.is_dir(fmt.tprintf("%s/server/orgs/%s",folder,id_text(org))),"server created org tenant store")
+    srv_key,srv_addr,has_srv:=kai.team_org_server(&mac.team,org)
+    testing.expect(t,has_srv && srv_key==h.team.identity.key && srv_addr==server_addr,"org lists server as Node")
+
+    repo:=kai.random_id(kai.Repo_Id)
+    kai.team_repo_set(&mac.team,org,{id=repo,name="game"})
+    rev:=change_of(t,&mac.s,&mac.team.identity,{{"hello.txt","offline invite works\n"}})
+    kai.team_publish(&mac.team,org,repo,{{"main",rev}})
+    kai.agent_changed(&mac.agent)
+
+    Held :: struct {h:^Hub,s:^store.Store,org:kai.Org_Id,rev:kai.Revision,key:kai.Key}
+    held:=Held{h=&h,org=org,rev=rev}
+    if !testing.expect(t,until(20,&held,proc(data:rawptr) -> bool {
+        x:=(^Held)(data)
+        s,e:=kai.team_store(&x.h.team,x.org)
+        if e!=.None {return false}
+        missing:=make([dynamic]store.Hash,context.temp_allocator)
+        kai.closure_walk(s,{x.rev},nil,&missing)
+        return len(missing)==0 && kai.object_kind(s,x.rev)==.Change
+    }),"server synced the repo before admin goes offline") {return}
+
+    mac_addr:=fmt.tprintf("127.0.0.1:%d",kai.agent_port(&mac.agent))
+    invite,via_server,ie:=kai.agent_invite(&mac.agent,org,.Writer,"",{mac_addr},context.temp_allocator)
+    if !testing.expectf(t,ie==.None && via_server,"offline server invite created: %v %v %s",ie,via_server,mac.agent.team.why) {return}
+
+    // Stop Admin completely: Writer joins and pulls while Admin is OFF.
+    kai.agent_stop(&mac.agent)
+    mac.running=false
+
+    joined,je:=kai.agent_join(&pc.agent,invite)
+    if !testing.expectf(t,je==.None && joined==org,"writer joins via server while admin is off: %v %s",je,pc.agent.team.why) {return}
+    kai.team_link(&pc.team,{local=kai.random_id(kai.Repo_Id),org=org,repo=repo})
+    kai.agent_changed(&pc.agent)
+    pc_held:=Held{s=&pc.s,org=org,rev=rev}
+    if !testing.expect(t,until(20,&pc_held,proc(data:rawptr) -> bool {
+        x:=(^Held)(data)
+        missing:=make([dynamic]store.Hash,context.temp_allocator)
+        kai.closure_walk(x.s,{x.rev},nil,&missing)
+        return len(missing)==0 && kai.object_kind(x.s,x.rev)==.Change
+    }),"writer pulls the repo whole from server while admin is off") {return}
+
+    // Web view recognizes the offline-admitted member too.
+    testing.expect(t,account_set(&h,pc.team.identity.key,"ben","correct horse"),"offline-admitted member sets web sign-in")
+    status,head,_:=http(h.port,"POST","/login","name=ben&password=correct+horse")
+    cookie:=cookie_of(head)
+    testing.expect(t,status==303 && cookie!="","offline-admitted member signs into web view")
+    page_status,_,text:=http(h.port,"GET",fmt.tprintf("/%s",id_text(org)),cookie=cookie)
+    testing.expect(t,page_status==200 && strings.contains(text,"Members") && strings.contains(text,"game"),"web view lists org members and private repo")
+
+    // Admin restarts later: recognizes Writer and merges admission into signed Org record.
+    if !testing.expect_value(t,kai.agent_start(&mac.agent,&mac.team,{port=0,host="127.0.0.1"}),kai.Error.None) {return}
+    mac.running=true
+    merged:=Held{s=&mac.s,org=org,key=pc.team.identity.key}
+    testing.expect(t,until(20,&merged,proc(data:rawptr) -> bool {
+        x:=(^Held)(data)
+        raw,_,e:=kai.org_head(x.s,x.org,context.temp_allocator)
+        if e!=.None {return false}
+        role,ok:=kai.org_role(&raw,x.key)
+        return ok && role==.Writer
+    }),"admin restarts, recognizes writer and promotes admission into signed org record")
+
+    // Self-registration respects --max-orgs (2).
+    org2,_:=kai.team_org_create(&mac.team,"second")
+    testing.expectf(t,kai.agent_server_attach(&mac.agent,org2,server_addr)==.None,"second org attaches within max_orgs: %s",mac.agent.team.why)
+    org3,_:=kai.team_org_create(&mac.team,"third")
+    testing.expect(t,kai.agent_server_attach(&mac.agent,org3,server_addr)!=.None,"third org refused past max_orgs")
+    testing.expect(t,!os.exists(fmt.tprintf("%s/server/orgs/%s",folder,id_text(org3))),"refused org creates no tenant folder")
+}
+
+// Replayed 1-use invites, revoked grants, and forged or stale admissions
+// (including a server attempting to sign a grant itself) are all refused.
+@(test)
+forged_replayed_or_revoked_offline_admissions_are_refused :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-hub-forged-admit")
+    if folder=="" {return}
+    mac,pc1,pc2:Machine
+    if !machine_open(t,&mac,folder,"ana") || !machine_open(t,&pc1,folder,"ben") || !machine_open(t,&pc2,folder,"cal") {return}
+    defer machine_close(&mac)
+    defer machine_close(&pc1)
+    defer machine_close(&pc2)
+
+    h:Hub
+    why,ok:=hub_start(&h,{root=strings.concatenate({folder,"/server"},context.temp_allocator),host="127.0.0.1",port=0,http="127.0.0.1:0",name="cloud",max_orgs=4})
+    if !testing.expectf(t,ok,"the server starts: %s",why) {return}
+    defer hub_stop(&h)
+    server_addr:=fmt.tprintf("127.0.0.1:%d",kai.agent_port(&h.agent))
+
+    if !testing.expect_value(t,kai.agent_start(&mac.agent,&mac.team,{port=0,host="127.0.0.1"}),kai.Error.None) {return}
+    mac.running=true
+    if !testing.expect_value(t,kai.agent_start(&pc1.agent,&pc1.team,{port=-1}),kai.Error.None) {return}
+    pc1.running=true
+    if !testing.expect_value(t,kai.agent_start(&pc2.agent,&pc2.team,{port=-1}),kai.Error.None) {return}
+    pc2.running=true
+
+    org,_:=kai.team_org_create(&mac.team,"studio")
+    if !testing.expect_value(t,kai.agent_server_attach(&mac.agent,org,server_addr),kai.Error.None) {return}
+    mac_addr:=fmt.tprintf("127.0.0.1:%d",kai.agent_port(&mac.agent))
+    inv1,via1,e1:=kai.agent_invite(&mac.agent,org,.Writer,"",{mac_addr},context.temp_allocator)
+    inv2,via2,e2:=kai.agent_invite(&mac.agent,org,.Writer,"",{mac_addr},context.temp_allocator)
+    if !testing.expect(t,e1==.None && via1 && e2==.None && via2,"both offline invites created") {return}
+
+    // First invite succeeds once; replay by a second device is refused.
+    if _,je:=kai.agent_join(&pc1.agent,inv1);!testing.expect_value(t,je,kai.Error.None) {return}
+    _,replay_err:=kai.agent_join(&pc2.agent,inv1)
+    testing.expect_value(t,replay_err,kai.Error.Expired)
+
+    // Revoking invites bumps revoke_epoch and drops inv2 on the server.
+    _,rev_err:=kai.agent_invites_revoke(&mac.agent,org)
+    testing.expect_value(t,rev_err,kai.Error.None)
+    _,revoked_err:=kai.agent_join(&pc2.agent,inv2)
+    testing.expect_value(t,revoked_err,kai.Error.Expired)
+
+    // Direct cryptographic verification: a server, writer, stranger, tampered
+    // signature, wrong secret, stale epoch, or duplicate claim cannot forge membership.
+    writer:=kai.identity_make()
+    stranger:=kai.identity_make()
+    stranger2:=kai.identity_make()
+    testing.expect_value(t,kai.team_member_set(&mac.team,org,{key=writer.key,role=.Writer,name="W",device="pc"}),kai.Error.None)
+    org_rec,_,oe:=kai.org_head(&mac.s,org,context.temp_allocator)
+    if !testing.expect(t,oe==.None && org_rec.revoke_epoch>=1,"org record has bumped revoke_epoch") {return}
+
+    make_pair :: proc(t:^testing.T,org:kai.Org_Id,epoch:u64,signer,claimer:^kai.Identity,secret:[32]u8) -> (gb,cb:[]u8) {
+        g:=kai.Invite_Grant{org=org,secret_hash=kai.secret_digest(secret),role=.Writer,revoke_epoch=epoch,expires=time.now()._nsec+i64(time.Hour),signer=signer.key}
+        ge,ce:kai.Error
+        gb,ge=kai.invite_grant_encode(&g,signer,context.temp_allocator)
+        testing.expect_value(t,ge,kai.Error.None)
+        c:=kai.Invite_Claim{org=org,secret=secret,key=claimer.key,name="Bob",device="box"}
+        cb,ce=kai.invite_claim_encode(&c,claimer,context.temp_allocator)
+        testing.expect_value(t,ce,kai.Error.None)
+        return
+    }
+
+    secret,wrong_secret:[32]u8
+    crypto.rand_bytes(secret[:])
+    crypto.rand_bytes(wrong_secret[:])
+    gb,cb:=make_pair(t,org,org_rec.revoke_epoch,&mac.team.identity,&stranger,secret)
+
+    // Tampered grant or claim signature, or mismatched secret.
+    bad_g:=slice.clone(gb,context.temp_allocator);bad_g[len(bad_g)-1]~=1
+    _,eg:=kai.admission_encode(bad_g,cb,context.temp_allocator)
+    testing.expect_value(t,eg,kai.Error.Corrupt)
+    bad_c:=slice.clone(cb,context.temp_allocator);bad_c[len(bad_c)-1]~=1
+    _,ec:=kai.admission_encode(gb,bad_c,context.temp_allocator)
+    testing.expect_value(t,ec,kai.Error.Corrupt)
+    _,wrong_cb:=make_pair(t,org,org_rec.revoke_epoch,&mac.team.identity,&stranger,wrong_secret)
+    _,es:=kai.admission_encode(gb,wrong_cb,context.temp_allocator)
+    testing.expect_value(t,es,kai.Error.Unauthorized)
+
+    // Server (.Node), Writer, or stranger cannot forge an admin Invite_Grant.
+    for forger in ([]^kai.Identity{&h.team.identity,&writer,&stranger}) {
+        fg,fc:=make_pair(t,org,org_rec.revoke_epoch,forger,&stranger2,secret)
+        ad_b,ae:=kai.admission_encode(fg,fc,context.temp_allocator)
+        if testing.expect_value(t,ae,kai.Error.None) {
+            addr,pe:=kai.object_put(&mac.s,.Admission,ad_b)
+            testing.expect_value(t,pe,kai.Error.None)
+            _,ace:=kai.admission_accept(&mac.s,&org_rec,addr)
+            testing.expect_value(t,ace,kai.Error.Unauthorized)
+        }
+    }
+
+    // Grant from a revoked epoch is refused.
+    stale_g,stale_c:=make_pair(t,org,org_rec.revoke_epoch-1,&mac.team.identity,&stranger,secret)
+    stale_b,_:=kai.admission_encode(stale_g,stale_c,context.temp_allocator)
+    stale_addr,_:=kai.object_put(&mac.s,.Admission,stale_b)
+    _,stale_err:=kai.admission_accept(&mac.s,&org_rec,stale_addr)
+    testing.expect_value(t,stale_err,kai.Error.Unauthorized)
+
+    // Valid admission accepted once; a second claim reusing the same 1-use grant is refused.
+    ok_b,ok_ae:=kai.admission_encode(gb,cb,context.temp_allocator)
+    testing.expect_value(t,ok_ae,kai.Error.None)
+    ok_addr,_:=kai.object_put(&mac.s,.Admission,ok_b)
+    changed,ace:=kai.admission_accept(&mac.s,&org_rec,ok_addr)
+    testing.expect(t,ace==.None && changed,"valid admission accepted")
+    _,dup_cb:=make_pair(t,org,org_rec.revoke_epoch,&mac.team.identity,&stranger2,secret)
+    dup_b,_:=kai.admission_encode(gb,dup_cb,context.temp_allocator)
+    dup_addr,_:=kai.object_put(&mac.s,.Admission,dup_b)
+    _,dup_err:=kai.admission_accept(&mac.s,&org_rec,dup_addr)
+    testing.expect_value(t,dup_err,kai.Error.Unauthorized)
 }

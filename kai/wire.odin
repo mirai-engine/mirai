@@ -26,26 +26,31 @@ WANT_MAX :: 4096 // addresses one want names
 // The kinds of messages, each a byte and its body (agent.odin reads them).
 Msg :: enum u8 {
     None,
-    Hello,   // name, device, port u16, then a Tell's body: who this end is and what it holds
-    Tell,    // count u16 × Tell_Entry: heads this end holds now
-    Want,    // org, count u16 × address: send these chunks
-    Chunks,  // count u16 × (address, codec u8, raw u32, stored u32, bytes): the chunks asked, in order
-    Lack,    // count u16 × address: chunks asked that this end does not have
-    Ddc_Ask, // org, key: the derived data set of key, answered by a Tell
-    Join,    // org, name, device: the initiator proved an invite of org
-    Welcome, // org, address: the org's record that now lists the joining device
-    Bye,     // why, as text
-    Web_Login, // name, password: a server's web view signs in as this device; a connection's first and only message
+    Hello,         // name, device, port u16, then a Tell's body: who this end is and what it holds
+    Tell,          // count u16 × Tell_Entry: heads this end holds now
+    Want,          // org, count u16 × address: send these chunks
+    Chunks,        // count u16 × (address, codec u8, raw u32, stored u32, bytes): the chunks asked, in order
+    Lack,          // count u16 × address: chunks asked that this end does not have
+    Ddc_Ask,       // org, key: the derived data set of key, answered by a Tell
+    Join,          // org, name, device, public, claim_len u16, claim_bytes: joining by invite
+    Welcome,       // org, address, admission: the org's record (and optional admission) listing the joining device
+    Bye,           // why, as text
+    Web_Login,     // name, password: a server's web view signs in as this device; a connection's first and only message
+    Server_Info,   // empty request; answered by Server_Info(name, device, public) or Bye
+    Org_Register,  // org, count u16 × (u32 len, org record) oldest-to-newest: an admin attaches a server to its org
+    Invite_Grant,  // Invite_Grant bytes: an admin registers a 1-use offline invite on its org's server
+    Invite_Revoke, // org, revoke_epoch u64: an admin drops pending grants of org on its server
 }
 
-// A head one end holds: an org's record, a repository's shared bookmarks or
-// the derived data set of a key (address zero: none, the answer to an ask).
-Tell_Kind :: enum u8 {Org,Repo,Ddc}
+// A head one end holds: an org's record, a repository's shared bookmarks,
+// the derived data set of a key (address zero: none, the answer to an ask),
+// or a verified offline admission.
+Tell_Kind :: enum u8 {Org,Repo,Ddc,Admit}
 
 Tell_Entry :: struct #packed {
     kind:Tell_Kind,
     org:Org_Id,
-    id:store.Hash,      // a repository's id in its first 16 bytes, or a derived data key
+    id:store.Hash,      // a repository's id in its first 16 bytes, a derived data key, or an admission's secret_hash
     address:store.Hash,
 }
 

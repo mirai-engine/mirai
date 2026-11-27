@@ -153,7 +153,7 @@ Org_Access :: struct {
 org_access :: proc(h:^Hub,id:kai.Org_Id,who:^Session) -> (v:Org_Access,ok:bool) {
     s,e:=kai.team_store(&h.team,id)
     if e!=.None {return}
-    o,_,oe:=kai.org_head(s,id,context.temp_allocator)
+    o,_,oe:=kai.org_effective_head(s,id,context.temp_allocator)
     if oe!=.None {return}
     v={org=o,s=s}
     if who!=nil {_,v.member=kai.org_role(&o,who.key)}

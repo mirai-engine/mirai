@@ -5,11 +5,17 @@ deployed. Its options are `hub.SERVE_USAGE`.
 
 ## The server
 
-- An always-on [agent](sync.md#the-agent) that is a `Node` of each org it joins (`--join <invite>`,
-  repeatable, from an invite with `--role node`): it keeps every repository of those orgs whole
-  and the derived data their writers publish, so a machine pulls while the others are off. It
-  dials and is dialed like any member; `--public host:port` is the address the org then lists for
-  it, else the one it dialed from ([invites](org.md#invites)).
+- An always-on [agent](sync.md#the-agent) that is a `Node` of each org it hosts: either joined by
+  `--join <invite>` (repeatable, from a `--role node` invite) or self-registered over Noise by any
+  org admin (`agent_server_attach` via `Server_Info` + `Org_Register`, zero SSH required). The
+  server checks the admin's signature chain and that its own key is listed as `Node`, creates
+  `orgs/<org hex>` and immediately syncs all repositories and derived data of the org.
+  `--max-orgs` (default `MAX_ORGS_DEFAULT` = 64; `0` disables self-registration) bounds how many
+  orgs admins may register. `--public host:port` is the address the org lists for the server.
+- Offline invites: admins of a hosted org can register 1-use `Invite_Grant` vouchers on the server
+  (`Invite_Grant`, cleared by `Invite_Revoke`), which invitees redeem while the admin is offline
+  into verified `(Invite_Grant, Invite_Claim)` admissions ([invites](org.md#invites)). The server
+  still signs no org record and cannot forge membership.
 - Under `--root` (`kai-server` by default; `mirai kai serve --store S` uses that store's folder):
   `server/` is its own store (its device key and web accounts) and each org lives in a store of
   its own, `orgs/<org hex>` (`kai.Tenants`), so a server that keeps the orgs of several customers
@@ -19,6 +25,8 @@ deployed. Its options are `hub.SERVE_USAGE`.
 - The server is trusted as a Git host is: it holds the repositories in the clear and its web view
   decides what each account sees. As a `Node` it signs no record of an org.
 - It does not ask a router for a port: a server has a public address, or a port forwarded to it.
+  Idle HTTP client threads slice their receive timeout (`50 ms`) so `hub_stop` wakes and stops
+  promptly on every OS, including Windows Winsock.
 
 ## The web view
 
@@ -91,6 +99,7 @@ kai.example.com {
 }
 ```
 
-- Joining is once: run the `ExecStart` line by hand with `--join <invite>` added, stop it once it
-  prints `joined org`, and start the unit; the org stays joined in its store, and a used invite
-  given again stops the server.
+- Org admins attach straight from the editor (new orgs auto-attach to the default server; existing
+  orgs offer Sync to server) or `kai.org` with `attach`. Manual joining is still available by
+  running the `ExecStart` line once with `--join <invite>` added, stopping it once it prints
+  `joined org`, and starting the unit.

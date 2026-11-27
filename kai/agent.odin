@@ -49,6 +49,7 @@ Agent_Options :: struct {
     host:string,    // the address to listen at; "" for every interface
     beacon:bool,    // say on the LAN where it listens, and dial the members that say it
     node:bool,      // keep every repository of its orgs whole and the derived data its writers publish
+    max_orgs:int,   // orgs admins may self-register on this node; 0 disables self-registration
     peers:[]string, // host:port to dial besides the addresses it knows
     public:string,  // host:port where every member reaches this machine (a server's): what an org it joins lists
     portmap:bool,   // asks the router (PCP, NAT-PMP or UPnP) to forward its TCP port, so machines on other networks reach it with no server
@@ -96,6 +97,7 @@ Agent :: struct {
     pulls:[dynamic]Pull,
     waits:[dynamic]^Ddc_Wait,
     changed:bool,
+    redial:bool,
     generation:u64, // one more each time what agent_peers, agent_pulls, agent_events or the heads give changes
     allocator:runtime.Allocator,
 }
@@ -121,6 +123,7 @@ Peer :: struct {
     requested:int,          // bytes of requests
     fetches:[dynamic]^Fetch,
     welcome:store.Hash,
+    welcome_admission:store.Hash,
     ready:bool,             // its handshake held
     done:bool,              // its reader ended
     reader,server,puller:^thread.Thread,
@@ -167,7 +170,9 @@ agent_start :: proc(a:^Agent,team:^Team,options:Agent_Options,allocator:=context
         if options.host!="" {
             if address,ok:=net.parse_ip4_address(options.host);ok {host=address} else {return team_fail(&a.team,.Invalid_Argument,"the address to listen at is no IPv4 address")}
         }
-        port:=options.port==0?KAI_PORT:options.port
+        // Loopback-only agents (tests) take an ephemeral port directly so they never
+        // collide on macOS with a wildcard :7350 listener on another editor.
+        port:=options.port==0?(host==net.IP4_Loopback?0:KAI_PORT):options.port
         socket,e:=net.listen_tcp({host,port})
         if e!=nil && options.port==0 {socket,e=net.listen_tcp({host,0})}
         if e!=nil {
@@ -280,6 +285,22 @@ agent_free :: proc(a:^Agent) {
 agent_changed :: proc(a:^Agent) {
     sync.mutex_lock(&a.lock)
     defer sync.mutex_unlock(&a.lock)
+    a.changed=true
+    for p in a.peers {
+        sync.mutex_lock(&p.lock)
+        p.dirty=true
+        sync.cond_broadcast(&p.cond)
+        sync.mutex_unlock(&p.lock)
+    }
+    sync.cond_broadcast(&a.wake)
+}
+
+// Wakes the agent to immediately retry disconnected peers and sync heads.
+agent_sync_now :: proc(a:^Agent) {
+    sync.mutex_lock(&a.lock)
+    defer sync.mutex_unlock(&a.lock)
+    clear(&a.dialing)
+    a.redial=true
     a.changed=true
     for p in a.peers {
         sync.mutex_lock(&p.lock)
@@ -408,6 +429,16 @@ agent_pulls :: proc(a:^Agent,out:^[dynamic]Pull) {
     sync.mutex_lock(&a.lock)
     defer sync.mutex_unlock(&a.lock)
     append(out,..a.pulls[:])
+}
+
+// How far one repository's pull is, without allocating.
+agent_pull_of :: proc(a:^Agent,org:Org_Id,repo:Repo_Id) -> (pull:Pull,ok:bool) {
+    sync.mutex_lock(&a.lock)
+    defer sync.mutex_unlock(&a.lock)
+    for x in a.pulls {
+        if x.org==org && x.repo==repo {return x,true}
+    }
+    return {},false
 }
 
 @(private)
@@ -570,12 +601,13 @@ peer_free :: proc(p:^Peer) {
     free(p)
 }
 
-// The role key has in org; ok false when it is no member or the org is not held.
+// The role key has in org (including verified offline admissions); ok false
+// when it is no member or the org is not held.
 @(private)
 agent_role :: proc(a:^Agent,org:Org_Id,key:Key) -> (role:Role,ok:bool) {
     s,e:=team_store(&a.team,org)
     if e!=.None {return}
-    o,_,he:=org_head(s,org,context.temp_allocator)
+    o,_,he:=org_effective_head(s,org,context.temp_allocator)
     if he!=.None {return}
     return org_role(&o,key)
 }
@@ -590,14 +622,14 @@ agent_knows :: proc(a:^Agent,key:Key) -> bool {
 }
 
 // The heads of every org this machine holds whose member key is: its record,
-// its repositories' shared bookmarks and, for a server of the org (or every
-// one, key zero), the derived data sets it holds, which a server keeps.
+// verified offline admissions, its repositories' shared bookmarks and, for a
+// server of the org (or every one, key zero), the derived data sets it holds.
 @(private)
 agent_heads :: proc(a:^Agent,key:Key,out:^[dynamic]Tell_Entry) {
     for id in team_org_ids(&a.team) {
         s,e:=team_store(&a.team,id)
         if e!=.None {continue}
-        o,address,he:=org_head(s,id,context.temp_allocator)
+        o,address,he:=org_effective_head(s,id,context.temp_allocator)
         if he!=.None {continue}
         role,member:=org_role(&o,key)
         if key!={} && !member {continue}
@@ -610,6 +642,13 @@ agent_heads :: proc(a:^Agent,key:Key,out:^[dynamic]Tell_Entry) {
             }
         }
         append(out,Tell_Entry{kind=.Org,org=id,address=address})
+        ans:[len(ADMIT_PREFIX)+32]u8
+        if arefs,ae:=store.ref_list(s,admit_namespace(id,&ans),context.temp_allocator);ae==.None {
+            for ref in arefs {
+                k:store.Hash
+                if hex_parse(ref.name,k[:]) {append(out,Tell_Entry{kind=.Admit,org=id,id=k,address=ref.hash})}
+            }
+        }
         for r in o.repos {
             _,refs,re:=repo_refs_head(s,id,r.id,context.temp_allocator)
             if re!=.None {continue}
@@ -688,20 +727,34 @@ peer_read_run :: proc(p:^Peer) {
     buffer,be:=make([]u8,FRAME_MAX+NOISE_TAG)
     if be!=nil {return}
     defer delete(buffer)
-    // An initiator's first message: a web sign-in is the whole connection,
-    // which is no peer and leaves the one kept to its key alone.
+    // An initiator's first message: control RPCs (web sign-in, server attach,
+    // offline invite grant/revoke) run on their own short connection so they
+    // never disrupt the sync connection kept to the peer's key.
     first:Msg
     first_body:[]u8
     if p.dialed=="" {
         ok:bool
         if first,first_body,ok=conn_receive(c,buffer);!ok {return}
-        if first==.Web_Login {
+        #partial switch first {
+        case .Web_Login:
             r:=Reader{data=first_body}
             name:=tail_string(&r)
             password:=tail_string(&r)
             if r.short {return}
             signed:=a.options.web_login!=nil && agent_knows(a,c.peer) && a.options.web_login(a.options.web_data,c.peer,name,password)
             conn_send(c,.Bye,transmute([]u8)string(signed?"web sign-in set":"this server keeps no web view for that device"))
+            return
+        case .Server_Info:
+            agent_serve_server_info(a,c,buffer)
+            return
+        case .Org_Register:
+            agent_handle_org_register(a,c,first_body)
+            return
+        case .Invite_Grant:
+            agent_handle_invite_grant(a,c,first_body)
+            return
+        case .Invite_Revoke:
+            agent_handle_invite_revoke(a,c,first_body)
             return
         }
     }
@@ -791,21 +844,29 @@ peer_read_run :: proc(p:^Peer) {
             name:=tail_string(&r)
             device:=tail_string(&r)
             public:=tail_string(&r)
+            claim:[]u8
+            if !r.short && r.at<len(body) {
+                clen:=int(read_value(&r,u16le))
+                claim=read_bytes(&r,clen)
+            }
             if r.short || !joining {return}
-            if !agent_admit(a,p,org,name,device,public) {return}
+            if !agent_admit(a,p,org,name,device,public,claim) {return}
         case .Welcome:
             org:=read_value(&r,Org_Id)
             address:=read_value(&r,store.Hash)
+            admission:store.Hash
+            if !r.short && r.at<len(body) {admission=read_value(&r,store.Hash)}
             if r.short {return}
             _=org
             sync.mutex_lock(&p.lock)
             p.welcome=address
+            p.welcome_admission=admission
             sync.cond_broadcast(&p.cond)
             sync.mutex_unlock(&p.lock)
         case .Bye:
             agent_event(a,"%s left: %s",peer_text(p),string(body[:min(len(body),300)]))
             return
-        case .Web_Login:
+        case .Web_Login,.Server_Info,.Org_Register,.Invite_Grant,.Invite_Revoke:
             return // only as an initiator's first message
         }
     }
@@ -1060,13 +1121,32 @@ peer_pull :: proc(p:^Peer,told:[]Tell_Entry) -> (changed:bool) {
         changed||=moved
     }
     for e in told {
-        if e.kind==.Org {continue}
+        if e.kind!=.Admit {continue}
+        if _,member:=agent_role(a,e.org,a.team.identity.key);!member {continue}
         s,se:=team_store(&a.team,e.org)
         if se!=.None {continue}
         o,_,oe:=org_head(s,e.org,context.temp_allocator)
+        if oe!=.None {continue}
+        if !peer_fetch(p,e.org,s,{e.address},nil) {continue}
+        moved,ae:=admission_accept(s,&o,e.address)
+        if ae==.None && moved {
+            store.commit(s)
+            changed=true
+            if role,ok:=org_role(&o,a.team.identity.key);ok && role==.Admin {
+                sync.mutex_lock(&a.lock)
+                team_admissions_merge(&a.team,e.org)
+                sync.mutex_unlock(&a.lock)
+            }
+        }
+    }
+    for e in told {
+        if e.kind==.Org || e.kind==.Admit {continue}
+        s,se:=team_store(&a.team,e.org)
+        if se!=.None {continue}
+        o,_,oe:=org_effective_head(s,e.org,context.temp_allocator)
         if oe!=.None || org_member(&o,a.team.identity.key)<0 {continue}
         switch e.kind {
-        case .Org:
+        case .Org,.Admit:
         case .Repo:
             if !peer_fetch(p,e.org,s,{e.address},nil) {continue}
             moved,_:=repo_refs_accept(s,&o,e.address)
@@ -1081,7 +1161,7 @@ peer_pull :: proc(p:^Peer,told:[]Tell_Entry) -> (changed:bool) {
     for id in team_org_ids(&a.team) {
         s,se:=team_store(&a.team,id)
         if se!=.None {continue}
-        o,_,oe:=org_head(s,id,context.temp_allocator)
+        o,_,oe:=org_effective_head(s,id,context.temp_allocator)
         if oe!=.None {continue}
         if _,member:=agent_role(a,id,p.conn.peer);!member {continue}
         for r in o.repos {
@@ -1291,8 +1371,9 @@ fetch_children :: proc(s:^store.Store,address:store.Hash,buffer:[]u8,queue:^[dyn
 // --- Joining ---
 
 // Joins the org of an invite: dials its addresses until the inviting device
-// answers, proves the invite and waits until this machine holds the org's
-// record that lists it.
+// (or the org's server for an offline invite) answers, proves the invite and
+// waits until this machine holds the org's record (and admission, if offline)
+// that lists it.
 agent_join :: proc(a:^Agent,text:string) -> (org:Org_Id,error:Error) {
     token,e:=invite_parse(text,context.temp_allocator)
     if e!=.None {return {},team_fail(&a.team,e,"that is no Kai invite: copy all of it, it begins with kai2")}
@@ -1307,12 +1388,21 @@ agent_join :: proc(a:^Agent,text:string) -> (org:Org_Id,error:Error) {
         return {},team_fail(&a.team,.Unreachable,fmt.tprintf("Could not reach %s. Make sure the inviter has Mirai open and is reachable from your network.",len(token.addresses)>0?token.addresses[0]:"the inviting machine"))
     }
     defer peer_unpin(a,p)
+    claim:=Invite_Claim{
+        org=token.org,secret=token.secret,key=a.team.identity.key,
+        name=a.team.name,device=a.team.device,public=a.options.public,
+    }
+    claim_bytes,ce:=invite_claim_encode(&claim,&a.team.identity,context.temp_allocator)
+    if ce!=.None {return {},team_fail(&a.team,ce,"could not sign the invite claim")}
     body:=make([dynamic]u8,context.temp_allocator)
     o:=token.org
     append(&body,..o[:])
     write_text(&body,a.team.name)
     write_text(&body,a.team.device)
     write_text(&body,a.options.public)
+    clen:=u16(len(claim_bytes))
+    append(&body,u8(clen),u8(clen>>8))
+    append(&body,..claim_bytes)
     for {
         sync.mutex_lock(&p.lock)
         ready,done:=p.ready,p.done
@@ -1321,54 +1411,442 @@ agent_join :: proc(a:^Agent,text:string) -> (org:Org_Id,error:Error) {
         time.sleep(10*time.Millisecond)
     }
     if !conn_send(p.conn,.Join,body[:]) {return {},team_fail(&a.team,.Unreachable,"the inviting machine closed the connection")}
-    welcome:store.Hash
+    welcome,welcome_admission:store.Hash
     sync.mutex_lock(&p.lock)
     started:=time.tick_now()
     for p.welcome=={} && !p.done && time.tick_since(started)<30*time.Second {sync.cond_wait_with_timeout(&p.cond,&p.lock,time.Second)}
-    welcome=p.welcome
+    welcome,welcome_admission=p.welcome,p.welcome_admission
     sync.mutex_unlock(&p.lock)
     if welcome=={} {return {},team_fail(&a.team,.Expired,"the inviting machine refused the invite: it is used or past its time, ask for a new one")}
     if _,pe:=agent_org_pull(a,p,token.org,welcome,true);pe!=.None {return {},team_fail(&a.team,pe,"the org's record from the inviting machine does not hold: ask for a new invite")}
+    if welcome_admission!={} {
+        s,se:=team_store(&a.team,token.org)
+        if se!=.None || !peer_fetch(p,token.org,s,{welcome_admission},nil) {return {},team_fail(&a.team,.Missing,"the admission from the server did not arrive: ask for a new invite")}
+        raw_org,_,oe:=org_head(s,token.org,context.temp_allocator)
+        if oe!=.None {return {},team_fail(&a.team,oe,"the org's record does not read")}
+        if _,ae:=admission_accept(s,&raw_org,welcome_admission);ae!=.None {return {},team_fail(&a.team,ae,"the admission from the server does not verify: ask for a new invite")}
+        store.commit(s)
+    }
     if _,member:=agent_role(a,token.org,a.team.identity.key);!member {return {},team_fail(&a.team,.Unauthorized,"the org's record does not list this machine: ask for a new invite")}
+    if p.dialed!="" {team_peer_seen(&a.team,token.key,p.dialed)}
     agent_event(a,"joined the org through %s",peer_text(p))
     agent_changed(a)
     return token.org,.None
 }
 
-// The inviting end: takes an invite the peer proved and makes it a member.
+// The inviting end (admin online, or org server redeeming a 1-use grant):
+// takes an invite the peer proved and admits it.
 @(private)
-agent_admit :: proc(a:^Agent,p:^Peer,org:Org_Id,name,device,public:string) -> bool {
+agent_admit :: proc(a:^Agent,p:^Peer,org:Org_Id,name,device,public:string,claim_bytes:[]u8) -> bool {
     // What the joining end names itself is checked before the invite is spent.
     if !name_valid(name) || !name_valid(device) || len(public)>255 {
         conn_send(p.conn,.Bye,transmute([]u8)string("name yourself and this machine with 1 to 64 bytes of UTF-8 without control characters"))
         return false
     }
+    sync.mutex_lock(&p.lock)
+    port:=p.port
+    sync.mutex_unlock(&p.lock)
+    admission_addr:store.Hash
     sync.mutex_lock(&a.lock)
     role,invited,e:=team_invite_take(&a.team,org,p.conn.proof,p.conn.proved)
-    crypto.zero_explicit(&p.conn.proof,64)
     if e==.None {
         address:=public
         // A server that names no address is reached where it dialed from, at the port it listens on.
-        if address=="" && role==.Node && p.port>0 {address=fmt.tprintf("%s:%d",net.address_to_string(p.remote.address,context.temp_allocator),p.port)}
+        if address=="" && role==.Node && port>0 {address=fmt.tprintf("%s:%d",net.address_to_string(p.remote.address,context.temp_allocator),port)}
         member:=Member{key=p.conn.peer,role=role,name=invited!=""?invited:name,device=device,address=address}
         e=team_member_set(&a.team,org,member)
+    } else if a.options.node && len(claim_bytes)>0 {
+        claim,ce:=invite_claim_decode(claim_bytes)
+        if ce==.None && claim.org==org && claim.key==p.conn.peer && claim.name==name && claim.device==device && claim.public==public && handshake_invited(p.conn.proof,p.conn.proved,claim.secret) {
+            if s,se:=team_store(&a.team,org);se==.None {
+                if raw_org,_,oe:=org_head(s,org,context.temp_allocator);oe==.None {
+                    if grant_bytes,ge:=grant_take(s,&raw_org,claim.secret,time.now()._nsec,context.temp_allocator);ge==.None {
+                        if ad_bytes,ae:=admission_encode(grant_bytes,claim_bytes,context.temp_allocator);ae==.None {
+                            if ad_addr,pe:=object_put(s,.Admission,ad_bytes);pe==.None {
+                                if _,ace:=admission_accept(s,&raw_org,ad_addr);ace==.None {
+                                    store.commit(s)
+                                    admission_addr=ad_addr
+                                    e=.None
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
+    crypto.zero_explicit(&p.conn.proof,64)
     sync.mutex_unlock(&a.lock)
     if e!=.None {
         conn_send(p.conn,.Bye,transmute([]u8)string("the invite is used or past its time: ask for a new one"))
         return false
+    }
+    if port>0 {
+        host:=net.address_to_string(p.remote.address,context.temp_allocator)
+        team_peer_seen(&a.team,p.conn.peer,fmt.tprintf("%s:%d",host,port))
     }
     _,address,_:=team_org(&a.team,org)
     body:=make([dynamic]u8,context.temp_allocator)
     o:=org
     append(&body,..o[:])
     append(&body,..address[:])
+    append(&body,..admission_addr[:])
     if !conn_send(p.conn,.Welcome,body[:]) {return false}
     heads:=make([dynamic]Tell_Entry,context.temp_allocator)
     agent_heads(a,p.conn.peer,&heads)
     agent_event(a,"%s (%s) joined",device,name)
     agent_changed(a)
     return peer_tell(p,heads[:])
+}
+
+// Attaches an org to a central Kai server at address (zero-SSH registration):
+// learns the server's key and public address, adds it as .Node in the org
+// record, pushes the org chain and starts syncing immediately.
+agent_server_attach :: proc(a:^Agent,org:Org_Id,address:string) -> Error {
+    if address=="" || len(address)>ADDRESS_MAX {return team_fail(&a.team,.Invalid_Argument,"give the server's host:port")}
+    {
+        sync.mutex_lock(&a.lock)
+        defer sync.mutex_unlock(&a.lock)
+        o,_,oe:=team_org(&a.team,org)
+        if oe!=.None {return oe}
+        if role,ok:=org_role(&o,a.team.identity.key);!ok || role!=.Admin {
+            return team_fail(&a.team,.Unauthorized,"only an admin of the org attaches a server")
+        }
+    }
+    c,e:=conn_dial(address,a.team.identity,{},{},&a.stopping)
+    if e!=.None {return team_fail(&a.team,e,"no Kai server answered at that address")}
+    defer conn_free(c)
+    net.set_option(c.socket,.Receive_Timeout,WEB_LOGIN_SECONDS*time.Second)
+    if !conn_send(c,.Server_Info) {return team_fail(&a.team,.Unreachable,"the server closed the connection")}
+    buffer,be:=make([]u8,FRAME_MAX+NOISE_TAG)
+    if be!=nil {return .Out_Of_Memory}
+    defer delete(buffer)
+    kind,reply,ok:=conn_receive(c,buffer)
+    if !ok {return team_fail(&a.team,.Unreachable,"the server closed the connection")}
+    if kind==.Bye {return team_fail(&a.team,.Unauthorized,strings.clone(string(reply),context.temp_allocator))}
+    if kind!=.Server_Info {return team_fail(&a.team,.Corrupt,"unexpected answer from the server")}
+    r:=Reader{data=reply}
+    srv_name:=strings.clone(tail_string(&r),context.temp_allocator)
+    srv_device:=strings.clone(tail_string(&r),context.temp_allocator)
+    srv_public:=strings.clone(tail_string(&r),context.temp_allocator)
+    if r.short || !name_valid(srv_name) || !name_valid(srv_device) {return team_fail(&a.team,.Corrupt,"the server's identity is invalid")}
+    server_addr:=srv_public!=""?srv_public:address
+    if len(server_addr)>ADDRESS_MAX {return team_fail(&a.team,.Corrupt,"the server's public address is too long")}
+
+    chain:=make([dynamic][]u8,context.temp_allocator)
+    next_bytes:[]u8
+    {
+        sync.mutex_lock(&a.lock)
+        defer sync.mutex_unlock(&a.lock)
+        s,se:=team_store(&a.team,org)
+        if se!=.None {return se}
+        held,held_addr,he:=org_head(s,org,context.temp_allocator)
+        if he!=.None {return he}
+        if role,member:=org_role(&held,a.team.identity.key);!member || role!=.Admin {
+            return team_fail(&a.team,.Unauthorized,"only an admin of the org attaches a server")
+        }
+        rev:=make([dynamic][]u8,context.temp_allocator)
+        for x:=held_addr;x!={}; {
+            b,ge:=object_get(s,x,.Org,context.temp_allocator)
+            if ge!=.None {return ge}
+            rec,de:=org_decode(b,context.temp_allocator)
+            if de!=.None {return de}
+            append(&rev,b)
+            x=rec.prev
+        }
+        for k:=len(rev)-1;k>=0;k-=1 {append(&chain,rev[k])}
+        already:=false
+        if i:=org_member(&held,c.peer);i>=0 && held.members[i].role==.Node && held.members[i].address==server_addr {already=true}
+        if !already {
+            eff,_:=org_effective(s,&held,context.temp_allocator)
+            members:=make([dynamic]Member,0,len(eff.members)+1,context.temp_allocator)
+            append(&members,..eff.members)
+            replaced:=false
+            node:=Member{key=c.peer,role=.Node,name=srv_name,device=srv_device,address=server_addr}
+            for &m in members {
+                if m.key==c.peer {
+                    m=node
+                    replaced=true
+                    break
+                }
+            }
+            if !replaced {
+                if len(members)>=MEMBERS_MAX {return team_fail(&a.team,.Too_Large,"the org has as many members as it may")}
+                append(&members,node)
+            }
+            slice.sort_by(members[:],proc(a,b:Member) -> bool {return key_less(a.key,b.key)})
+            next:=held
+            next.version,next.prev,next.signer,next.time,next.members=held.version+1,held_addr,a.team.identity.key,time.now()._nsec,members[:]
+            ne:Error
+            next_bytes,ne=org_encode(&next,&a.team.identity,context.temp_allocator)
+            if ne!=.None {return ne}
+            append(&chain,next_bytes)
+        }
+    }
+    body:=make([dynamic]u8,context.temp_allocator)
+    o:=org
+    append(&body,..o[:])
+    count:=u16(len(chain))
+    append(&body,u8(count),u8(count>>8))
+    for b in chain {
+        n:=u32(len(b))
+        append(&body,u8(n),u8(n>>8),u8(n>>16),u8(n>>24))
+        append(&body,..b)
+    }
+    if len(body)>FRAME_MAX-1 {return team_fail(&a.team,.Too_Large,"the org history is larger than one registration frame")}
+    if !conn_send(c,.Org_Register,body[:]) {return team_fail(&a.team,.Unreachable,"the server closed the connection")}
+    kind,reply,ok=conn_receive(c,buffer)
+    if !ok {return team_fail(&a.team,.Unreachable,"the server closed the connection")}
+    if kind==.Bye {return team_fail(&a.team,.Unauthorized,strings.clone(string(reply),context.temp_allocator))}
+    if kind!=.Welcome {return team_fail(&a.team,.Corrupt,"unexpected answer from the server")}
+    {
+        sync.mutex_lock(&a.lock)
+        defer sync.mutex_unlock(&a.lock)
+        if next_bytes!=nil {
+            if s,se:=team_store(&a.team,org);se==.None {
+                if addr,pe:=object_put(s,.Org,next_bytes);pe==.None {
+                    org_accept(s,org,addr)
+                    store.commit(s)
+                }
+            }
+        }
+        team_peer_seen(&a.team,c.peer,server_addr)
+    }
+    agent_event(a,"attached server %s",server_addr)
+    agent_sync_now(a)
+    return .None
+}
+
+// Opens a 1-use invite to org. When org has a server (.Node with an address)
+// and it accepts an admin-signed Invite_Grant, the token targets the server so
+// the invitee joins even while this machine is off (via_server = true).
+// Otherwise falls back to a local invite on fallback_addresses.
+agent_invite :: proc(a:^Agent,org:Org_Id,role:Role,name:string,fallback_addresses:[]string,allocator:=context.allocator) -> (text:string,via_server:bool,error:Error) {
+    o,_,oe:=team_org(&a.team,org)
+    if oe!=.None {return "",false,oe}
+    if r,ok:=org_role(&o,a.team.identity.key);!ok || r!=.Admin {
+        return "",false,team_fail(&a.team,.Unauthorized,"only an admin of the org invites: ask one")
+    }
+    if name!="" && !name_valid(name) {
+        return "",false,team_fail(&a.team,.Invalid_Argument,"a name has 1 to 64 bytes of UTF-8 without control characters")
+    }
+    if server_key,server_addr,has_server:=org_server(&o);has_server {
+        secret:[32]u8
+        crypto.rand_bytes(secret[:])
+        defer crypto.zero_explicit(&secret,32)
+        grant:=Invite_Grant{
+            org=org,secret_hash=secret_digest(secret),role=role,
+            revoke_epoch=o.revoke_epoch,
+            expires=time.now()._nsec+i64(INVITE_HOURS)*i64(time.Hour),
+            signer=a.team.identity.key,name=name,
+        }
+        if grant_bytes,ge:=invite_grant_encode(&grant,&a.team.identity,context.temp_allocator);ge==.None {
+            if c,de:=conn_dial(server_addr,a.team.identity,server_key,{},&a.stopping);de==.None {
+                defer conn_free(c)
+                net.set_option(c.socket,.Receive_Timeout,WEB_LOGIN_SECONDS*time.Second)
+                if conn_send(c,.Invite_Grant,grant_bytes) {
+                    if buffer,be:=make([]u8,FRAME_MAX+NOISE_TAG);be==nil {
+                        defer delete(buffer)
+                        if kind,reply,ok:=conn_receive(c,buffer);ok && kind==.Bye && string(reply)=="ok" {
+                            addrs:=[1]string{server_addr}
+                            token:=Invite_Token{org=org,key=server_key,secret=secret,addresses=addrs[:]}
+                            made,te:=invite_text(&token,allocator)
+                            return made,te==.None,te
+                        }
+                    }
+                }
+            }
+        }
+    }
+    made,te:=team_invite(&a.team,org,role,name,fallback_addresses,allocator)
+    return made,false,te
+}
+
+// Revokes every open invite of org: removes local invites, bumps revoke_epoch
+// on the org record and notifies the org's server to drop pending grants.
+agent_invites_revoke :: proc(a:^Agent,org:Org_Id) -> (cleared:int,error:Error) {
+    sync.mutex_lock(&a.lock)
+    cleared,error=team_invites_clear(&a.team,org)
+    sync.mutex_unlock(&a.lock)
+    if error!=.None {return}
+    agent_changed(a)
+    o,_,oe:=team_org(&a.team,org)
+    if oe!=.None {return}
+    server_key,server_addr,has_server:=org_server(&o)
+    if !has_server {return}
+    c,de:=conn_dial(server_addr,a.team.identity,server_key,{},&a.stopping)
+    if de!=.None {return}
+    defer conn_free(c)
+    net.set_option(c.socket,.Receive_Timeout,WEB_LOGIN_SECONDS*time.Second)
+    body:[size_of(Org_Id)+8]u8
+    id:=org
+    copy(body[:],id[:])
+    epoch:=u64le(o.revoke_epoch)
+    ep:=transmute([8]u8)epoch
+    copy(body[size_of(Org_Id):],ep[:])
+    if !conn_send(c,.Invite_Revoke,body[:]) {return}
+    if buffer,be:=make([]u8,FRAME_MAX+NOISE_TAG);be==nil {
+        defer delete(buffer)
+        conn_receive(c,buffer)
+    }
+    return cleared,.None
+}
+
+@(private)
+agent_serve_server_info :: proc(a:^Agent,c:^Conn,buffer:[]u8) {
+    if !a.options.node || a.options.max_orgs<=0 {
+        conn_send(c,.Bye,transmute([]u8)string("this Kai agent does not host orgs"))
+        return
+    }
+    body:=make([dynamic]u8,context.temp_allocator)
+    write_text(&body,a.team.name)
+    write_text(&body,a.team.device)
+    write_text(&body,a.options.public)
+    if !conn_send(c,.Server_Info,body[:]) {return}
+    net.set_option(c.socket,.Receive_Timeout,WEB_LOGIN_SECONDS*time.Second)
+    kind,next_body,ok:=conn_receive(c,buffer)
+    if ok && kind==.Org_Register {agent_handle_org_register(a,c,next_body)}
+}
+
+@(private)
+agent_handle_org_register :: proc(a:^Agent,c:^Conn,body:[]u8) {
+    if !a.options.node || a.options.max_orgs<=0 {
+        conn_send(c,.Bye,transmute([]u8)string("this Kai agent does not host orgs"))
+        return
+    }
+    r:=Reader{data=body}
+    org:=read_value(&r,Org_Id)
+    count:=int(read_value(&r,u16le))
+    if r.short || org=={} || count==0 || count>ORG_CHAIN_MAX {
+        conn_send(c,.Bye,transmute([]u8)string("invalid org registration"))
+        return
+    }
+    raws:=make([dynamic][]u8,0,count,context.temp_allocator)
+    recs:=make([dynamic]Org,0,count,context.temp_allocator)
+    for k in 0..<count {
+        n:=int(read_value(&r,u32le))
+        rec_bytes:=read_bytes(&r,n)
+        if r.short || len(rec_bytes)==0 {
+            conn_send(c,.Bye,transmute([]u8)string("invalid org record chain"))
+            return
+        }
+        rec,de:=org_decode(rec_bytes,context.temp_allocator)
+        if de!=.None || rec.id!=org {
+            conn_send(c,.Bye,transmute([]u8)string("corrupt org record in chain"))
+            return
+        }
+        if !org_signs(k==0?nil:&recs[k-1],&rec) {
+            conn_send(c,.Bye,transmute([]u8)string("org record signatures do not hold"))
+            return
+        }
+        append(&raws,rec_bytes)
+        append(&recs,rec)
+    }
+    if r.at!=len(body) {
+        conn_send(c,.Bye,transmute([]u8)string("trailing bytes in org registration"))
+        return
+    }
+    newest:=&recs[count-1]
+    caller_role,caller_ok:=org_role(newest,c.peer)
+    self_role,self_ok:=org_role(newest,a.team.identity.key)
+    if !caller_ok || caller_role!=.Admin || !self_ok || self_role!=.Node {
+        conn_send(c,.Bye,transmute([]u8)string("an org admin must list this server as a node to register"))
+        return
+    }
+    head_addr:store.Hash
+    sync.mutex_lock(&a.lock)
+    s0,existing_err:=team_store(&a.team,org,false)
+    created_store:=existing_err!=.None
+    existing:=false
+    if !created_store {
+        _,_,he0:=org_head(s0,org,context.temp_allocator)
+        existing=he0==.None
+    }
+    if !existing && len(team_org_ids(&a.team))>=a.options.max_orgs {
+        sync.mutex_unlock(&a.lock)
+        conn_send(c,.Bye,transmute([]u8)string("this server hosts as many orgs as it allows"))
+        return
+    }
+    s,se:=team_store(&a.team,org,true)
+    if se!=.None {
+        sync.mutex_unlock(&a.lock)
+        conn_send(c,.Bye,transmute([]u8)string("the server could not open the org store"))
+        return
+    }
+    accept_err:Error
+    for rec_bytes in raws {
+        head_addr,accept_err=object_put(s,.Org,rec_bytes)
+        if accept_err!=.None {break}
+    }
+    if accept_err==.None {_,_,accept_err=org_accept(s,org,head_addr)}
+    if accept_err!=.None {
+        if created_store {tenants_remove(a.team.tenants,org)}
+        sync.mutex_unlock(&a.lock)
+        conn_send(c,.Bye,transmute([]u8)string("the org record chain does not hold"))
+        return
+    }
+    store.commit(s)
+    sync.mutex_unlock(&a.lock)
+    welcome:=make([dynamic]u8,context.temp_allocator)
+    o:=org
+    zero_hash:store.Hash
+    append(&welcome,..o[:])
+    append(&welcome,..head_addr[:])
+    append(&welcome,..zero_hash[:])
+    conn_send(c,.Welcome,welcome[:])
+    agent_event(a,"registered org %s",newest.name)
+    agent_changed(a)
+}
+
+@(private)
+agent_handle_invite_grant :: proc(a:^Agent,c:^Conn,body:[]u8) {
+    if !a.options.node {
+        conn_send(c,.Bye,transmute([]u8)string("this agent does not hold offline invites"))
+        return
+    }
+    grant,ge:=invite_grant_decode(body)
+    if ge!=.None || grant.signer!=c.peer {
+        conn_send(c,.Bye,transmute([]u8)string("invalid invite grant"))
+        return
+    }
+    sync.mutex_lock(&a.lock)
+    e:Error=.Missing
+    if s,se:=team_store(&a.team,grant.org);se==.None {
+        if o,_,oe:=org_head(s,grant.org,context.temp_allocator);oe==.None {
+            e=grant_put(s,&o,body,time.now()._nsec)
+            if e==.None {store.commit(s)}
+        }
+    }
+    sync.mutex_unlock(&a.lock)
+    conn_send(c,.Bye,transmute([]u8)string(e==.None?"ok":"the server refused the invite grant"))
+}
+
+@(private)
+agent_handle_invite_revoke :: proc(a:^Agent,c:^Conn,body:[]u8) {
+    if !a.options.node {
+        conn_send(c,.Bye,transmute([]u8)string("this agent does not hold offline invites"))
+        return
+    }
+    r:=Reader{data=body}
+    org:=read_value(&r,Org_Id)
+    epoch:=u64(read_value(&r,u64le))
+    if r.short || r.at!=len(body) {
+        conn_send(c,.Bye,transmute([]u8)string("invalid invite revoke"))
+        return
+    }
+    sync.mutex_lock(&a.lock)
+    ok:=false
+    if s,se:=team_store(&a.team,org);se==.None {
+        if o,_,oe:=org_head(s,org,context.temp_allocator);oe==.None {
+            if role,member:=org_role(&o,c.peer);member && role==.Admin {
+                grants_revoke(s,org,epoch)
+                store.commit(s)
+                ok=true
+            }
+        }
+    }
+    sync.mutex_unlock(&a.lock)
+    conn_send(c,.Bye,transmute([]u8)string(ok?"ok":"only an admin revokes invites"))
 }
 
 // Sets the web sign-in of this device on the server at address: a server of
@@ -1447,7 +1925,7 @@ agent_ddc_ask :: proc(a:^Agent,org:Org_Id,key:store.Hash,timeout:=5*time.Second)
     defer peer_unpin(a,from)
     s,se:=team_store(&a.team,org)
     if se!=.None {return false}
-    held,_,oe:=org_head(s,org,context.temp_allocator)
+    held,_,oe:=org_effective_head(s,org,context.temp_allocator)
     if oe!=.None {return false}
     found,_=peer_ddc_take(from,&held,s,key,address)
     return
@@ -1474,12 +1952,13 @@ agent_look_run :: proc(a:^Agent) {
     for {
         free_all(context.temp_allocator)
         sync.mutex_lock(&a.lock)
-        if !a.stopping && !a.changed {sync.cond_wait_with_timeout(&a.wake,&a.lock,LOOK_SECONDS*time.Second)}
+        if !a.stopping && !a.changed && !a.redial {sync.cond_wait_with_timeout(&a.wake,&a.lock,LOOK_SECONDS*time.Second)}
         if a.stopping {
             sync.mutex_unlock(&a.lock)
             return
         }
-        a.changed=false
+        changed,redial:=a.changed,a.redial
+        a.changed,a.redial=false,false
         // Reap the peers whose reader ended and that no caller holds.
         dead:=make([dynamic]^Peer,context.temp_allocator)
         for k:=0;k<len(a.peers); {
@@ -1508,8 +1987,10 @@ agent_look_run :: proc(a:^Agent) {
             }
         }
         now:=time.now()._nsec
-        if now-last_dial>=REDIAL_SECONDS*i64(time.Second) {
+        if redial || now-last_dial>=REDIAL_SECONDS*i64(time.Second) {
             last_dial=now
+            agent_dial_members(a)
+        } else if changed {
             agent_dial_members(a)
         }
     }
