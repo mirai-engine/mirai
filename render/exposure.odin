@@ -94,7 +94,7 @@ view_exposure :: proc(p: ^Pass) -> f32 {
 		p.r.stats.ev100 = ev100
 		p.r.stats.exposure_settling = e.mode == .Auto && view.exposure_settling
 	}
-	return exposure_of_ev100(ev100 - e.compensation, display_bias(p.r)) / scale
+	return exposure_of_ev100(ev100 - e.compensation, display_exposure_bias(p.r.display_transform)) / scale
 }
 
 // Whether the auto exposure of the main view is still coming to what it
@@ -117,7 +117,7 @@ frame_exposure_copy :: proc(p: ^Pass, constants: rhi.Transient) {
 	e := exposure_of_camera(p.r, p.camera)
 	if e.mode != .Auto || view.exposure == 0 || constants.ptr == nil {return}
 	scale := p.r.scene.light_scale if p.r.scene.light_scale > 0 else 1
-	if view.exposure_adapted != (Exposure_Adapted{generation = view.exposure_generation, compensation = e.compensation, light_scale = scale, bias = display_bias(p.r), recorded = true}) {return}
+	if view.exposure_adapted != (Exposure_Adapted{generation = view.exposure_generation, compensation = e.compensation, light_scale = scale, bias = display_exposure_bias(p.r.display_transform), recorded = true}) {return}
 	rhi.cmd_copy_buffer(p.cmd, view.exposure, u64(offset_of(Gpu_Exposure, exposure)), constants.buffer, constants.offset + u64(offset_of(Gpu_Frame, exposure)), size_of(f32))
 }
 
@@ -148,7 +148,7 @@ pass_exposure :: proc(p: ^Pass) -> bool {
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS1, view.exposure_histogram)
 		rhi.cmd_dispatch(cmd, groups(meter.grid.x, 16), groups(meter.grid.y, 16))
 	}
-	bias := display_bias(r)
+	bias := display_exposure_bias(r.display_transform)
 	Adapt :: struct {manual: u32, ev100, compensation, adaptation: f32, range: [2]f32, dt, light_scale: f32, generation, speed: u32, bias: f32, pad: u32, sky_through: [4]f32}
 	adapt := Adapt{manual = 1 if e.mode == .Manual else 0, ev100 = e.ev100, compensation = e.compensation, adaptation = max(e.adaptation, 0), range = e.range if e.range != {} else AUTO_EXPOSURE_RANGE, dt = r.delta_time, light_scale = scale, generation = view.exposure_generation, speed = 1 if e.adaptation_mode == .Speed else 0, bias = bias, sky_through = 1}
 	// A view drawn from the eye of the frame in a medium (frame_eye_medium): what of the sky reaches it.

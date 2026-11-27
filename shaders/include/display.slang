@@ -7,6 +7,11 @@
 #define MIRAI_DISPLAY_SLANG
 #include "scene.slang"
 
+// Stops below and above middle gray the axes of the LUT reach: past what the
+// tone scale clamps to for a display of 1000 nits.
+#define DISPLAY_STOPS_BELOW 12.0
+#define DISPLAY_STOPS_ABOVE 14.5
+
 float3 linear_to_srgb(float3 c) {
     return lerp(c * 12.92, 1.055 * pow(c, float3(1.0 / 2.4)) - 0.055, step(float3(0.0031308), c));
 }

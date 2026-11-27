@@ -519,11 +519,6 @@ AIR_SKY_ROWS           :: VIEW_CAPACITY
 AIR_AERIAL_SIZE        :: 32
 AIR_AERIAL_SLICES      :: 32
 DISPLAY_LUT_SIZE       :: 65
-DISPLAY_LUT_COLUMNS    :: 8 // slices a row of the texture of a LUT of the project (display_lut.comp)
-// Stops below and above middle gray the axes of a display LUT reach (display_shaper): past what
-// the tone scale of ACES 2.0 clamps to for a display of 1000 nits.
-DISPLAY_STOPS_BELOW    :: 12.0
-DISPLAY_STOPS_ABOVE    :: 14.5
 MIDDLE_GRAY            :: f32(0.18)
 EXPOSURE_BINS          :: 128
 // Exposure_State.source: the exposure of a view's generation is an estimate

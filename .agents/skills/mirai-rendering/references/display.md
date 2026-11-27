@@ -167,16 +167,10 @@ and then the dither. The debug views show sRGB in [0, 1].
   Rec.709, D65, 100 nits, sRGB): tone scale on the J of its CAM16 model, with the mid gray at 10
   nits, and chroma and gamut compression that preserves hue. A gray stays gray and a very bright
   color goes toward white: for filmic images and strong emissive light.
-- **LUT**: a LUT the project bakes (`Display_Transform_Settings.lut`), for the look of another
-  engine or tool: a texture of `display_lut_texture_size` imported `--data --uncompressed`, its
-  65 slices of 65² in rows of `DISPLAY_LUT_COLUMNS`, each texel the encoded color shown for the
-  light at `display_lut_value` of its place. `lut_gray` is the exposed gray it shows as ACES 2.0
-  shows the card, which sets its exposure bias. Until the texture is whole in the pool the frames
-  show Neutral; `renderer_set_display_lut` copies it with `display_lut.comp`.
 - **Baking.** `display_build` bakes ACES 2.0 on the GPU (`display_tables.comp`, `display_lut.comp`)
-  into `Renderer.display_aces` once, when the renderer starts; `Renderer.display_lut` is the LUT
-  the tonemap and the UI particles read, ACES 2.0 or that of the project. Its axes are log2 around
-  the mid gray (`display_shaper`, `DISPLAY_STOPS_BELOW`/`ABOVE`); outside its range it is clipped.
+  into `Renderer.display_lut` once, when the renderer starts; the tonemap and the UI particles
+  read it when the project chooses ACES 2.0. Its axes are log2 around the mid gray
+  (`display_shaper`); outside its range it is clipped.
 - **Grading.** A grading LUT would go in the shaper space, before the display LUT; none exists.
 - **HDR.** The swapchain is SDR sRGB; PQ or scRGB are pending (issue #53). Another display is
   another `Display_Desc` and another bake.
