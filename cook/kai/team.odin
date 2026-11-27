@@ -281,10 +281,12 @@ Repo_View :: struct {
     id:vcs.Repo_Id,
     name:string,
     public:bool,
-    main:string,   // the change id main names, "" while its change is not here
+    main:string,    // the change id main names, "" while its change is not here
     published:bool, // someone published main
-    here:bool,     // every object main reaches is here
-    linked:bool,   // a workspace of this machine is one of it
+    here:bool,      // every object main reaches is here
+    linked:bool,    // a workspace of this machine is one of it
+    bytes:i64,      // total file bytes of main's tree when its root folder meta is here
+    has_size:bool,
 }
 
 Org_View :: struct {
@@ -325,7 +327,12 @@ org_view :: proc(t:^vcs.Team,id:vcs.Org_Id,v:^Org_View,allocator:=context.temp_a
                 if b.name!=BOOKMARK_DEFAULT {continue}
                 x.published=true
                 c,ce:=vcs.change_get(s,b.target,context.temp_allocator)
-                if ce==.None {x.main=change_text(c.id,allocator)}
+                if ce==.None {
+                    x.main=change_text(c.id,allocator)
+                    if totals,te:=vcs.tree_totals(s,c.tree);te==.None {
+                        x.bytes,x.has_size=i64(totals.size),true
+                    }
+                }
                 missing:=make([dynamic]store.Hash,context.temp_allocator)
                 vcs.closure_walk(s,{b.target},nil,&missing)
                 x.here=ce==.None && len(missing)==0
@@ -343,6 +350,8 @@ Project_Sync_State :: struct {
     linked:bool,
     needs_publish:bool,
     can_publish:bool,
+    bytes:i64,
+    has_size:bool,
 }
 
 project_sync_state :: proc(s:^store.Store,t:^vcs.Team,root:string,allocator:=context.temp_allocator) -> (state:Project_Sync_State) {
@@ -350,6 +359,12 @@ project_sync_state :: proc(s:^store.Store,t:^vcs.Team,root:string,allocator:=con
     repo,working,change_id,bookmark,ok:=vcs.workspace_working_info(s,root)
     if !ok {return}
     state.kai=bookmark!=""?strings.clone(bookmark,allocator):change_text(change_id,allocator)
+    c,ce:=vcs.change_get(s,working,context.temp_allocator)
+    if ce==.None {
+        if totals,te:=vcs.tree_totals(s,c.tree);te==.None {
+            state.bytes,state.has_size=i64(totals.size),true
+        }
+    }
     if t==nil {return}
     l,linked:=vcs.team_link_of(t,repo)
     if !linked {return}
@@ -357,7 +372,6 @@ project_sync_state :: proc(s:^store.Store,t:^vcs.Team,root:string,allocator:=con
     if o,_,oe:=vcs.team_org(t,l.org);oe==.None {
         if role,member:=vcs.org_role(&o,t.identity.key);member && role>=.Writer {state.can_publish=true}
     }
-    c,ce:=vcs.change_get(s,working,context.temp_allocator)
     if ce!=.None {return}
     main_target:vcs.Revision
     has_main:=false

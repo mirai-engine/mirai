@@ -13,6 +13,7 @@ import "core:time"
 import ka "mirai:cook/kai"
 import vcs "mirai:kai"
 import "mirai:project"
+import "mirai:std/base"
 
 // The team from the editor: the Kai state of the machine of its store (its
 // profile and orgs) and the machine's agent, which runs in this process on
@@ -432,7 +433,12 @@ kai_team_read :: proc(s:^Session) {
         for r,k in o.repos {
             state:="not published yet"
             if r.published {state=r.main!=""?fmt.aprintf("main %s%s",r.main,r.here?"":", on its way",allocator=a):"main published"}
-            x.repos[k]={r.name,fmt.aprintf("%s, %s",r.public?"public":"org only",state,allocator=a)}
+            kind:=r.public?"public":"org only"
+            if r.has_size {
+                x.repos[k]={r.name,fmt.aprintf("%s · %s · %s",kind,base.bytes_text(r.bytes),state,allocator=a)}
+            } else {
+                x.repos[k]={r.name,fmt.aprintf("%s, %s",kind,state,allocator=a)}
+            }
         }
     }
     if t.running {

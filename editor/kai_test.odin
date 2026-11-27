@@ -479,6 +479,14 @@ editor_kai_publishes_to_main_and_a_launcher_pulls_it :: proc(t:^testing.T) {
     }
     if !testing.expectf(t,joined.stage=="done" && joined.name=="studio","the join is done: %v",joined^) {return}
     testing.expect_value(t,projects_unpulled_count(b),1)
+    // Before pulling, the agent fetches main's Change and root Folder meta so the Launcher knows its size.
+    sized:=time.tick_now()
+    for !b.kai.team.view.orgs[0].repos[0].has_size {
+        if !testing.expect(t,kai_tick(a,b,sized),"unpulled repository learns main's size") {return}
+        kai_team_read(b)
+    }
+    remote_repo:=b.kai.team.view.orgs[0].repos[0]
+    testing.expectf(t,remote_repo.has_size && remote_repo.bytes>0 && !remote_repo.here && remote_repo.main!="","unpulled repo reports size before Pull: %v",remote_repo)
     folder:=fmt.tprintf("%s/pulled",base.test_folder(t,"kai-team-pull"))
     clone:=Api_Kai_Clone_Params{org="studio",repository=orgs.orgs[0].repositories[0].name,folder=folder}
     pulling:^Api_Kai_Clone

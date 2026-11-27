@@ -1165,7 +1165,26 @@ peer_pull :: proc(p:^Peer,told:[]Tell_Entry) -> (changed:bool) {
         for r in o.repos {
             kept:=a.options.node
             for l in links {kept||=l.org==id && l.repo==r.id}
-            if !kept {continue}
+            if !kept {
+                if refs,_,re:=repo_refs_head(s,id,r.id,context.temp_allocator);re==.None {
+                    for b in refs.bookmarks {
+                        if b.name!="main" {continue}
+                        c,ce:=change_get(s,b.target,context.temp_allocator)
+                        if ce!=.None {
+                            if !peer_fetch(p,id,s,{b.target},nil) {continue}
+                            changed=true
+                            c,ce=change_get(s,b.target,context.temp_allocator)
+                            if ce!=.None {continue}
+                        }
+                        if c.tree!={} {
+                            if _,te:=tree_totals(s,c.tree);te!=.None {
+                                if peer_fetch(p,id,s,{c.tree},nil) {changed=true}
+                            }
+                        }
+                    }
+                }
+                continue
+            }
             refs,_,re:=repo_refs_head(s,id,r.id,context.temp_allocator)
             if re!=.None {continue}
             roots:=make([dynamic]Walk_Item,context.temp_allocator)

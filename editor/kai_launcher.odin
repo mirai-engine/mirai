@@ -124,7 +124,11 @@ projects_repository_row :: proc(s:^Session,r:^Kai_Repository,busy:bool) {
             case pulling && c.stage==.Failed: what=string(c.why[:c.why_length])
             case pulling && c.stage==.Waiting:
                 chunks,bytes:=kai_clone_progress(t)
-                what=fmt.tprintf("%s, %s: %d chunks, %s pulled",o.name,kind,chunks,base.bytes_text(bytes))
+                if x.has_size && x.bytes>0 {
+                    what=fmt.tprintf("%s, %s: %s / %s pulled",o.name,kind,base.bytes_text(bytes),base.bytes_text(x.bytes))
+                } else {
+                    what=fmt.tprintf("%s, %s: %d chunks, %s pulled",o.name,kind,chunks,base.bytes_text(bytes))
+                }
             case !x.published: what=fmt.tprintf("%s, %s: nobody published it yet",o.name,kind)
             case x.main=="": what=fmt.tprintf("%s, %s: main is published, Pull takes it",o.name,kind)
             case !x.here && !x.linked: what=fmt.tprintf("%s, %s: main %s",o.name,kind,x.main)
@@ -140,6 +144,11 @@ projects_repository_row :: proc(s:^Session,r:^Kai_Repository,busy:bool) {
             return
         }
         if pulling && c.stage==.Failed && ui.button(ctx,ui.id(ctx,"repository_dismiss"),{label="Dismiss",variant="ghost",height=28,size=ui.metric(ctx,"font_small")}).clicked {kai_ask(s,"kai.clone",`{"cancel":true}`)}
+        if x.has_size {
+            if ui.box(ctx,{width=ui.fixed(64),height=ui.FIT,align_x=.End}) {
+                ui.label(ctx,base.bytes_text(x.bytes),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
+            }
+        }
         another:=c.stage==.Waiting && !pulling // one pull at a time
         if ui.button(ctx,ui.id(ctx,"repository_pull"),{label=pulled?"Open":"Pull",variant="accent",width=72,height=30,center=true,disabled=busy || another || !x.published}).clicked {
             if pulled {

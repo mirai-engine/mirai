@@ -80,6 +80,8 @@ Projects_Row :: struct {
     needs_publish:bool, // unpublished working changes or parent differs from shared main
     can_publish:bool,   // this machine has write permission in its linked org
     opened:[32]u8,      // when an editor last opened it, as the list says it
+    bytes:i64,          // project content bytes (excluding .mirai and .git)
+    size:[24]u8,        // formatted bytes, as base.bytes_text produces
     recent_index:int,   // index in p.recent.projects, or -1 when discovered on disk
     thumbnail:u64,      // the key of the image its tile shows in the atlas of previews; 0: its letter
     thumbnail_slot:int,
@@ -267,8 +269,42 @@ projects_row_fill :: proc(s:^Session,folder:string,opened:i64,recent_index:int,n
         sync:=ka.project_sync_state(&s.store,team,folder)
         base.text_set(row.kai[:],sync.kai)
         row.linked,row.needs_publish,row.can_publish=sync.linked,sync.needs_publish,sync.can_publish
+        row.bytes=sync.bytes if sync.has_size else projects_folder_bytes(folder)
+        base.text_set(row.size[:],base.bytes_text(row.bytes))
     }
     base.text_set(row.opened[:],projects_when(opened,now,region))
+    return
+}
+
+// Content bytes of a local project without Kai, skipping .mirai and .git,
+// bounded so a very large folder never stalls opening the launcher.
+@(private)
+projects_folder_bytes :: proc(root:string) -> (total:i64) {
+    STACK_CAP :: 64
+    FILES_CAP :: 10000
+    stack:[STACK_CAP]string
+    depth:=1
+    stack[0]=root
+    seen:=0
+    for depth>0 && seen<FILES_CAP {
+        depth-=1
+        dir:=stack[depth]
+        entries,err:=os.read_all_directory_by_path(dir,context.temp_allocator)
+        if err!=nil {continue}
+        for e in entries {
+            seen+=1
+            if seen>=FILES_CAP {break}
+            if e.name==".mirai" || e.name==".git" {continue}
+            if e.type==.Directory {
+                if depth<STACK_CAP {
+                    stack[depth]=e.fullpath
+                    depth+=1
+                }
+            } else if e.type==.Regular {
+                total+=e.size
+            }
+        }
+    }
     return
 }
 
@@ -1076,6 +1112,11 @@ projects_row :: proc(s:^Session,index:int,row:^Projects_Row,folder:string,busy,o
                 }
             }
             if row.missing && ui.button(ctx,ui.id(ctx,"project_remove",index),{label="Remove",variant="ghost",height=24,size=ui.metric(ctx,"font_small"),disabled=busy}).clicked {remove=true}
+            if size_text:=base.text_get(row.size[:]);!row.missing && size_text!="" {
+                if ui.box(ctx,{width=ui.fixed(64),height=ui.FIT,align_x=.End}) {
+                    ui.label(ctx,size_text,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
+                }
+            }
             if ui.box(ctx,{width=ui.fixed(76),height=ui.FIT,align_x=.End}) {
                 ui.label(ctx,base.text_get(row.opened[:]),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
             }

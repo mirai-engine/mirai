@@ -26,6 +26,7 @@ Api_Kai_Repository :: struct {
     id,name:string,
     public:bool,
     main:string `mirai:"label=The change main names; empty while nobody published it"`,
+    bytes:i64 `mirai:"optional,label=Total file bytes of main's tree when known"`,
     here:bool `mirai:"label=Every object main reaches is in this store"`,
     linked:bool `mirai:"label=A workspace of this machine is one of it"`,
 }
@@ -182,7 +183,7 @@ api_kai_orgs_fill :: proc(s:^Session,call:^api.Call,t:^vcs.Team) {
         o.repositories=make([]Api_Kai_Repository,len(v.repos),call.allocator)
         for x,i in v.repos {
             id:=x.id
-            o.repositories[i]={ka.hex(id[:],call.allocator),x.name,x.public,x.main,x.here,x.linked}
+            o.repositories[i]={ka.hex(id[:],call.allocator),x.name,x.public,x.main,x.bytes,x.here,x.linked}
         }
         append(&orgs,o)
     }

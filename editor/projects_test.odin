@@ -360,6 +360,17 @@ projects_list_refreshes_and_publishes_linked_workspaces :: proc(t:^testing.T) {
     projects_rows_read(&s)
     if !testing.expect_value(t,p.row_count,1) {return}
     testing.expect(t,p.rows[0].linked && p.rows[0].needs_publish && p.rows[0].can_publish,"linked unpublished workspace offers Publish")
+    testing.expectf(t,p.rows[0].bytes>0 && base.text_get(p.rows[0].size[:])!="","local Kai project reports its size: %d (%q)",p.rows[0].bytes,base.text_get(p.rows[0].size[:]))
+
+    // A non-Kai local project also reports its content size (excluding .mirai).
+    plain:=project.path(root,"plain",allocator=context.temp_allocator)
+    testing.expect(t,base.make_directory_all(project.path(plain,".mirai",allocator=context.temp_allocator))==nil)
+    pm:=project.manifest_default("Plain")
+    testing.expect_value(t,project.manifest_write(project.path(plain,project.PROJECT_FILE,allocator=context.temp_allocator),&pm).code,project.Error_Code.None)
+    testing.expect(t,os.write_entire_file(project.path(plain,"data.bin",allocator=context.temp_allocator),make([]u8,2048,context.temp_allocator))==nil)
+    testing.expect(t,os.write_entire_file(project.path(plain,".mirai","cache.bin",allocator=context.temp_allocator),make([]u8,65536,context.temp_allocator))==nil)
+    plain_bytes:=projects_folder_bytes(plain)
+    testing.expectf(t,plain_bytes>=2048 && plain_bytes<65536,"non-Kai project size counts content and skips .mirai: %d",plain_bytes)
 
     kai_launcher_publish(&s,proj)
     testing.expect(t,p.rows[0].linked && !p.rows[0].needs_publish,"after direct publish the workspace shows Synced")
