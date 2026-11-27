@@ -642,7 +642,7 @@ Device_Capacities :: struct {
 	deletions: int, // destroyed objects a frame slot keeps until the GPU finished it
 }
 
-DEFAULT_DEVICE_CAPACITIES :: Device_Capacities{buffers = 4096, textures = 8192, samplers = 64, pipelines = 512, accels = 16384, deletions = 4096}
+DEFAULT_DEVICE_CAPACITIES :: Device_Capacities{buffers = 4096, textures = 8192, samplers = 64, pipelines = 2048, accels = 16384, deletions = 4096}
 
 Device_Desc :: struct {
 	app_name:                   cstring,
