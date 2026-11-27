@@ -74,6 +74,7 @@ Kai_Team_View :: struct {
     peer_lines:[]Kai_Line,
     publish:string,        // the Changes view's line over Publish to main
     orgs:[]ka.Org_View,
+    org_names:[]string, // of orgs, for the publish organization dropdown
     org:int,            // of orgs, the one the open project is in; -1 when none
     link:vcs.Link,      // of the open project, when org>=0
     shared:[]ka.Shared_Bookmark,
@@ -405,6 +406,8 @@ kai_team_read :: proc(s:^Session) {
         append(&orgs,o)
     }
     v.orgs,v.repositories=orgs[:],repositories[:]
+    v.org_names=make([]string,len(orgs),a)
+    for o,i in orgs {v.org_names[i]=o.name}
     v.machine=fmt.aprintf("%s (%s)",t.team.name,t.team.device,allocator=a)
     v.default_server=kai_default_server(s,a)
     v.lines=make([]Kai_Org_Lines,len(orgs),a)
@@ -569,10 +572,25 @@ kai_clone_progress :: proc(t:^Kai_Team) -> (chunks:int,bytes:i64) {
 }
 
 // The folder a repository is pulled into: one of the location named after it.
-kai_clone_folder :: proc(s:^Session,name:string) -> string {
+// If an unrelated folder of that name already exists on disk (including
+// case-insensitive matches on Windows/macOS), picks <name>-2, <name>-3, ...
+kai_clone_folder :: proc(s:^Session,org:vcs.Org_Id,repo:vcs.Repo_Id,name:string) -> string {
     p:=s.projects
     if p==nil {return ""}
     location:=strings.trim_space(string(p.location[:p.location_length]))
     if location=="" || !vcs.repo_name_valid(name) {return ""}
-    return project.path(location,name,allocator=context.temp_allocator)
+    same_repo :: proc(s:^Session,folder:string,org:vcs.Org_Id,repo:vcs.Repo_Id) -> bool {
+        if !ka.project_exists(folder) || s.kai==nil || s.kai.team==nil || !s.kai.team.opened {return false}
+        local,_,_,_,ok:=vcs.workspace_working_info(&s.store,folder)
+        if !ok {return false}
+        l,linked:=vcs.team_link_of(&s.kai.team.team,local)
+        return linked && l.org==org && l.repo==repo
+    }
+    candidate:=project.path(location,name,allocator=context.temp_allocator)
+    if !os.exists(candidate) || same_repo(s,candidate,org,repo) {return candidate}
+    for n in 2..=64 {
+        alt:=project.path(location,fmt.tprintf("%s-%d",name,n),allocator=context.temp_allocator)
+        if !os.exists(alt) || same_repo(s,alt,org,repo) {return alt}
+    }
+    return candidate
 }

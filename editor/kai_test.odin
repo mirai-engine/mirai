@@ -487,6 +487,19 @@ editor_kai_publishes_to_main_and_a_launcher_pulls_it :: proc(t:^testing.T) {
     }
     remote_repo:=b.kai.team.view.orgs[0].repos[0]
     testing.expectf(t,remote_repo.has_size && remote_repo.bytes>0 && !remote_repo.here && remote_repo.main!="","unpulled repo reports size before Pull: %v",remote_repo)
+    // An unrelated existing folder with the same name in the pull location does not collide: kai_clone_folder picks <name>-2.
+    pull_parent:=base.test_folder(t,"kai-team-pull-collision")
+    if pull_parent!="" {
+        repo_name:=orgs.orgs[0].repositories[0].name
+        existing:=fmt.tprintf("%s/%s",pull_parent,repo_name)
+        testing.expect(t,base.make_directory_all(existing)==nil)
+        bp:=new(Projects);defer free(bp)
+        bp.location_length=copy(bp.location[:],pull_parent)
+        b.projects=bp
+        defer b.projects=nil
+        picked:=kai_clone_folder(b,b.kai.team.view.orgs[0].id,remote_repo.id,repo_name)
+        testing.expectf(t,strings.has_suffix(picked,fmt.tprintf("%s-2",repo_name)),"kai_clone_folder avoids unrelated existing folder: %s",picked)
+    }
     folder:=fmt.tprintf("%s/pulled",base.test_folder(t,"kai-team-pull"))
     clone:=Api_Kai_Clone_Params{org="studio",repository=orgs.orgs[0].repositories[0].name,folder=folder}
     pulling:^Api_Kai_Clone

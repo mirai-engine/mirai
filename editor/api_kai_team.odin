@@ -491,7 +491,7 @@ api_kai_clone :: proc(s:^Session,call:^api.Call) {
             api.call_failf(call,api.INVALID_PARAMS,"%q names no repository of %s: kai.org lists them",p.repository,o.name)
             return
         }
-        folder:=p.folder!=""?p.folder:kai_clone_folder(s,o.repos[repo].name)
+        folder:=p.folder!=""?p.folder:kai_clone_folder(s,org,o.repos[repo].id,o.repos[repo].name)
         if message:=kai_clone_start(s,org,o.repos[repo].id,o.repos[repo].name,folder);message!="" {
             api.call_fail(call,api.SERVER_ERROR,message)
             return

@@ -57,27 +57,27 @@ kai_launcher_publish :: proc(s:^Session,folder:string) {
     notify(s,fmt.tprintf("Published %s to %s",change[:min(len(change),8)],ka.BOOKMARK_DEFAULT))
 }
 
-// The repositories of the orgs this machine has not pulled, under the
-// projects of All projects; one pulling stays while it pulls.
+// The repositories of each org this machine has not pulled, grouped into one
+// section per org under LOCAL in All projects; one pulling stays while it pulls.
 projects_org_rows :: proc(s:^Session,busy:bool,needle:string) {
     if s.kai==nil || s.kai.team==nil {return}
     ctx:=s.gui.ctx
     t:=s.kai.team
-    head:=false
-    for &r,i in t.view.repositories {
-        o:=&t.view.orgs[r.org]
-        x:=&o.repos[r.repo]
-        if !projects_unpulled(t,o,x) {continue}
-        if needle!="" && !strings.contains(strings.to_lower(x.name,context.temp_allocator),needle) && !strings.contains(strings.to_lower(o.name,context.temp_allocator),needle) {continue}
-        if !head {
-            head=true
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),align_y=.End,padding={4,0,0,4}}) {
-                ui.label(ctx,"FROM YOUR ORGS, NOT ON THIS MACHINE",ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_caption"),font=ui.FONT_SEMIBOLD)
+    for &o,oi in t.view.orgs {
+        head:=false
+        for &x,ri in o.repos {
+            if !projects_unpulled(t,&o,&x) {continue}
+            if needle!="" && !strings.contains(strings.to_lower(x.name,context.temp_allocator),needle) && !strings.contains(strings.to_lower(o.name,context.temp_allocator),needle) {continue}
+            if !head {
+                head=true
+                title:=t.view.lines[oi].title if oi<len(t.view.lines) && t.view.lines[oi].title!="" else o.name
+                projects_section_head(ctx,title)
             }
+            ui.id_push(ctx,ui.id(ctx,"org_repo",oi*1024+ri))
+            r:=Kai_Repository{org=oi,repo=ri}
+            projects_repository_row(s,&r,busy)
+            ui.id_pop(ctx)
         }
-        ui.id_push(ctx,ui.id(ctx,"repository",i))
-        projects_repository_row(s,&r,busy)
-        ui.id_pop(ctx)
     }
 }
 
@@ -110,8 +110,8 @@ projects_repository_row :: proc(s:^Session,r:^Kai_Repository,busy:bool) {
     x:=&o.repos[r.repo]
     c:=&t.clone
     pulling:=c.stage!=.None && c.org==o.id && c.repo==x.id
-    folder:=kai_clone_folder(s,x.name)
-    pulled:=folder!="" && os.is_file(project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator))
+    folder:=kai_clone_folder(s,o.id,x.id,x.name)
+    pulled:=folder!="" && x.linked && os.is_file(project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator))
     fill,stroke:ui.Color
     if pulling {fill,stroke=ui.tone(ctx,"accent_soft"),ui.tone(ctx,"accent")}
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(PROJECTS_ROW),gap=12,padding={10,0,10,0},align_y=.Center,fill=fill,stroke=stroke,stroke_width=1,radius=8}) {
@@ -121,19 +121,19 @@ projects_repository_row :: proc(s:^Session,r:^Kai_Repository,busy:bool) {
             kind:=x.public?"public":"org only"
             what:=""
             switch {
-            case pulling && c.stage==.Failed: what=string(c.why[:c.why_length])
+            case pulling && c.stage==.Failed: what=fmt.tprintf("%s · pull failed",kind)
             case pulling && c.stage==.Waiting:
                 chunks,bytes:=kai_clone_progress(t)
                 if x.has_size && x.bytes>0 {
-                    what=fmt.tprintf("%s, %s: %s / %s pulled",o.name,kind,base.bytes_text(bytes),base.bytes_text(x.bytes))
+                    what=fmt.tprintf("%s · %s / %s pulled",kind,base.bytes_text(bytes),base.bytes_text(x.bytes))
                 } else {
-                    what=fmt.tprintf("%s, %s: %d chunks, %s pulled",o.name,kind,chunks,base.bytes_text(bytes))
+                    what=fmt.tprintf("%s · %d chunks, %s pulled",kind,chunks,base.bytes_text(bytes))
                 }
-            case !x.published: what=fmt.tprintf("%s, %s: nobody published it yet",o.name,kind)
-            case x.main=="": what=fmt.tprintf("%s, %s: main is published, Pull takes it",o.name,kind)
-            case !x.here && !x.linked: what=fmt.tprintf("%s, %s: main %s",o.name,kind,x.main)
-            case !x.here: what=fmt.tprintf("%s, %s: main %s is on its way from your org's machines",o.name,kind,x.main)
-            case: what=fmt.tprintf("%s, %s: main %s",o.name,kind,x.main)
+            case !x.published: what=fmt.tprintf("%s · not published yet",kind)
+            case x.main=="": what=fmt.tprintf("%s · main is published, Pull takes it",kind)
+            case !x.here && !x.linked: what=fmt.tprintf("%s · main %s",kind,x.main)
+            case !x.here: what=fmt.tprintf("%s · main %s is on its way from your org's machines",kind,x.main)
+            case: what=fmt.tprintf("%s · main %s",kind,x.main)
             }
             ui.label(ctx,what,ui.metric(ctx,"font_small"),pulling && c.stage==.Failed?ui.tone(ctx,"danger"):ui.tone(ctx,"text_faint"),0,fade=true)
         }
@@ -156,6 +156,11 @@ projects_repository_row :: proc(s:^Session,r:^Kai_Repository,busy:bool) {
             } else {
                 kai_ask(s,"kai.clone",`{{"org":%s,"repository":%s,"folder":%s}}`,kai_quote(org_hex(o.id)),kai_quote(x.name),kai_quote(folder))
             }
+        }
+    }
+    if pulling && c.stage==.Failed && c.why_length>0 {
+        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={12,6,12,6},fill=ui.tone(ctx,"danger_soft"),radius=6}) {
+            ui.text(ctx,string(c.why[:c.why_length]),ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"danger")),ui.GROW,ui.FIT)
         }
     }
 }

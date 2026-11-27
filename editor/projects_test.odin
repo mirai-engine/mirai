@@ -467,4 +467,17 @@ the_launcher_team_view_scrolls_with_the_wheel :: proc(t:^testing.T) {
     testing.expect(t,project.path_same(base.text_get(p.opening[:]),template),"return to launcher targets empty template")
     projects_next_cancel(s)
     testing.expect(t,!p.next && !p.next_launcher,"cancel clears pending launcher return")
+
+    // Long launcher errors wrap onto multiple lines instead of truncating and can be dismissed.
+    p.team=false
+    p.show_all=true
+    long_err:="C:/Users/espar/source/repos/mirai/Dreamscape/plugins/unreal/editor/scene/lights.odin(218:16): Undeclared name in render package when building editor library for project"
+    p.error_length=copy(p.error[:],long_err)
+    ui.frame_begin(&ctx,{size=size,pointer_absent=true})
+    projects_build(s)
+    err_frame:=ui.frame_end(&ctx)
+    testing.expect(t,!err_frame.overflow && ctx.stats.layout_errors==0,"wrapped error banner lays out cleanly")
+    dismiss_rect,has_dismiss:=ui.widget_rect(&ctx,ui.id(&ctx,"projects_error_dismiss"))
+    testing.expect(t,has_dismiss && dismiss_rect.w>0,"wrapped error banner has dismiss button")
+    p.error_length=0
 }

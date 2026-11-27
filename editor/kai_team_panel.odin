@@ -126,13 +126,9 @@ kai_publish_build :: proc(s:^Session) {
     f:=&t.fields
     t.publish_org=clamp(t.publish_org,0,len(v.orgs)-1)
     target:=&v.orgs[t.publish_org]
-    if len(v.orgs)>1 {
-        kai_line(ctx,"Publish this project to:","text_faint")
-        names:=make([]string,len(v.orgs),context.temp_allocator)
-        for o,i in v.orgs {names[i]=o.name}
-        if pick:=kai_buttons(s,"kai_publish_org",names,active=t.publish_org);pick>=0 {t.publish_org=pick}
-    } else {
-        kai_line(ctx,v.publish,"text_faint")
+    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,align_y=.Center}) {
+        ui.label(ctx,"Organization",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
+        ui.dropdown(ctx,ui.id(ctx,"kai_publish_org"),{list=v.org_names},&t.publish_org,{width=-1,height=ui.metric(ctx,"control")-4})
     }
     if pick:=kai_buttons(s,"kai_visibility",{"Org only","Public"},active=f.public?1:0);pick>=0 {f.public=pick==1}
     if kai_buttons(s,"kai_publish",{"Publish to main"},accent=0)==0 {

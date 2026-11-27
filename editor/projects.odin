@@ -1113,7 +1113,7 @@ projects_content :: proc(s:^Session,popup:bool) {
     }
     if p.team {
         projects_team_build(s,projects_content_width(s,popup))
-        if p.error_length>0 {ui.label(ctx,string(p.error[:p.error_length]),ui.metric(ctx,"font_small"),ui.tone(ctx,"danger_soft"),0,fade=true)}
+        projects_error_build(ctx,p)
         return
     }
     if ui.scroll_area(ctx,ui.id(ctx,"projects_list"),&p.scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=2}) {
@@ -1121,10 +1121,15 @@ projects_content :: proc(s:^Session,popup:bool) {
         opening:=projects_opening_row(p)
         removed:=-1
         shown:=false // the row selected is in the list the search leaves
+        local_head:=false
         for i in 0..<count {
             row:=&p.rows[i]
             folder:=base.text_get(row.path[:])
             if needle!="" && !strings.contains(strings.to_lower(base.text_get(row.name[:]),context.temp_allocator),needle) && !strings.contains(strings.to_lower(folder,context.temp_allocator),needle) {continue}
+            if p.show_all && !local_head {
+                local_head=true
+                projects_section_head(ctx,"LOCAL")
+            }
             remove,double:=projects_row(s,i,row,folder,busy,opening==i)
             if remove && row.recent_index>=0 {removed=row.recent_index}
             if double {open=true}
@@ -1148,7 +1153,7 @@ projects_content :: proc(s:^Session,popup:bool) {
     if chosen:=projects_chosen(p);open && !busy && chosen>=0 {
         if message:=projects_open(s,base.text_get(p.rows[chosen].path[:]));message!="" {notify(s,message)}
     }
-    if p.error_length>0 {ui.label(ctx,string(p.error[:p.error_length]),ui.metric(ctx,"font_small"),ui.tone(ctx,"danger_soft"),0,fade=true)}
+    projects_error_build(ctx,p)
     if p.template_count==0 {return}
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=10,layer={enabled=busy,opacity=PROJECTS_FADED}}) {
         ui.label(ctx,"START FROM A TEMPLATE",ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_caption"),font=ui.FONT_SEMIBOLD)
@@ -1157,6 +1162,24 @@ projects_content :: proc(s:^Session,popup:bool) {
                 if projects_template_card(s,i,busy,false,false).clicked {projects_new_start(s,i)}
             }
         }
+    }
+}
+
+// A section header in All projects (LOCAL, then one per organization).
+@(private)
+projects_section_head :: proc(ctx:^ui.Context,title:string) {
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(26),align_y=.End,padding={4,0,0,4}}) {
+        ui.label(ctx,title,ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_caption"),font=ui.FONT_SEMIBOLD)
+    }
+}
+
+// Wrapped error banner in the launcher so long compiler/pull errors are never truncated.
+@(private)
+projects_error_build :: proc(ctx:^ui.Context,p:^Projects) {
+    if p.error_length<=0 {return}
+    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=8,align_y=.Start,padding={10,8,8,8},fill=ui.tone(ctx,"danger_soft"),radius=6}) {
+        ui.text(ctx,string(p.error[:p.error_length]),ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"danger")),ui.GROW,ui.FIT)
+        if ui.icon_button(ctx,ui.id(ctx,"projects_error_dismiss"),.Cross,20,"ghost","Dismiss error").clicked {p.error_length=0}
     }
 }
 
