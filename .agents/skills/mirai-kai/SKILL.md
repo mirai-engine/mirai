@@ -91,8 +91,7 @@ read a server's repositories, from a browser.
 2. `mirai kai invite <org> [--role reader|writer|admin|node] [--mine] [--at host:port]` prints one
    `kai2...` text; `--mine` makes it a second machine of the same person, `--at` names the
    host:port a router forwards when the other machine is on another network (the editor and
-   `mirai kai agent` ask the router themselves). `mirai kai invite <org> --revoke` makes every
-   open invite of the org admit nobody.
+   `mirai kai agent` ask the router themselves).
 3. The other machine runs `mirai kai join <invite>` (the editor: Team, Join), then `mirai kai pull
    <org> <repository> <folder>` (the launcher's All projects: Pull) to get main's files.
 
@@ -170,7 +169,7 @@ read a server's repositories, from a browser.
   in `cook/kai`.
 - Org and sync: `noise_pq_handshake_proves_both_keys_and_refuses_tampering`,
   `org_records_hold_only_when_signed_by_who_may`,
-  `offline_invite_records_enforce_signatures_and_revoke_epoch`,
+  `offline_invite_records_enforce_signatures`,
   `a_closure_is_whole_only_when_every_chunk_is_here`,
   `two_machines_pair_by_invite_and_sync_over_tcp`,
   `a_joined_peer_reconnects_after_the_inviter_restarts` and
@@ -182,7 +181,7 @@ read a server's repositories, from a browser.
   mappings.
 - Server: `a_server_keeps_an_org_and_its_web_view_shows_what_each_one_may_see`,
   `a_server_registers_an_org_and_admits_offline_invites`,
-  `forged_replayed_or_revoked_offline_admissions_are_refused`,
+  `forged_or_replayed_offline_admissions_are_refused`,
   `the_web_view_answers_100_continue_and_stops_with_idle_clients` and
   `hub_http_refuses_hostile_requests` in `kai/hub`.
 - Editor: [its focal tests](../mirai-editor/references/kai.md#verification).

@@ -85,7 +85,7 @@ pulls what the shared bookmarks reach.
   this project's linked org (or a 1-line note pointing to Changes or Projects -> Team when not in
   an org yet); NEW ORG, JOIN AN ORG and unrelated orgs never appear inside a project.
 - Each org's `INVITE` section sits under a divider with its own `INVITE` header above the
-  Writer | Reader role switcher, For another machine of mine, Make invite and Revoke invites.
+  Writer | Reader role switcher, For another machine of mine and Make invite.
   The generated read-only invite field sits beside a compact clipboard icon button
   (`User_Icon.Paste`) that turns into a green checkmark for `KAI_COPIED_SHOW` when copied.
 - Join, web sign-in and server attach run on a thread of the agent (`kai_task_start`), so frames

@@ -13,9 +13,9 @@ deployed. Its options are `hub.SERVE_USAGE`.
   `--max-orgs` (default `MAX_ORGS_DEFAULT` = 64; `0` disables self-registration) bounds how many
   orgs admins may register. `--public host:port` is the address the org lists for the server.
 - Offline invites: admins of a hosted org can register 1-use `Invite_Grant` vouchers on the server
-  (`Invite_Grant`, cleared by `Invite_Revoke`), which invitees redeem while the admin is offline
-  into verified `(Invite_Grant, Invite_Claim)` admissions ([invites](org.md#invites)). The server
-  still signs no org record and cannot forge membership.
+  (`Invite_Grant`), which invitees redeem while the admin is offline into verified
+  `(Invite_Grant, Invite_Claim)` admissions ([invites](org.md#invites)). The server still signs
+  no org record and cannot forge membership.
 - Under `--root` (`kai-server` by default; `mirai kai serve --store S` uses that store's folder):
   `server/` is its own store (its device key and web accounts) and each org lives in a store of
   its own, `orgs/<org hex>` (`kai.Tenants`), so a server that keeps the orgs of several customers

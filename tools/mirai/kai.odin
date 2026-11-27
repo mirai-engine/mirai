@@ -12,14 +12,14 @@ import "mirai:project"
 import "mirai:store"
 
 KAI_USAGE :: "kai init|status|snapshot|log [-n N]|diff [change]|undo|conflicts | kai prune | kai new [change...] [-m text] | kai describe [change] -m text | kai split [-r change] [-m text] <path...> | kai restore <change> | kai bookmarks [move <name> <change>] | kai publish [bookmark] [-m text] [--project P] [--store S]"
-KAI_TEAM_USAGE :: "kai profile <name> <device> | kai org list | kai org new <name> | kai org show <org> | kai org add public|org [--org O] | kai org role <org> <member> reader|writer|admin|node | kai org remove <org> <member> | kai invite <org> [--role R] [--mine] [--at host:port] | kai invite <org> --revoke | kai join <invite> | kai pull <org> <repository> <folder> | kai agent [--port N] [--public host:port] | kai web-login <server host:port> <name> | kai serve [options] [--store S]"
+KAI_TEAM_USAGE :: "kai profile <name> <device> | kai org list | kai org new <name> | kai org show <org> | kai org add public|org [--org O] | kai org role <org> <member> reader|writer|admin|node | kai org remove <org> <member> | kai invite <org> [--role R] [--mine] [--at host:port] | kai join <invite> | kai pull <org> <repository> <folder> | kai agent [--port N] [--public host:port] | kai web-login <server host:port> <name> | kai serve [options] [--store S]"
 
 // What the verbs of mirai kai take, besides --store and their positionals.
 @(private="file")
 Kai_Args :: struct {
     folder,message,change,port,org,role,at,public:string,
     limit:int,
-    mine,revoke:bool,
+    mine:bool,
     positionals:[dynamic]string,
 }
 
@@ -29,7 +29,7 @@ KAI_OPTIONS :: [?][2]string{
     {"init","--project"},{"status","--project"},{"snapshot","--project"},{"log","--project -n"},{"diff","--project"},
     {"undo","--project"},{"conflicts","--project"},{"new","--project -m"},{"describe","--project -m"},
     {"split","--project -r -m"},{"restore","--project"},{"bookmarks","--project"},{"publish","--project -m"},
-    {"prune",""},{"profile",""},{"org","--project --org"},{"invite","--role --mine --at --revoke"},{"join",""},
+    {"prune",""},{"profile",""},{"org","--project --org"},{"invite","--role --mine --at"},{"join",""},
     {"pull",""},{"agent","--port --public"},{"web-login",""},
 }
 
@@ -58,8 +58,8 @@ kai_args :: proc(verb:string,args:[]string,a:^Kai_Args) -> int {
         takes:=false
         for word in strings.fields(allowed,context.temp_allocator) {takes||=word==name}
         if !takes {return argument_unknown(command,arg)}
-        if name=="--mine" || name=="--revoke" {
-            if name=="--mine" {a.mine=true} else {a.revoke=true}
+        if name=="--mine" {
+            a.mine=true
             continue
         }
         value,_,ok:=option_value(args,&i,name)
@@ -301,15 +301,6 @@ kai_team :: proc(verb:string,t:^vcs.Team,a:^Kai_Args) -> int {
     case "invite":
         org,ok:=org_find(t,positionals[0])
         if !ok {return 1}
-        if a.revoke {
-            agent:vcs.Agent
-            if vcs.agent_start(&agent,t,{port=-1})!=.None {return kai_why(verb,t)}
-            defer vcs.agent_stop(&agent)
-            cleared,e:=vcs.agent_invites_revoke(&agent,org)
-            if e!=.None {return kai_why(verb,&agent.team)}
-            fmt.printfln("%d open invites of the org admit nobody now",cleared)
-            return 0
-        }
         role,_:=ka.role_of(a.role)
         addresses:=make([dynamic]string,context.temp_allocator)
         if a.at!="" {

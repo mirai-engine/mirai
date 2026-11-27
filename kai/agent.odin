@@ -728,7 +728,7 @@ peer_read_run :: proc(p:^Peer) {
     if be!=nil {return}
     defer delete(buffer)
     // An initiator's first message: control RPCs (web sign-in, server attach,
-    // offline invite grant/revoke) run on their own short connection so they
+    // offline invite grant) run on their own short connection so they
     // never disrupt the sync connection kept to the peer's key.
     first:Msg
     first_body:[]u8
@@ -752,9 +752,6 @@ peer_read_run :: proc(p:^Peer) {
             return
         case .Invite_Grant:
             agent_handle_invite_grant(a,c,first_body)
-            return
-        case .Invite_Revoke:
-            agent_handle_invite_revoke(a,c,first_body)
             return
         }
     }
@@ -866,7 +863,7 @@ peer_read_run :: proc(p:^Peer) {
         case .Bye:
             agent_event(a,"%s left: %s",peer_text(p),string(body[:min(len(body),300)]))
             return
-        case .Web_Login,.Server_Info,.Org_Register,.Invite_Grant,.Invite_Revoke:
+        case .Web_Login,.Server_Info,.Org_Register,.Invite_Grant:
             return // only as an initiator's first message
         }
     }
@@ -1636,7 +1633,6 @@ agent_invite :: proc(a:^Agent,org:Org_Id,role:Role,name:string,fallback_addresse
         defer crypto.zero_explicit(&secret,32)
         grant:=Invite_Grant{
             org=org,secret_hash=secret_digest(secret),role=role,
-            revoke_epoch=o.revoke_epoch,
             expires=time.now()._nsec+i64(INVITE_HOURS)*i64(time.Hour),
             signer=a.team.identity.key,name=name,
         }
@@ -1660,36 +1656,6 @@ agent_invite :: proc(a:^Agent,org:Org_Id,role:Role,name:string,fallback_addresse
     }
     made,te:=team_invite(&a.team,org,role,name,fallback_addresses,allocator)
     return made,false,te
-}
-
-// Revokes every open invite of org: removes local invites, bumps revoke_epoch
-// on the org record and notifies the org's server to drop pending grants.
-agent_invites_revoke :: proc(a:^Agent,org:Org_Id) -> (cleared:int,error:Error) {
-    sync.mutex_lock(&a.lock)
-    cleared,error=team_invites_clear(&a.team,org)
-    sync.mutex_unlock(&a.lock)
-    if error!=.None {return}
-    agent_changed(a)
-    o,_,oe:=team_org(&a.team,org)
-    if oe!=.None {return}
-    server_key,server_addr,has_server:=org_server(&o)
-    if !has_server {return}
-    c,de:=conn_dial(server_addr,a.team.identity,server_key,{},&a.stopping)
-    if de!=.None {return}
-    defer conn_free(c)
-    net.set_option(c.socket,.Receive_Timeout,WEB_LOGIN_SECONDS*time.Second)
-    body:[size_of(Org_Id)+8]u8
-    id:=org
-    copy(body[:],id[:])
-    epoch:=u64le(o.revoke_epoch)
-    ep:=transmute([8]u8)epoch
-    copy(body[size_of(Org_Id):],ep[:])
-    if !conn_send(c,.Invite_Revoke,body[:]) {return}
-    if buffer,be:=make([]u8,FRAME_MAX+NOISE_TAG);be==nil {
-        defer delete(buffer)
-        conn_receive(c,buffer)
-    }
-    return cleared,.None
 }
 
 @(private)
@@ -1819,34 +1785,6 @@ agent_handle_invite_grant :: proc(a:^Agent,c:^Conn,body:[]u8) {
     }
     sync.mutex_unlock(&a.lock)
     conn_send(c,.Bye,transmute([]u8)string(e==.None?"ok":"the server refused the invite grant"))
-}
-
-@(private)
-agent_handle_invite_revoke :: proc(a:^Agent,c:^Conn,body:[]u8) {
-    if !a.options.node {
-        conn_send(c,.Bye,transmute([]u8)string("this agent does not hold offline invites"))
-        return
-    }
-    r:=Reader{data=body}
-    org:=read_value(&r,Org_Id)
-    epoch:=u64(read_value(&r,u64le))
-    if r.short || r.at!=len(body) {
-        conn_send(c,.Bye,transmute([]u8)string("invalid invite revoke"))
-        return
-    }
-    sync.mutex_lock(&a.lock)
-    ok:=false
-    if s,se:=team_store(&a.team,org);se==.None {
-        if o,_,oe:=org_head(s,org,context.temp_allocator);oe==.None {
-            if role,member:=org_role(&o,c.peer);member && role==.Admin {
-                grants_revoke(s,org,epoch)
-                store.commit(s)
-                ok=true
-            }
-        }
-    }
-    sync.mutex_unlock(&a.lock)
-    conn_send(c,.Bye,transmute([]u8)string(ok?"ok":"only an admin revokes invites"))
 }
 
 // Sets the web sign-in of this device on the server at address: a server of

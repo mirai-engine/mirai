@@ -542,10 +542,10 @@ a_server_registers_an_org_and_admits_offline_invites :: proc(t:^testing.T) {
     testing.expect(t,!os.exists(fmt.tprintf("%s/server/orgs/%s",folder,id_text(org3))),"refused org creates no tenant folder")
 }
 
-// Replayed 1-use invites, revoked grants, and forged or stale admissions
-// (including a server attempting to sign a grant itself) are all refused.
+// Replayed 1-use invites and forged admissions (including a server attempting
+// to sign a grant itself) are all refused.
 @(test)
-forged_replayed_or_revoked_offline_admissions_are_refused :: proc(t:^testing.T) {
+forged_or_replayed_offline_admissions_are_refused :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"kai-hub-forged-admit")
     if folder=="" {return}
     mac,pc1,pc2:Machine
@@ -571,31 +571,24 @@ forged_replayed_or_revoked_offline_admissions_are_refused :: proc(t:^testing.T) 
     if !testing.expect_value(t,kai.agent_server_attach(&mac.agent,org,server_addr),kai.Error.None) {return}
     mac_addr:=fmt.tprintf("127.0.0.1:%d",kai.agent_port(&mac.agent))
     inv1,via1,e1:=kai.agent_invite(&mac.agent,org,.Writer,"",{mac_addr},context.temp_allocator)
-    inv2,via2,e2:=kai.agent_invite(&mac.agent,org,.Writer,"",{mac_addr},context.temp_allocator)
-    if !testing.expect(t,e1==.None && via1 && e2==.None && via2,"both offline invites created") {return}
+    if !testing.expect(t,e1==.None && via1,"offline invite created") {return}
 
     // First invite succeeds once; replay by a second device is refused.
     if _,je:=kai.agent_join(&pc1.agent,inv1);!testing.expect_value(t,je,kai.Error.None) {return}
     _,replay_err:=kai.agent_join(&pc2.agent,inv1)
     testing.expect_value(t,replay_err,kai.Error.Expired)
 
-    // Revoking invites bumps revoke_epoch and drops inv2 on the server.
-    _,rev_err:=kai.agent_invites_revoke(&mac.agent,org)
-    testing.expect_value(t,rev_err,kai.Error.None)
-    _,revoked_err:=kai.agent_join(&pc2.agent,inv2)
-    testing.expect_value(t,revoked_err,kai.Error.Expired)
-
     // Direct cryptographic verification: a server, writer, stranger, tampered
-    // signature, wrong secret, stale epoch, or duplicate claim cannot forge membership.
+    // signature, wrong secret, or duplicate claim cannot forge membership.
     writer:=kai.identity_make()
     stranger:=kai.identity_make()
     stranger2:=kai.identity_make()
     testing.expect_value(t,kai.team_member_set(&mac.team,org,{key=writer.key,role=.Writer,name="W",device="pc"}),kai.Error.None)
     org_rec,_,oe:=kai.org_head(&mac.s,org,context.temp_allocator)
-    if !testing.expect(t,oe==.None && org_rec.revoke_epoch>=1,"org record has bumped revoke_epoch") {return}
+    if !testing.expect_value(t,oe,kai.Error.None) {return}
 
-    make_pair :: proc(t:^testing.T,org:kai.Org_Id,epoch:u64,signer,claimer:^kai.Identity,secret:[32]u8) -> (gb,cb:[]u8) {
-        g:=kai.Invite_Grant{org=org,secret_hash=kai.secret_digest(secret),role=.Writer,revoke_epoch=epoch,expires=time.now()._nsec+i64(time.Hour),signer=signer.key}
+    make_pair :: proc(t:^testing.T,org:kai.Org_Id,signer,claimer:^kai.Identity,secret:[32]u8) -> (gb,cb:[]u8) {
+        g:=kai.Invite_Grant{org=org,secret_hash=kai.secret_digest(secret),role=.Writer,expires=time.now()._nsec+i64(time.Hour),signer=signer.key}
         ge,ce:kai.Error
         gb,ge=kai.invite_grant_encode(&g,signer,context.temp_allocator)
         testing.expect_value(t,ge,kai.Error.None)
@@ -608,7 +601,7 @@ forged_replayed_or_revoked_offline_admissions_are_refused :: proc(t:^testing.T) 
     secret,wrong_secret:[32]u8
     crypto.rand_bytes(secret[:])
     crypto.rand_bytes(wrong_secret[:])
-    gb,cb:=make_pair(t,org,org_rec.revoke_epoch,&mac.team.identity,&stranger,secret)
+    gb,cb:=make_pair(t,org,&mac.team.identity,&stranger,secret)
 
     // Tampered grant or claim signature, or mismatched secret.
     bad_g:=slice.clone(gb,context.temp_allocator);bad_g[len(bad_g)-1]~=1
@@ -617,13 +610,13 @@ forged_replayed_or_revoked_offline_admissions_are_refused :: proc(t:^testing.T) 
     bad_c:=slice.clone(cb,context.temp_allocator);bad_c[len(bad_c)-1]~=1
     _,ec:=kai.admission_encode(gb,bad_c,context.temp_allocator)
     testing.expect_value(t,ec,kai.Error.Corrupt)
-    _,wrong_cb:=make_pair(t,org,org_rec.revoke_epoch,&mac.team.identity,&stranger,wrong_secret)
+    _,wrong_cb:=make_pair(t,org,&mac.team.identity,&stranger,wrong_secret)
     _,es:=kai.admission_encode(gb,wrong_cb,context.temp_allocator)
     testing.expect_value(t,es,kai.Error.Unauthorized)
 
     // Server (.Node), Writer, or stranger cannot forge an admin Invite_Grant.
     for forger in ([]^kai.Identity{&h.team.identity,&writer,&stranger}) {
-        fg,fc:=make_pair(t,org,org_rec.revoke_epoch,forger,&stranger2,secret)
+        fg,fc:=make_pair(t,org,forger,&stranger2,secret)
         ad_b,ae:=kai.admission_encode(fg,fc,context.temp_allocator)
         if testing.expect_value(t,ae,kai.Error.None) {
             addr,pe:=kai.object_put(&mac.s,.Admission,ad_b)
@@ -633,20 +626,13 @@ forged_replayed_or_revoked_offline_admissions_are_refused :: proc(t:^testing.T) 
         }
     }
 
-    // Grant from a revoked epoch is refused.
-    stale_g,stale_c:=make_pair(t,org,org_rec.revoke_epoch-1,&mac.team.identity,&stranger,secret)
-    stale_b,_:=kai.admission_encode(stale_g,stale_c,context.temp_allocator)
-    stale_addr,_:=kai.object_put(&mac.s,.Admission,stale_b)
-    _,stale_err:=kai.admission_accept(&mac.s,&org_rec,stale_addr)
-    testing.expect_value(t,stale_err,kai.Error.Unauthorized)
-
     // Valid admission accepted once; a second claim reusing the same 1-use grant is refused.
     ok_b,ok_ae:=kai.admission_encode(gb,cb,context.temp_allocator)
     testing.expect_value(t,ok_ae,kai.Error.None)
     ok_addr,_:=kai.object_put(&mac.s,.Admission,ok_b)
     changed,ace:=kai.admission_accept(&mac.s,&org_rec,ok_addr)
     testing.expect(t,ace==.None && changed,"valid admission accepted")
-    _,dup_cb:=make_pair(t,org,org_rec.revoke_epoch,&mac.team.identity,&stranger2,secret)
+    _,dup_cb:=make_pair(t,org,&mac.team.identity,&stranger2,secret)
     dup_b,_:=kai.admission_encode(gb,dup_cb,context.temp_allocator)
     dup_addr,_:=kai.object_put(&mac.s,.Admission,dup_b)
     _,dup_err:=kai.admission_accept(&mac.s,&org_rec,dup_addr)

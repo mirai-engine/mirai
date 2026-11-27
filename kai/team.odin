@@ -219,7 +219,7 @@ team_org_server :: proc(t:^Team,id:Org_Id) -> (key:Key,address:string,ok:bool) {
 // Writes the next version of org after edit changed a copy of the newest.
 // Admins automatically fold verified offline admissions into Org.members.
 @(private)
-team_org_edit :: proc(t:^Team,id:Org_Id,data:rawptr,edit:proc(t:^Team,members:^[dynamic]Member,repos:^[dynamic]Org_Repo,data:rawptr) -> Error,bump_revoke:=false) -> Error {
+team_org_edit :: proc(t:^Team,id:Org_Id,data:rawptr,edit:proc(t:^Team,members:^[dynamic]Member,repos:^[dynamic]Org_Repo,data:rawptr) -> Error) -> Error {
     s:=team_store(t,id) or_return
     held,address,he:=org_head(s,id,context.temp_allocator)
     if he!=.None {return team_fail(t,he,"this machine is no member of that org: join it with an invite from one of its admins")}
@@ -235,7 +235,6 @@ team_org_edit :: proc(t:^Team,id:Org_Id,data:rawptr,edit:proc(t:^Team,members:^[
     if edit!=nil {edit(t,&members,&repos,data) or_return}
     next:=held
     next.version,next.prev,next.members,next.repos=held.version+1,address,members[:],repos[:]
-    if bump_revoke {next.revoke_epoch=held.revoke_epoch+1}
     if _,e:=org_write(s,&next,&t.identity,time.now()._nsec);e!=.None {
         if e==.Unauthorized {return team_fail(t,e,"only an admin of the org changes its members, and a writer its repositories: ask an admin")}
         return team_fail(t,e,"the store refused the org's record: give this user access to the store")
@@ -288,7 +287,7 @@ team_member_remove :: proc(t:^Team,org:Org_Id,key:Key) -> Error {
         if members[found].role==.Admin && admins==1 {return team_fail(t,.Invalid_Argument,"the org's last admin stays: make another member admin first")}
         ordered_remove(members,found)
         return .None
-    },bump_revoke=true)
+    })
 }
 
 // Adds a repository to org, or renames it and sets whether it is public.
@@ -475,31 +474,6 @@ team_invite_take :: proc(t:^Team,org:Org_Id,proof,proved:[32]u8) -> (role:Role,n
     }
     store.commit(t.store)
     return {},"",.Expired
-}
-
-// Removes every open local invite of org and bumps its revoke_epoch when this
-// machine is an admin: any leaked or server-held invite admits nobody.
-team_invites_clear :: proc(t:^Team,org:Org_Id) -> (cleared:int,error:Error) {
-    refs,e:=store.ref_list(t.store,INVITE_NAMESPACE,context.temp_allocator)
-    if e!=.None && e!=.Missing {return 0,store_error(e)}
-    for ref in refs {
-        bytes,ge:=object_get(t.store,ref.hash,.Invite,context.temp_allocator)
-        if ge!=.None {continue}
-        r:=Reader{data=bytes}
-        head:=read_value(&r,Invite_Head)
-        if r.short || head.org!=org {continue}
-        if re:=store.ref_remove(t.store,INVITE_NAMESPACE,ref.name);re!=.None {return cleared,store_error(re)}
-        cleared+=1
-    }
-    if ce:=store.commit(t.store);ce!=.None {return cleared,store_error(ce)}
-    if s,se:=team_store(t,org);se==.None {
-        if o,_,oe:=org_head(s,org,context.temp_allocator);oe==.None {
-            if role,ok:=org_role(&o,t.identity.key);ok && role==.Admin {
-                team_org_edit(t,org,nil,nil,bump_revoke=true) or_return
-            }
-        }
-    }
-    return cleared,.None
 }
 
 @(private)

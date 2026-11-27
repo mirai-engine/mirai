@@ -54,11 +54,10 @@ Org_Repo :: struct {
 
 Org :: struct {
     id:Org_Id,
-    version:u64,      // 1 for the first record, one more each time
-    prev:store.Hash,  // the record before; zero for the first
+    version:u64,     // 1 for the first record, one more each time
+    prev:store.Hash, // the record before; zero for the first
     signer:Key,
-    time:i64,         // ns
-    revoke_epoch:u64, // bumped when an admin revokes pending invites; invalidates older grants
+    time:i64,        // ns
     name:string,
     members:[]Member,  // sorted by key, each once
     repos:[]Org_Repo,  // sorted by id, each once
@@ -73,7 +72,6 @@ Org_Head :: struct #packed {
     prev:store.Hash,
     signer:Key,
     time:i64,
-    revoke_epoch:u64,
     members:u16,
     repos:u16,
 } // + name, members × (Key, Role, name, device, address), repos × (Repo_Id, public u8, name), Signature; texts are a length byte and their bytes
@@ -124,7 +122,7 @@ org_encode :: proc(o:^Org,identity:^Identity,allocator:=context.allocator) -> (b
         if i>0 && !repo_less(o.repos[i-1].id,r.id) {return nil,.Invalid_Argument}
     }
     w:=writer_make(allocator)
-    write_value(&w,Org_Head{magic=KAI_MAGIC,version=o.version,id=o.id,prev=o.prev,signer=o.signer,time=o.time,revoke_epoch=o.revoke_epoch,members=u16(len(o.members)),repos=u16(len(o.repos))})
+    write_value(&w,Org_Head{magic=KAI_MAGIC,version=o.version,id=o.id,prev=o.prev,signer=o.signer,time=o.time,members=u16(len(o.members)),repos=u16(len(o.repos))})
     write_name(&w,o.name)
     for m in o.members {
         write_value(&w,m.key)
@@ -152,7 +150,7 @@ org_decode :: proc(bytes:[]u8,allocator:=context.allocator) -> (o:Org,error:Erro
     head:=read_value(&r,Org_Head)
     if r.short || head.magic!=KAI_MAGIC || head.version==0 || head.members>MEMBERS_MAX || head.repos>ORG_REPOS_MAX {return {},.Corrupt}
     if (head.version==1)!=(head.prev=={}) {return {},.Corrupt}
-    o.id,o.version,o.prev,o.signer,o.time,o.revoke_epoch=head.id,head.version,head.prev,head.signer,head.time,head.revoke_epoch
+    o.id,o.version,o.prev,o.signer,o.time=head.id,head.version,head.prev,head.signer,head.time
     o.name=tail_string(&r)
     members,me:=make([]Member,head.members,allocator)
     repos,re:=make([]Org_Repo,head.repos,allocator)
@@ -241,10 +239,10 @@ org_signs :: proc(held,next:^Org) -> bool {
     if next.id!=held.id || next.version!=held.version+1 {return false}
     role,ok:=org_role(held,next.signer)
     if !ok || role<.Writer {return false}
-    if role==.Admin {return next.revoke_epoch>=held.revoke_epoch}
+    if role==.Admin {return true}
     // A writer adds repositories, and changes nothing else: not the members,
-    // not the org's name, not revoke_epoch, not a repository held (its name, or whether it is public).
-    if next.name!=held.name || next.revoke_epoch!=held.revoke_epoch || len(next.members)!=len(held.members) {return false}
+    // not the org's name, not a repository held (its name, or whether it is public).
+    if next.name!=held.name || len(next.members)!=len(held.members) {return false}
     for m,i in next.members {
         h:=held.members[i]
         if m.key!=h.key || m.role!=h.role || m.name!=h.name || m.device!=h.device || m.address!=h.address {return false}
@@ -313,7 +311,6 @@ org_write :: proc(s:^store.Store,o:^Org,identity:^Identity,time:i64) -> (address
     name:[32]u8
     if e:=store.ref_set(s,ORG_NAMESPACE,org_ref_name(o.id,&name),address);e!=.None {return {},store_error(e)}
     admissions_prune(s,&next)
-    grants_prune(s,&next)
     return address,.None
 }
 
@@ -379,7 +376,6 @@ org_accept :: proc(s:^store.Store,id:Org_Id,address:store.Hash) -> (changed:bool
     name:[32]u8
     if e:=store.ref_set(s,ORG_NAMESPACE,org_ref_name(id,&name),address);e!=.None {return false,{},store_error(e)}
     admissions_prune(s,&newest)
-    grants_prune(s,&newest)
     return true,{},.None
 }
 
@@ -542,7 +538,6 @@ Invite_Grant :: struct {
     org:Org_Id,
     secret_hash:[32]u8,
     role:Role,
-    revoke_epoch:u64,
     expires:i64, // ns
     signer:Key,
     name:string, // optional fixed person name ("For another machine of mine")
@@ -556,7 +551,6 @@ Invite_Grant_Head :: struct #packed {
     secret_hash:[32]u8,
     role:Role,
     reserved:[7]u8,
-    revoke_epoch:u64,
     expires:i64,
     signer:Key,
 } // + name, Signature
@@ -633,7 +627,7 @@ invite_grant_encode :: proc(g:^Invite_Grant,identity:^Identity,allocator:=contex
     w:=writer_make(allocator)
     write_value(&w,Invite_Grant_Head{
         magic=KAI_MAGIC,org=g.org,secret_hash=g.secret_hash,role=g.role,
-        revoke_epoch=g.revoke_epoch,expires=g.expires,signer=g.signer,
+        expires=g.expires,signer=g.signer,
     })
     write_name(&w,g.name)
     if w.failed {return nil,.Out_Of_Memory}
@@ -647,7 +641,7 @@ invite_grant_decode :: proc(bytes:[]u8) -> (g:Invite_Grant,error:Error) {
     r:=Reader{data=bytes}
     head:=read_value(&r,Invite_Grant_Head)
     if r.short || head.magic!=KAI_MAGIC || head.org=={} || head.secret_hash=={} || head.role>max(Role) || !zero(head.reserved[:]) {return {},.Corrupt}
-    g.org,g.secret_hash,g.role,g.revoke_epoch,g.expires,g.signer=head.org,head.secret_hash,head.role,head.revoke_epoch,head.expires,head.signer
+    g.org,g.secret_hash,g.role,g.expires,g.signer=head.org,head.secret_hash,head.role,head.expires,head.signer
     g.name=tail_string(&r)
     g.signature=read_value(&r,Signature)
     if r.short || r.at!=len(bytes) || (g.name!="" && !name_valid(g.name)) {return {},.Corrupt}
@@ -717,10 +711,9 @@ admission_get :: proc(s:^store.Store,address:store.Hash,allocator:=context.alloc
 }
 
 // Whether ad holds against org's signed record: matching org and secret hash,
-// grant not revoked by revoke_epoch, and signed by a current admin of org.
+// and signed by a current admin of org.
 admission_valid :: proc(o:^Org,ad:^Admission) -> bool {
     if ad.grant.org!=o.id || ad.claim.org!=o.id {return false}
-    if ad.grant.revoke_epoch<o.revoke_epoch {return false}
     if secret_digest(ad.claim.secret)!=ad.grant.secret_hash {return false}
     role,ok:=org_role(o,ad.grant.signer)
     return ok && role==.Admin
@@ -786,7 +779,7 @@ grant_put :: proc(s:^store.Store,o:^Org,grant_bytes:[]u8,now:i64) -> Error {
     g:=invite_grant_decode(grant_bytes) or_return
     if g.org!=o.id {return .Invalid_Argument}
     if role,ok:=org_role(o,g.signer);!ok || role!=.Admin {return .Unauthorized}
-    if g.revoke_epoch<o.revoke_epoch || g.expires<=now {return .Expired}
+    if g.expires<=now {return .Expired}
     ns:[len(GRANT_PREFIX)+32]u8
     namespace:=grant_namespace(o.id,&ns)
     refs,le:=store.ref_list(s,namespace,context.temp_allocator)
@@ -799,7 +792,7 @@ grant_put :: proc(s:^store.Store,o:^Org,grant_bytes:[]u8,now:i64) -> Error {
                 continue
             }
             old,de:=invite_grant_decode(b)
-            if de!=.None || old.expires<=now || old.revoke_epoch<o.revoke_epoch {
+            if de!=.None || old.expires<=now {
                 store.ref_remove(s,namespace,ref.name)
                 continue
             }
@@ -826,7 +819,7 @@ grant_take :: proc(s:^store.Store,o:^Org,secret:[32]u8,now:i64,allocator:=contex
     bytes,oe:=object_get(s,addr,.Invite_Grant,allocator)
     if oe!=.None {return nil,.Expired}
     g,de:=invite_grant_decode(bytes)
-    valid:=de==.None && g.org==o.id && g.secret_hash==sh && g.expires>=now && g.revoke_epoch>=o.revoke_epoch
+    valid:=de==.None && g.org==o.id && g.secret_hash==sh && g.expires>=now
     if valid {
         role,ok:=org_role(o,g.signer)
         valid=ok && role==.Admin
@@ -835,33 +828,6 @@ grant_take :: proc(s:^store.Store,o:^Org,secret:[32]u8,now:i64,allocator:=contex
     if ce:=store.commit(s);ce!=.None {return nil,store_error(ce)}
     if !valid {return nil,.Expired}
     return bytes,.None
-}
-
-// Removes pending grants of org from epochs before epoch.
-grants_revoke :: proc(s:^store.Store,org:Org_Id,epoch:u64) -> (cleared:int,error:Error) {
-    ns:[len(GRANT_PREFIX)+32]u8
-    namespace:=grant_namespace(org,&ns)
-    refs,e:=store.ref_list(s,namespace,context.temp_allocator)
-    if e!=.None {return 0,e==.Missing?.None:store_error(e)}
-    for ref in refs {
-        b,ge:=object_get(s,ref.hash,.Invite_Grant,context.temp_allocator)
-        if ge!=.None {
-            store.ref_remove(s,namespace,ref.name)
-            cleared+=1
-            continue
-        }
-        g,de:=invite_grant_decode(b)
-        if de!=.None || g.revoke_epoch<epoch {
-            if re:=store.ref_remove(s,namespace,ref.name);re!=.None {return cleared,store_error(re)}
-            cleared+=1
-        }
-    }
-    return cleared,.None
-}
-
-@(private)
-grants_prune :: proc(s:^store.Store,o:^Org) {
-    grants_revoke(s,o.id,o.revoke_epoch)
 }
 
 @(private)

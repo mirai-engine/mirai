@@ -41,7 +41,7 @@ a sync; `mirai:net` gives only the
   as the store keeps them, up to `FRAME_FILL`), `Lack`, `Ddc_Ask`, `Join` (with optional signed
   `Invite_Claim`) and `Welcome` (org head and optional `Admission` address,
   [invites](org.md#invites)), first-message control RPCs (`Web_Login`, `Server_Info`,
-  `Org_Register`, `Invite_Grant`, `Invite_Revoke`) and `Bye` with why. A peer that keeps more than
+  `Org_Register`, `Invite_Grant`) and `Bye` with why. A peer that keeps more than
   `REQUESTS_BYTES_MAX` of wants and asks waiting, or tells of more than `TOLD_MAX` heads, ends its
   connection.
 - Of two connections between the same keys, both ends keep the one whose dialing end has the

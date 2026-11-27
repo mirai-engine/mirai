@@ -39,7 +39,6 @@ Msg :: enum u8 {
     Server_Info,   // empty request; answered by Server_Info(name, device, public) or Bye
     Org_Register,  // org, count u16 × (u32 len, org record) oldest-to-newest: an admin attaches a server to its org
     Invite_Grant,  // Invite_Grant bytes: an admin registers a 1-use offline invite on its org's server
-    Invite_Revoke, // org, revoke_epoch u64: an admin drops pending grants of org on its server
 }
 
 // A head one end holds: an org's record, a repository's shared bookmarks,

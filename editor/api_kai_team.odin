@@ -55,7 +55,6 @@ Api_Kai_Invite_Params :: struct {
     role:string `mirai:"optional,label=reader, writer (the default), admin or node (a server)"`,
     mine:bool `mirai:"optional,label=For another machine of this person: it joins under this machine's name"`,
     at:string `mirai:"optional,label=host:port where the other machine reaches this one when it is on another network: what the router forwards; none: this machine's addresses on its LAN"`,
-    revoke:bool `mirai:"optional,label=Removes every open invite of org instead: one that leaked admits nobody"`,
 }
 Api_Kai_Invite :: struct {
     invite:string `mirai:"label=What the other machine joins with, once, within 72 hours"`,
@@ -294,23 +293,6 @@ api_kai_invite :: proc(s:^Session,call:^api.Call) {
     k:=s.kai.team
     asked:=k.invite_asked
     k.invite_asked=false
-    if p.revoke {
-        e:vcs.Error
-        if k.running {
-            _,e=vcs.agent_invites_revoke(&k.agent,org)
-            if e!=.None && t.why=="" {t.why=k.agent.team.why}
-        } else {
-            _,e=vcs.team_invites_clear(t,org)
-        }
-        if e!=.None {
-            api_kai_why(call,t,e)
-            return
-        }
-        if k.invite_org==org {k.invite_length=0}
-        kai_team_wrote(s)
-        api.call_result(call,Api_Kai_Invite)
-        return
-    }
     role:=vcs.Role.Writer
     if p.role!="" {
         known:bool

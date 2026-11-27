@@ -292,11 +292,9 @@ kai_invite_build :: proc(s:^Session,o:^ka.Org_View) {
         at=kai_typed(f.at[:],f.at_length)
     }
     role:=roles[active]
-    switch kai_buttons(s,"kai_invite",{"Make invite","Revoke invites"},accent=0) {
-    case 0:
+    if kai_buttons(s,"kai_invite",{"Make invite"},accent=0)==0 {
         t.invite_asked=true
         kai_ask(s,"kai.invite",`{{"org":%s,"role":%s,"mine":%v,"at":%s}}`,kai_quote(org_hex(o.id)),kai_quote(ka.role_text(role)),f.mine,kai_quote(at))
-    case 1: kai_ask(s,"kai.invite",`{{"org":%s,"revoke":true}}`,kai_quote(org_hex(o.id)))
     }
     if t.invite_length==0 || t.invite_org!=o.id {return}
     // The invite is one word of some 200 letters: a read-only field cuts it at
