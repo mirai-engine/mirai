@@ -172,6 +172,11 @@ Kai_Team :: struct {
     invite_copied_at:time.Tick, // when it was copied, to show the green check briefly
     invite_local:bool,       // it carries no address another network reaches
     invite_via_server:bool,  // it targets the org's central server (works while admin is off)
+    invite_role:vcs.Role,    // role encoded into the invite offered last
+    invite_mine:bool,        // whether the invite offered last is for another machine of this person
+    invite_seq:int,          // incremented each time a new invite is made
+    invite_meta:[160]u8,     // summary line shown under the invite field
+    invite_meta_length:int,
     publish_org:int,         // of view.orgs, where a first publish goes
     selected_org:vcs.Org_Id, // in the launcher's Team view: zero for the org cards overview
     panel_mode:Kai_Team_Panel_Mode,

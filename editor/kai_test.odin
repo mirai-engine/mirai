@@ -620,20 +620,26 @@ editor_kai_team_view_reads_only_when_the_agent_moves :: proc(t:^testing.T) {
     testing.expect(t,!has_new_org && !has_join,"linked in-project Team still hides New organization and Join")
     kai_panel_stable(t,s,"Team")
 
-    // An admin invites writers and readers, never a server; the invite shows
-    // in a read-only field with a compact clipboard icon button beside it.
+    // An admin invites writers, readers and admins, never a server; checking
+    // "For another machine of mine" selects Admin, and the invite shows in a
+    // read-only field with a compact clipboard icon button beside it.
     ui.id_push(&ctx,ui.id(&ctx,"org",0))
-    make_invite,server,invite_text,invite_copy:=ui.id(&ctx,"kai_invite",0),ui.id(&ctx,"kai_invite_role",2),ui.id(&ctx,"kai_invite_text"),ui.id(&ctx,"kai_invite_copy")
+    make_invite,admin_btn,server,mine_box,invite_text,invite_copy:=ui.id(&ctx,"kai_invite",0),ui.id(&ctx,"kai_invite_role",2),ui.id(&ctx,"kai_invite_role",3),ui.id(&ctx,"kai_invite_mine"),ui.id(&ctx,"kai_invite_text"),ui.id(&ctx,"kai_invite_copy")
     ui.id_pop(&ctx)
+    _,has_admin:=ui.widget_rect(&ctx,admin_btn)
     _,has_server:=ui.widget_rect(&ctx,server)
-    testing.expect(t,!has_server,"the Team view invites no server")
+    testing.expect(t,has_admin && !has_server,"the Team view invites Admin but never a server")
+    if !kai_panel_click(t,s,mine_box) {return}
+    testing.expect(t,team.fields.mine && team.fields.role==.Admin,"checking 'For another machine of mine' defaults role to Admin")
+    team.fields.mine,team.fields.role=false,.Writer
+    kai_panel_still(t,s)
     if !kai_panel_click(t,s,make_invite) {return}
     method,params=kai_panel_asked(s)
     testing.expectf(t,method=="kai.invite" && team.invite_asked,"Make invite asks kai.invite: %s %s",method,params)
     x:=Api_Kai_Invite_Params{org="studio",role="writer"}
     call,_=kai_call(s,api_kai_invite,&x,Api_Kai_Invite)
     if !kai_ok(t,call,"invite") {return}
-    testing.expect(t,!team.invite_asked && team.invite_local && team.invite_length>0 && !team.invite_copied,"a loopback agent's invite reaches no other network")
+    testing.expect(t,!team.invite_asked && team.invite_local && team.invite_length>0 && !team.invite_copied && team.invite_seq==1 && strings.contains(string(team.invite_meta[:team.invite_meta_length]),"Writer invite · #1"),"a loopback agent's invite reaches no other network and records its meta")
     kai_panel_still(t,s);kai_panel_still(t,s)
     field,has_field:=ui.widget_rect(&ctx,invite_text)
     copied,has_copy:=ui.widget_rect(&ctx,invite_copy)

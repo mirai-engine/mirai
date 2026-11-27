@@ -474,15 +474,20 @@ kai_invite_build :: proc(s:^Session,o:^ka.Org_View) {
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"divider")}) {}
     ui.spacer(ctx,0,2)
     kai_head(ctx,"INVITE",-1)
-    labels:=[]string{"Writer","Reader"}
-    roles:=[]vcs.Role{.Writer,.Reader}
+    labels:=[]string{"Writer","Reader","Admin"}
+    roles:=[]vcs.Role{.Writer,.Reader,.Admin}
     active:=0
     for r,i in roles {if f.role==r {active=i}}
     if pick:=kai_buttons(s,"kai_invite_role",labels,active=active);pick>=0 {f.role=roles[pick]}
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=6,align_y=.Center,padding={KAI_ROW_PAD,0,KAI_ROW_PAD,0}}) {
-        ui.checkbox(ctx,ui.id(ctx,"kai_invite_mine"),&f.mine)
+        if ui.checkbox(ctx,ui.id(ctx,"kai_invite_mine"),&f.mine) && f.mine {
+            // An admin adding another machine of their own expects admin on it too.
+            f.role=.Admin
+        }
         ui.label(ctx,"For another machine of mine",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
     }
+    active=0
+    for r,i in roles {if f.role==r {active=i}}
     at:=""
     if !t.view.online && o.server=="" {
         kai_field(ctx,"kai_invite_at",f.at[:],&f.at_length,"Public address, host:port (optional)")
@@ -504,14 +509,8 @@ kai_invite_build :: proc(s:^Session,o:^ka.Org_View) {
             kai_invite_copy(s)
         }
     }
-    if t.invite_via_server {
-        #assert(vcs.INVITE_HOURS==72)
-        kai_line(ctx,"Valid for 3 days — works even while Mirai is closed.","text_faint")
-    } else if t.invite_local {
-        kai_line(ctx,"Local network only — add a public host:port above to invite over the internet.","danger")
-    } else {
-        #assert(vcs.INVITE_HOURS==72)
-        kai_line(ctx,"Valid for 3 days while Mirai is open.","text_faint")
+    if t.invite_meta_length>0 {
+        kai_line(ctx,string(t.invite_meta[:t.invite_meta_length]),t.invite_local?"danger":"text_faint")
     }
 }
 

@@ -1,5 +1,6 @@
 package editor
 
+import "base:runtime"
 import "core:fmt"
 import "core:hash"
 import "core:log"
@@ -7,6 +8,8 @@ import "core:os"
 import "core:path/filepath"
 import "core:slice"
 import "core:strings"
+import "core:sync"
+import "core:thread"
 import "core:time"
 import "core:time/datetime"
 import "core:time/timezone"
@@ -81,10 +84,23 @@ Projects_Row :: struct {
     can_publish:bool,   // this machine has write permission in its linked org
     opened:[32]u8,      // when an editor last opened it, as the list says it
     bytes:i64,          // project content bytes (excluding .mirai and .git)
+    has_size:bool,      // bytes is ready (immediately for Kai projects, off-thread otherwise)
     size:[24]u8,        // formatted bytes, as base.bytes_text produces
     recent_index:int,   // index in p.recent.projects, or -1 when discovered on disk
     thumbnail:u64,      // the key of the image its tile shows in the atlas of previews; 0: its letter
     thumbnail_slot:int,
+}
+
+// Off-thread content-size scan for non-Kai local projects so switching to
+// All projects with many folders never stalls the launcher UI thread.
+Projects_Size_Task :: struct {
+    paths:[PROJECTS_ALL_CAPACITY][project.RECENT_PATH]u8,
+    bytes:[PROJECTS_ALL_CAPACITY]i64,
+    done:[PROJECTS_ALL_CAPACITY]bool, // atomic: bytes[i] is ready for paths[i]
+    count:int,
+    stop:bool,                        // atomic: main thread asked the scan to stop
+    finished:bool,                    // atomic: worker returned
+    thread:^thread.Thread,
 }
 
 @(storage)
@@ -126,6 +142,7 @@ Projects :: struct {
     install:^install.Job, // its plugins from git, before the build
     from_git:bool,        // this opening started with install: the dialog shows its step
     run:^Build_Run,       // the editor build, package refresh and shaders running off the UI thread
+    size_task:^Projects_Size_Task, // off-thread folder size scan for non-Kai local projects
     cancelling:bool,      // user asked to cancel; projects_poll cleans up without blocking a frame
     error:[1024]u8,
     error_length:int,
@@ -169,6 +186,14 @@ projects_hide :: proc(s:^Session) {
 @(private)
 projects_rows_read :: proc(s:^Session) {
     p:=s.projects
+    projects_sizes_stop(p)
+    Cached_Size :: struct {path:string,bytes:i64}
+    cached:=make([dynamic]Cached_Size,0,p.row_count,context.temp_allocator)
+    for i in 0..<p.row_count {
+        if p.rows[i].has_size {
+            append(&cached,{strings.clone(base.text_get(p.rows[i].path[:]),context.temp_allocator),p.rows[i].bytes})
+        }
+    }
     p.selected=0
     p.row_count=0
     if s.kai!=nil && s.kai.team==nil && s.store.root!="" {kai_team_open(s)}
@@ -191,17 +216,35 @@ projects_rows_read :: proc(s:^Session) {
     }
     found:=projects_discover(p,s.engine_root,PROJECTS_ALL_CAPACITY-kept)
     p.all_count=kept+len(found)
-    if !p.show_all {return}
-    for folder in found {
-        p.rows[p.row_count]=projects_row_fill(s,folder,0,-1,now,tz,images,level,sides)
-        p.row_count+=1
+    if p.show_all {
+        for folder in found {
+            p.rows[p.row_count]=projects_row_fill(s,folder,0,-1,now,tz,images,level,sides)
+            p.row_count+=1
+        }
+        if len(found)>1 {
+            slice.sort_by(p.rows[kept:p.row_count],proc(a,b:Projects_Row) -> bool {
+                a,b:=a,b
+                return strings.to_lower(base.text_get(a.name[:]),context.temp_allocator)<strings.to_lower(base.text_get(b.name[:]),context.temp_allocator)
+            })
+        }
     }
-    if len(found)>1 {
-        slice.sort_by(p.rows[kept:p.row_count],proc(a,b:Projects_Row) -> bool {
-            a,b:=a,b
-            return strings.to_lower(base.text_get(a.name[:]),context.temp_allocator)<strings.to_lower(base.text_get(b.name[:]),context.temp_allocator)
-        })
+    // Reuse sizes already measured in this session, and scan any remaining
+    // non-Kai folders on a background thread so the launcher never stalls.
+    pending:=0
+    for i in 0..<p.row_count {
+        row:=&p.rows[i]
+        if row.missing || row.has_size {continue}
+        folder:=base.text_get(row.path[:])
+        for c in cached {
+            if project.path_same(c.path,folder) {
+                row.bytes,row.has_size=c.bytes,true
+                base.text_set(row.size[:],base.bytes_text(row.bytes))
+                break
+            }
+        }
+        if !row.has_size {pending+=1}
     }
+    if pending>0 {projects_sizes_start(p)}
 }
 
 // Projects on this machine that are not recent, up to limit: those beside the recent ones, in
@@ -269,41 +312,114 @@ projects_row_fill :: proc(s:^Session,folder:string,opened:i64,recent_index:int,n
         sync:=ka.project_sync_state(&s.store,team,folder)
         base.text_set(row.kai[:],sync.kai)
         row.linked,row.needs_publish,row.can_publish=sync.linked,sync.needs_publish,sync.can_publish
-        row.bytes=sync.bytes if sync.has_size else projects_folder_bytes(folder)
-        base.text_set(row.size[:],base.bytes_text(row.bytes))
+        if sync.has_size {
+            row.bytes,row.has_size=sync.bytes,true
+            base.text_set(row.size[:],base.bytes_text(row.bytes))
+        }
     }
     base.text_set(row.opened[:],projects_when(opened,now,region))
     return
 }
 
-// Content bytes of a local project without Kai, skipping .mirai and .git,
-// bounded so a very large folder never stalls opening the launcher.
-@(private)
-projects_folder_bytes :: proc(root:string) -> (total:i64) {
-    STACK_CAP :: 64
-    FILES_CAP :: 10000
-    stack:[STACK_CAP]string
-    depth:=1
-    stack[0]=root
-    seen:=0
-    for depth>0 && seen<FILES_CAP {
-        depth-=1
-        dir:=stack[depth]
-        entries,err:=os.read_all_directory_by_path(dir,context.temp_allocator)
-        if err!=nil {continue}
-        for e in entries {
-            seen+=1
-            if seen>=FILES_CAP {break}
-            if e.name==".mirai" || e.name==".git" {continue}
-            if e.type==.Directory {
-                if depth<STACK_CAP {
-                    stack[depth]=e.fullpath
-                    depth+=1
-                }
-            } else if e.type==.Regular {
-                total+=e.size
+// Starts a background scan for non-Kai local projects that still lack a size.
+@(private="file")
+projects_sizes_start :: proc(p:^Projects) {
+    task,err:=new(Projects_Size_Task,runtime.heap_allocator())
+    if err!=nil {return}
+    for i in 0..<p.row_count {
+        if p.rows[i].missing || p.rows[i].has_size || task.count>=PROJECTS_ALL_CAPACITY {continue}
+        base.text_set(task.paths[task.count][:],base.text_get(p.rows[i].path[:]))
+        task.count+=1
+    }
+    if task.count==0 {
+        free(task,runtime.heap_allocator())
+        return
+    }
+    c:=runtime.default_context()
+    c.allocator,c.logger=runtime.heap_allocator(),context.logger
+    task.thread=thread.create_and_start_with_poly_data(task,proc(task:^Projects_Size_Task) {
+        defer runtime.default_temp_allocator_destroy(&runtime.global_default_temp_allocator_data)
+        for i in 0..<task.count {
+            if sync.atomic_load(&task.stop) {break}
+            task.bytes[i]=projects_folder_bytes(base.text_get(task.paths[i][:]),&task.stop)
+            if sync.atomic_load(&task.stop) {break}
+            sync.atomic_store(&task.done[i],true)
+        }
+        sync.atomic_store(&task.finished,true)
+    },c)
+    if task.thread==nil {
+        free(task,runtime.heap_allocator())
+        return
+    }
+    p.size_task=task
+}
+
+// Copies completed off-thread folder sizes into the matching rows.
+@(private="file")
+projects_sizes_poll :: proc(p:^Projects) {
+    task:=p.size_task
+    if task==nil {return}
+    for i in 0..<task.count {
+        if !sync.atomic_load(&task.done[i]) {continue}
+        path:=base.text_get(task.paths[i][:])
+        for j in 0..<p.row_count {
+            if p.rows[j].has_size {continue}
+            if project.path_same(base.text_get(p.rows[j].path[:]),path) {
+                p.rows[j].bytes,p.rows[j].has_size=task.bytes[i],true
+                base.text_set(p.rows[j].size[:],base.bytes_text(task.bytes[i]))
+                break
             }
         }
+    }
+    if sync.atomic_load(&task.finished) {projects_sizes_stop(p)}
+}
+
+// Stops any running off-thread size scan and frees its state.
+@(private)
+projects_sizes_stop :: proc(p:^Projects) {
+    if p==nil || p.size_task==nil {return}
+    task:=p.size_task
+    sync.atomic_store(&task.stop,true)
+    if task.thread!=nil {
+        thread.join(task.thread)
+        thread.destroy(task.thread)
+    }
+    free(task,runtime.heap_allocator())
+    p.size_task=nil
+}
+
+// Content bytes of a local project without Kai, skipping generated/VCS folders,
+// freeing scratch per directory so memory stays bounded.
+@(private)
+projects_folder_bytes :: proc(root:string,stop:^bool=nil) -> (total:i64) {
+    STACK_CAP :: 64
+    FILES_CAP :: 8192
+    stack:[STACK_CAP][project.RECENT_PATH]u8
+    depth:=1
+    base.text_set(stack[0][:],root)
+    seen:=0
+    for depth>0 && seen<FILES_CAP {
+        if stop!=nil && sync.atomic_load(stop) {return}
+        depth-=1
+        dir:=base.text_get(stack[depth][:])
+        entries,err:=os.read_all_directory_by_path(dir,context.temp_allocator)
+        if err==nil {
+            for e in entries {
+                if stop!=nil && sync.atomic_load(stop) {break}
+                seen+=1
+                if seen>=FILES_CAP {break}
+                if e.name==".mirai" || e.name==".git" || e.name=="bin" || e.name=="node_modules" {continue}
+                if e.type==.Directory {
+                    if depth<STACK_CAP {
+                        base.text_set(stack[depth][:],e.fullpath)
+                        depth+=1
+                    }
+                } else if e.type==.Regular {
+                    total+=e.size
+                }
+            }
+        }
+        free_all(context.temp_allocator)
     }
     return
 }
@@ -517,6 +633,7 @@ project_open_error_text :: proc(error:project.Error) -> string {
 projects_poll :: proc(s:^Session) {
     p:=s.projects
     if p==nil {return}
+    projects_sizes_poll(p)
     // A plugin that could not be installed is said; the project opens without it.
     if p.install!=nil && install.job_poll(p.install) {
         ok,message:=p.install.ok,strings.clone(p.install.message,context.temp_allocator)
@@ -677,6 +794,7 @@ projects_cancel_request :: proc(s:^Session) {
 projects_cancel :: proc(s:^Session) {
     p:=s.projects
     if p==nil {return}
+    projects_sizes_stop(p)
     build_run_destroy(p.run)
     // Waits for the git it runs: a clone ends on its own.
     install.job_destroy(p.install)

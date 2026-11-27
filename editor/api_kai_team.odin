@@ -338,7 +338,15 @@ api_kai_invite :: proc(s:^Session,call:^api.Call) {
     }
     k.invite_length=copy(k.invite[:],text)
     k.invite_org,k.invite_local,k.invite_via_server,k.invite_copied=org,!via_server && at=="" && reach!=.Online,via_server,false
-    if asked && kai_invite_copy(s) {notify(s,"Invite copied to clipboard")}
+    k.invite_role,k.invite_mine=role,p.mine
+    k.invite_seq+=1
+    role_title:=role==.Admin?"Admin":role==.Reader?"Reader":"Writer"
+    mine_note:=p.mine?" (your machine)":""
+    #assert(vcs.INVITE_HOURS==72)
+    tail:="valid 3 days — works even while Mirai is closed." if k.invite_via_server else ("local network only — add a public host:port above to invite over the internet." if k.invite_local else "valid 3 days while Mirai is open.")
+    meta:=fmt.tprintf("%s invite%s · #%d · %s",role_title,mine_note,k.invite_seq,tail)
+    k.invite_meta_length=copy(k.invite_meta[:],meta)
+    if asked && kai_invite_copy(s) {notify(s,fmt.tprintf("%s invite%s copied to clipboard",role_title,mine_note))}
     r:=api.call_result(call,Api_Kai_Invite)
     r.invite,r.addresses=text,addresses[:]
 }

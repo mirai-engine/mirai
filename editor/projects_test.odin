@@ -343,6 +343,7 @@ projects_list_refreshes_and_publishes_linked_workspaces :: proc(t:^testing.T) {
     k:Kai
     k.mesh_loopback=true
     s:=Session{projects=p,store=opened,kai=&k}
+    defer projects_cancel(&s)
     defer kai_team_close(&s)
     kai_team_open(&s)
     if !testing.expect(t,s.kai.team!=nil && s.kai.team.opened) {return}
@@ -362,16 +363,6 @@ projects_list_refreshes_and_publishes_linked_workspaces :: proc(t:^testing.T) {
     testing.expect(t,p.rows[0].linked && p.rows[0].needs_publish && p.rows[0].can_publish,"linked unpublished workspace offers Publish")
     testing.expectf(t,p.rows[0].bytes>0 && base.text_get(p.rows[0].size[:])!="","local Kai project reports its size: %d (%q)",p.rows[0].bytes,base.text_get(p.rows[0].size[:]))
 
-    // A non-Kai local project also reports its content size (excluding .mirai).
-    plain:=project.path(root,"plain",allocator=context.temp_allocator)
-    testing.expect(t,base.make_directory_all(project.path(plain,".mirai",allocator=context.temp_allocator))==nil)
-    pm:=project.manifest_default("Plain")
-    testing.expect_value(t,project.manifest_write(project.path(plain,project.PROJECT_FILE,allocator=context.temp_allocator),&pm).code,project.Error_Code.None)
-    testing.expect(t,os.write_entire_file(project.path(plain,"data.bin",allocator=context.temp_allocator),make([]u8,2048,context.temp_allocator))==nil)
-    testing.expect(t,os.write_entire_file(project.path(plain,".mirai","cache.bin",allocator=context.temp_allocator),make([]u8,65536,context.temp_allocator))==nil)
-    plain_bytes:=projects_folder_bytes(plain)
-    testing.expectf(t,plain_bytes>=2048 && plain_bytes<65536,"non-Kai project size counts content and skips .mirai: %d",plain_bytes)
-
     kai_launcher_publish(&s,proj)
     testing.expect(t,p.rows[0].linked && !p.rows[0].needs_publish,"after direct publish the workspace shows Synced")
 
@@ -384,6 +375,26 @@ projects_list_refreshes_and_publishes_linked_workspaces :: proc(t:^testing.T) {
 
     kai_team_refresh(&s)
     testing.expect(t,p.rows[0].linked && p.rows[0].needs_publish && p.rows[0].can_publish,"Refresh reflects new unpublished changes")
+
+    // A non-Kai local project is scanned off-thread so projects_rows_read never blocks the UI thread.
+    plain:=project.path(root,"plain",allocator=context.temp_allocator)
+    testing.expect(t,base.make_directory_all(project.path(plain,".mirai",allocator=context.temp_allocator))==nil)
+    pm:=project.manifest_default("Plain")
+    testing.expect_value(t,project.manifest_write(project.path(plain,project.PROJECT_FILE,allocator=context.temp_allocator),&pm).code,project.Error_Code.None)
+    testing.expect(t,os.write_entire_file(project.path(plain,"data.bin",allocator=context.temp_allocator),make([]u8,2048,context.temp_allocator))==nil)
+    testing.expect(t,os.write_entire_file(project.path(plain,".mirai","cache.bin",allocator=context.temp_allocator),make([]u8,65536,context.temp_allocator))==nil)
+    project.recent_add(&p.recent,plain,90)
+    projects_rows_read(&s)
+    deadline:=time.tick_now()
+    for p.size_task!=nil && time.tick_since(deadline)<5*time.Second {
+        projects_poll(&s)
+        time.sleep(5*time.Millisecond)
+    }
+    plain_idx:=-1
+    for i in 0..<p.row_count {
+        if project.path_same(base.text_get(p.rows[i].path[:]),plain) {plain_idx=i;break}
+    }
+    testing.expectf(t,plain_idx>=0 && p.rows[plain_idx].has_size && p.rows[plain_idx].bytes>=2048 && p.rows[plain_idx].bytes<65536,"off-thread scan computes non-Kai project size skipping .mirai: idx=%d bytes=%d",plain_idx,plain_idx>=0?p.rows[plain_idx].bytes:0)
 
     testing.expect(t,!projects_refresh_cooling(p),"Refresh starts ready")
     p.refreshed_at=time.tick_now()
