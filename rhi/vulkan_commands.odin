@@ -46,6 +46,7 @@ Pass_Use :: struct {
 	buffer:  Buffer,
 	mip:     i32, // of the texture, or -1 for all
 	access:  bit_set[Access],
+	stages:  Shader_Stages, // of the draws that make its shader accesses
 }
 
 // Inside a render pass nothing reaches the command buffer: the pass is
@@ -96,26 +97,32 @@ Access_Info :: struct {
 	access: vk.AccessFlags2,
 }
 
+// The shader stages an access of an explicit barrier may run in: any.
 @(private)
-SHADER_STAGES :: vk.PipelineStageFlags2{.VERTEX_SHADER, .FRAGMENT_SHADER, .COMPUTE_SHADER}
+ANY_SHADER :: Shader_Stages{.Vertex, .Fragment, .Compute}
 
+// stages: those of the shaders that make a shader access (a dispatch, or the
+// stages of a draw that bind the resource); the others ignore them.
 @(private)
-vk_access_info :: proc(d: ^Device, a: Access) -> Access_Info {
-	shader_stages := SHADER_STAGES
+vk_access_info :: proc(a: Access, stages: Shader_Stages) -> Access_Info {
+	shader: vk.PipelineStageFlags2
+	if .Vertex in stages {shader += {.VERTEX_SHADER}}
+	if .Fragment in stages {shader += {.FRAGMENT_SHADER}}
+	if .Compute in stages {shader += {.COMPUTE_SHADER}}
 	switch a {
 	case .None:              return {}
-	case .Shader_Read:       return {shader_stages, {.SHADER_READ, .UNIFORM_READ}}
-	case .Shader_Write:      return {{.FRAGMENT_SHADER, .COMPUTE_SHADER}, {.SHADER_READ, .SHADER_WRITE}}
+	case .Shader_Read:       return {shader, {.SHADER_READ, .UNIFORM_READ}}
+	case .Shader_Write:      return {shader, {.SHADER_READ, .SHADER_WRITE}}
 	case .Index_Read:        return {{.INDEX_INPUT}, {.INDEX_READ}}
 	case .Indirect_Read:     return {{.DRAW_INDIRECT}, {.INDIRECT_COMMAND_READ}}
 	case .Color_Target:      return {{.COLOR_ATTACHMENT_OUTPUT}, {.COLOR_ATTACHMENT_READ, .COLOR_ATTACHMENT_WRITE}}
 	case .Depth_Target:      return {{.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS}, {.DEPTH_STENCIL_ATTACHMENT_READ, .DEPTH_STENCIL_ATTACHMENT_WRITE}}
-	case .Depth_Read:        return {shader_stages, {.SHADER_READ}}
+	case .Depth_Read:        return {shader, {.SHADER_READ}}
 	case .Transfer_Read:     return {{.ALL_TRANSFER}, {.TRANSFER_READ}}
 	case .Transfer_Write:    return {{.ALL_TRANSFER}, {.TRANSFER_WRITE}}
 	case .Accel_Build_Input: return {{.ACCELERATION_STRUCTURE_BUILD_KHR}, {.SHADER_READ, .ACCELERATION_STRUCTURE_READ_KHR}}
 	case .Accel_Build_Write: return {{.ACCELERATION_STRUCTURE_BUILD_KHR}, {.ACCELERATION_STRUCTURE_READ_KHR, .ACCELERATION_STRUCTURE_WRITE_KHR}}
-	case .Accel_Read:        return {shader_stages, {.ACCELERATION_STRUCTURE_READ_KHR}}
+	case .Accel_Read:        return {shader, {.ACCELERATION_STRUCTURE_READ_KHR}}
 	case .Present:           return {{.BOTTOM_OF_PIPE}, {}}
 	case .Host_Read:         return {{.HOST}, {.HOST_READ}}
 	}
@@ -141,32 +148,42 @@ vk_layout_for :: proc(t: ^Vk_Texture, layout: vk.ImageLayout, a: Access) -> vk.I
 WRITE_ACCESS :: vk.AccessFlags2{.SHADER_WRITE, .SHADER_STORAGE_WRITE, .COLOR_ATTACHMENT_WRITE, .DEPTH_STENCIL_ATTACHMENT_WRITE, .TRANSFER_WRITE, .HOST_WRITE, .MEMORY_WRITE, .ACCELERATION_STRUCTURE_WRITE_KHR}
 
 // Source scope of a dependency: the stages of the last write (or layout
-// transition) plus every read since, with only write bits in the access mask.
-// Reads need an execution dependency only.
+// transition), plus those of every read since when the access must wait for
+// them, with only write bits in the access mask. Reads need an execution
+// dependency only.
 @(private)
-vk_source_info :: proc(d: ^Device, write: Access, reads: bit_set[Access]) -> Access_Info {
-	info := vk_access_info(d, write)
-	info.access &= WRITE_ACCESS
-	for r in reads {info.stages += vk_access_info(d, r).stages}
+vk_source_info :: proc(h: Vk_Hazard, after_reads: bool) -> Access_Info {
+	info := Access_Info{h.write_stages, vk_access_info(h.write, {}).access & WRITE_ACCESS}
+	if after_reads {info.stages += h.read_stages}
 	return info
 }
 
+// A read the state already made visible to the stages it runs in.
+@(private)
+vk_read_visible :: proc(h: Vk_Hazard, access: Access, dst: Access_Info) -> bool {
+	return access in h.reads && dst.stages <= h.read_stages
+}
+
 cmd_barrier_buffer :: proc(c: ^Command_List, buffer: Buffer, access: Access) {
-	d := c.device
-	b := pool_get(&d.buffers, base.Handle(buffer))
+	vk_barrier_buffer(c, buffer, access, ANY_SHADER)
+}
+
+@(private)
+vk_barrier_buffer :: proc(c: ^Command_List, buffer: Buffer, access: Access, stages: Shader_Stages) {
+	b := pool_get(&c.device.buffers, base.Handle(buffer))
 	if b == nil {return}
 	assert(!c.in_render_pass, "rhi: buffer barriers must be recorded outside render passes")
-	dst := vk_access_info(d, access)
+	h := &b.hazard
+	dst := vk_access_info(access, stages)
 	if access_is_write(access) {
-		if b.write == .None && b.reads == {} {b.write = access; return}
-		vk_queue_memory_barrier(c, vk_source_info(d, b.write, b.reads), dst)
-		b.write = access
-		b.reads = {}
+		if h.write != .None || h.reads != {} {vk_queue_memory_barrier(c, vk_source_info(h^, true), dst)}
+		h^ = {write = access, write_stages = dst.stages}
 		return
 	}
-	if access in b.reads {return}
-	if b.write != .None {vk_queue_memory_barrier(c, vk_source_info(d, b.write, {}), dst)}
-	b.reads += {access}
+	if vk_read_visible(h^, access, dst) {return}
+	if h.write != .None {vk_queue_memory_barrier(c, vk_source_info(h^, false), dst)}
+	h.reads += {access}
+	h.read_stages += dst.stages
 }
 
 @(private)
@@ -183,19 +200,24 @@ vk_queue_memory_barrier :: proc(c: ^Command_List, src, dst: Access_Info) {
 
 // mip: the one mip the access reaches, or -1 for all of them.
 cmd_barrier_texture :: proc(c: ^Command_List, texture: Texture, access: Access, mip: i32 = -1) {
+	vk_barrier_texture(c, texture, access, mip, ANY_SHADER)
+}
+
+@(private)
+vk_barrier_texture :: proc(c: ^Command_List, texture: Texture, access: Access, mip: i32, stages: Shader_Stages) {
 	t := pool_get(&c.device.textures, base.Handle(texture))
 	if t == nil || mip >= i32(t.desc.mip_levels) {return}
-	if mip < 0 {vk_barrier_levels(c, t, access, 0, t.desc.mip_levels)} else {vk_barrier_levels(c, t, access, u32(mip), 1)}
+	if mip < 0 {vk_barrier_levels(c, t, access, 0, t.desc.mip_levels, stages)} else {vk_barrier_levels(c, t, access, u32(mip), 1, stages)}
 }
 
 // Brings mips [first, first + count) to an access with one barrier for each
 // run of mips in one state: a texture used whole takes one.
 @(private)
-vk_barrier_levels :: proc(c: ^Command_List, t: ^Vk_Texture, access: Access, first, count: u32) {
+vk_barrier_levels :: proc(c: ^Command_List, t: ^Vk_Texture, access: Access, first, count: u32, stages: Shader_Stages = {}) {
 	for at := first; at < first + count; {
 		run := at + 1
 		for run < first + count && t.levels[run] == t.levels[at] {run += 1}
-		level := vk_barrier_level(c, t, t.levels[at], access, at, run - at)
+		level := vk_barrier_level(c, t, t.levels[at], access, stages, at, run - at)
 		for &l in t.levels[at:run] {l = level}
 		at = run
 	}
@@ -203,16 +225,19 @@ vk_barrier_levels :: proc(c: ^Command_List, t: ^Vk_Texture, access: Access, firs
 
 // The barrier a run of mips in state `level` needs for an access, and their state after it.
 @(private)
-vk_barrier_level :: proc(c: ^Command_List, t: ^Vk_Texture, level: Vk_Level, access: Access, first, count: u32) -> Vk_Level {
+vk_barrier_level :: proc(c: ^Command_List, t: ^Vk_Texture, level: Vk_Level, access: Access, stages: Shader_Stages, first, count: u32) -> Vk_Level {
 	level := level
-	d := c.device
+	h := &level.hazard
 	new_layout := vk_layout_for(t, level.layout, access)
 	layout_change := new_layout != level.layout
+	dst := vk_access_info(access, stages)
 	if !layout_change {
 		if access_is_write(access) {
-			if level.write == .None && level.reads == {} {level.write = access; return level}
-		} else {
-			if access in level.reads || level.write == .None {level.reads += {access}; return level}
+			if h.write == .None && h.reads == {} {h^ = {write = access, write_stages = dst.stages}; return level}
+		} else if h.write == .None || vk_read_visible(h^, access, dst) {
+			h.reads += {access}
+			h.read_stages += dst.stages
+			return level
 		}
 	}
 	assert(!c.in_render_pass, "rhi: texture transitions must be recorded outside render passes")
@@ -222,8 +247,7 @@ vk_barrier_level :: proc(c: ^Command_List, t: ^Vk_Texture, level: Vk_Level, acce
 		r := pending.subresourceRange
 		if pending.image == t.image && r.baseMipLevel < first + count && first < r.baseMipLevel + r.levelCount {vk_flush_barriers(c); break}
 	}
-	src := vk_source_info(d, level.write, level.reads if access_is_write(access) || layout_change else {})
-	dst := vk_access_info(d, access)
+	src := vk_source_info(h^, access_is_write(access) || layout_change)
 	if c.image_count == MAX_PENDING_IMAGE_BARRIERS {vk_flush_barriers(c)}
 	c.image_barriers[c.image_count] = {
 		sType = .IMAGE_MEMORY_BARRIER_2,
@@ -243,15 +267,14 @@ vk_barrier_level :: proc(c: ^Command_List, t: ^Vk_Texture, level: Vk_Level, acce
 	c.image_count += 1
 	level.layout = new_layout
 	if access_is_write(access) {
-		level.write = access
-		level.reads = {}
+		h^ = {write = access, write_stages = dst.stages}
 	} else if layout_change {
 		// The layout transition is a write made visible to this reader; later
 		// readers chain from this reader's stages.
-		level.write = access
-		level.reads = {access}
+		h^ = {write = access, write_stages = dst.stages, reads = {access}, read_stages = dst.stages}
 	} else {
-		level.reads += {access}
+		h.reads += {access}
+		h.read_stages += dst.stages
 	}
 	return level
 }
@@ -326,11 +349,11 @@ cmd_end_render_pass :: proc(c: ^Command_List) {
 		// A resource the pass writes takes one barrier, which covers its reads
 		// in the pass and makes what it leaves visible to the readers after it.
 		if .Shader_Write in u.access {
-			if u.texture != 0 {cmd_barrier_texture(c, u.texture, .Shader_Write, u.mip)} else {cmd_barrier_buffer(c, u.buffer, .Shader_Write)}
+			if u.texture != 0 {vk_barrier_texture(c, u.texture, .Shader_Write, u.mip, u.stages)} else {vk_barrier_buffer(c, u.buffer, .Shader_Write, u.stages)}
 			continue
 		}
 		for access in u.access {
-			if u.texture != 0 {cmd_barrier_texture(c, u.texture, access, u.mip)} else {cmd_barrier_buffer(c, u.buffer, access)}
+			if u.texture != 0 {vk_barrier_texture(c, u.texture, access, u.mip, u.stages)} else {vk_barrier_buffer(c, u.buffer, access, u.stages)}
 		}
 	}
 	colors: [MAX_COLOR_TARGETS]vk.RenderingAttachmentInfo
@@ -439,10 +462,11 @@ vk_pass_record :: proc(c: ^Command_List, command: Pass_Command) {
 // Adds an access of a resource to those of the pass being recorded; two mips
 // of one texture count as all of them.
 @(private)
-vk_pass_use :: proc(c: ^Command_List, texture: Texture, buffer: Buffer, access: Access, mip: i32 = -1) {
+vk_pass_use :: proc(c: ^Command_List, texture: Texture, buffer: Buffer, access: Access, mip: i32 = -1, stages: Shader_Stages = {}) {
 	for &u in c.uses[:c.use_count] {
 		if u.texture == texture && u.buffer == buffer {
 			u.access += {access}
+			u.stages += stages
 			if u.mip != mip {u.mip = -1}
 			return
 		}
@@ -452,7 +476,7 @@ vk_pass_use :: proc(c: ^Command_List, texture: Texture, buffer: Buffer, access: 
 		c.pass_failed = true
 		return
 	}
-	c.uses[c.use_count] = {texture, buffer, mip, {access}}
+	c.uses[c.use_count] = {texture, buffer, mip, {access}, stages}
 	c.use_count += 1
 }
 
@@ -471,13 +495,13 @@ vk_pass_draw :: proc(c: ^Command_List) -> bool {
 		if !slot.used || !c.slots[i].set {continue}
 		s := c.slots[i]
 		switch slot.kind {
-		case .Uniform_Buffer, .Storage_Buffer: vk_pass_use(c, 0, s.buffer, .Shader_Read)
-		case .Storage_Buffer_RW:               vk_pass_use(c, 0, s.buffer, .Shader_Write)
-		case .Sampled_Texture:                 vk_pass_use(c, s.texture, 0, .Shader_Read, s.mip)
-		case .Storage_Texture:                 vk_pass_use(c, s.texture, 0, .Shader_Write, s.mip)
+		case .Uniform_Buffer, .Storage_Buffer: vk_pass_use(c, 0, s.buffer, .Shader_Read, stages = slot.stages)
+		case .Storage_Buffer_RW:               vk_pass_use(c, 0, s.buffer, .Shader_Write, stages = slot.stages)
+		case .Sampled_Texture:                 vk_pass_use(c, s.texture, 0, .Shader_Read, s.mip, slot.stages)
+		case .Storage_Texture:                 vk_pass_use(c, s.texture, 0, .Shader_Write, s.mip, slot.stages)
 		case .Sampler, .Texture_Table:
 		case .Accel:
-			if a := pool_get(&d.accels, base.Handle(s.accel)); a != nil {vk_pass_use(c, 0, a.buffer, .Accel_Read)}
+			if a := pool_get(&d.accels, base.Handle(s.accel)); a != nil {vk_pass_use(c, 0, a.buffer, .Accel_Read, stages = slot.stages)}
 		}
 	}
 	return !c.pass_failed
@@ -588,8 +612,22 @@ cmd_bind_accel :: proc(c: ^Command_List, slot: u32, accel: Accel) {
 	vk_slot_set(c, slot, {set = true, accel = accel})
 }
 
+// Whether another slot of the bound compute pipeline writes the same buffer or
+// covers the same texture mip(s), so its write barrier already covers reads.
+@(private)
+vk_slot_written :: proc(p: ^Vk_Pipeline, c: ^Command_List, buffer: Buffer = 0, texture: Texture = 0, mip: i32 = -1) -> bool {
+	for slot, i in p.slots {
+		if !slot.used || !c.slots[i].set {continue}
+		s := c.slots[i]
+		if buffer != 0 && slot.kind == .Storage_Buffer_RW && s.buffer == buffer {return true}
+		if texture != 0 && slot.kind == .Storage_Texture && s.texture == texture && (s.mip < 0 || s.mip == mip) {return true}
+	}
+	return false
+}
+
 // Transitions every resource bound to the current compute pipeline to the
-// access its binding kind implies.
+// access its binding kind implies. Writes go first and suppress matching reads
+// so a resource bound to both slots stays dirty for later readers.
 @(private)
 vk_auto_transitions :: proc(c: ^Command_List) {
 	p := pool_get(&c.device.pipelines, base.Handle(c.pipeline)) // by handle: the pool may grow while bound
@@ -597,14 +635,21 @@ vk_auto_transitions :: proc(c: ^Command_List) {
 	for slot, i in p.slots {
 		if !slot.used || !c.slots[i].set {continue}
 		s := c.slots[i]
-		switch slot.kind {
-		case .Uniform_Buffer, .Storage_Buffer: cmd_barrier_buffer(c, s.buffer, .Shader_Read)
-		case .Storage_Buffer_RW:               cmd_barrier_buffer(c, s.buffer, .Shader_Write)
-		case .Sampled_Texture:                 cmd_barrier_texture(c, s.texture, .Shader_Read, s.mip)
-		case .Storage_Texture:                 cmd_barrier_texture(c, s.texture, .Shader_Write, s.mip)
-		case .Sampler, .Texture_Table:
+		#partial switch slot.kind {
+		case .Storage_Buffer_RW: vk_barrier_buffer(c, s.buffer, .Shader_Write, {.Compute})
+		case .Storage_Texture:   vk_barrier_texture(c, s.texture, .Shader_Write, s.mip, {.Compute})
+		}
+	}
+	for slot, i in p.slots {
+		if !slot.used || !c.slots[i].set {continue}
+		s := c.slots[i]
+		#partial switch slot.kind {
+		case .Uniform_Buffer, .Storage_Buffer:
+			if !vk_slot_written(p, c, buffer = s.buffer) {vk_barrier_buffer(c, s.buffer, .Shader_Read, {.Compute})}
+		case .Sampled_Texture:
+			if !vk_slot_written(p, c, texture = s.texture, mip = s.mip) {vk_barrier_texture(c, s.texture, .Shader_Read, s.mip, {.Compute})}
 		case .Accel:
-			if a := pool_get(&d.accels, base.Handle(s.accel)); a != nil {cmd_barrier_buffer(c, a.buffer, .Accel_Read)}
+			if a := pool_get(&d.accels, base.Handle(s.accel)); a != nil {vk_barrier_buffer(c, a.buffer, .Accel_Read, {.Compute})}
 		}
 	}
 }

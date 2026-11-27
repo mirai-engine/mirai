@@ -33,7 +33,7 @@ rhi_validation_detects_a_missing_barrier :: proc(t: ^testing.T) {
 	rhi.cmd_bind_buffer(cmd, 1, a)
 	rhi.cmd_bind_buffer(cmd, 2, b)
 	rhi.cmd_dispatch(cmd, COUNT / 64)
-	rhi.pool_get(&d.buffers, base.Handle(b)).write = .None // simulate a tracker bug
+	rhi.pool_get(&d.buffers, base.Handle(b)).hazard = {} // simulate a tracker bug
 	rhi.cmd_bind_buffer(cmd, 1, b)
 	rhi.cmd_bind_buffer(cmd, 2, c)
 	rhi.cmd_dispatch(cmd, COUNT / 64)

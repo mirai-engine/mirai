@@ -50,9 +50,9 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
             if (dot(plane.xyz, lerp(low, high, step(float3(0.0), plane.xyz))) + plane.w < 0.0) return;
         }
     }
-    if ((impostor_params.count.w & 1u) != 0u && pyramid_hides(pyramid, levels, low, high, frame.view_proj_unjittered, frame.camera_position.xyz, frame.depth_plane)) return;
+    if ((impostor_params.count.w & 1u) != 0u && pyramid_hides(pyramid, levels, low, high, frame.view_proj_unjittered, frame.camera_position.xyz)) return;
     uint at;
-    if (phase == 0u && (impostor_params.count.w & 2u) != 0u && pyramid_hides(pyramid_before, levels, low, high, frame.prev_view_proj, frame.prev_eye.xyz, frame.prev_depth_plane)) {
+    if (phase == 0u && (impostor_params.count.w & 2u) != 0u && pyramid_hides(pyramid_before, levels, low, high, frame.prev_view_proj, frame.prev_eye.xyz)) {
         InterlockedAdd(impostor_waiting[3], 1u, at);
         impostor_waiting[IMPOSTOR_WAITING_FIRST + at] = i;
         InterlockedMax(impostor_waiting[0], at / MIRAI_GROUP_X + 1u);

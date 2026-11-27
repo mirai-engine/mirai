@@ -10,14 +10,15 @@
 // SPREAD_RUN points along the axis and DIRECT_SPREAD_MAX more to each side,
 // once, in shared memory.
 #define GBUFFER_NORMAL SLOT_PASS0
+#define DIRECT_TILES_SLOT SLOT_PASS5
 #include "lighting.slang"
 #include "gbuffer.slang"
 #include "pixel.slang"
 #include "direct_samples.slang"
-#define MIRAI_GROUP_X 64
+#define MIRAI_GROUP_X DIRECT_SPREAD_RUN
 #define MIRAI_GROUP_Y 1
 #define MIRAI_GROUP_Z 1
-#define SPREAD_RUN 64
+#define SPREAD_RUN DIRECT_SPREAD_RUN
 #define SPREAD_TILE (SPREAD_RUN + 2 * DIRECT_SPREAD_MAX)
 
 // axis: 0 the rows, 1 the columns; scale: the pixels across a point;
@@ -76,7 +77,11 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
     int scale = int(max(params.scale, 1u));
     int2 size = direct_points(scale);
     int2 along = columns ? int2(0, 1) : int2(1, 0);
-    int2 start = columns ? int2(int(group.x), int(group.y) * SPREAD_RUN) : int2(int(group.x) * SPREAD_RUN, int(group.y));
+    // Run group.y across a block of SPREAD_RUN points a side; while the view
+    // draws maps, of one where a penumbra spreads (direct_maps.comp), as far
+    // as the others, which the spread leaves as they are.
+    int2 block = int2(direct_tile(DIRECT_TILES_SPREAD_LIST, group.x, group.xz, scale)) * SPREAD_RUN;
+    int2 start = block + (columns ? int2(int(group.y), 0) : int2(0, int(group.y)));
     for (uint i = index; i < uint(SPREAD_TILE); i += uint(SPREAD_RUN)) {
         int2 q = start + along * (int(i) - DIRECT_SPREAD_MAX);
         float4 point = float4(0.0), normal = float4(0.0);

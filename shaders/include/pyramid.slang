@@ -16,24 +16,39 @@ int pyramid_level_for(int4 texels, int footprint) {
     return level;
 }
 
+// What the farthest depth a texel of the pyramid holds is taken as at most:
+// relatively a step farther, well above the rounding of the depth the raster
+// writes and of the projection of a corner, well below any distance between
+// two surfaces that matters; and at least an absolute step farther, past the
+// rounding of a depth near the far plane, where the projection subtracts two
+// near equal terms. Either keeps a surface from being hidden by itself.
+#define PYRAMID_DEPTH_SLACK 1e-4
+#define PYRAMID_DEPTH_FLOOR 1e-7
+
 // True when the box is entirely behind the farthest depth stored in the
-// pyramid over its screen footprint. Conservative: anything touching the
-// near plane or the screen border counts as visible. depth_plane gives the
-// linear depth of a point for the camera of view_proj, which takes a point
-// from eye. levels: of the pyramid.
-bool pyramid_hides(Texture2D<float4> pyramid, uint levels, float3 bmin, float3 bmax, float4x4 view_proj, float3 eye, float4 depth_plane) {
+// pyramid over its screen footprint: the nearest of its corners, by the
+// reverse Z of view_proj (the camera the pyramid was drawn with, which takes
+// a point from eye), is farther than every pixel there. Conservative:
+// anything touching the near plane or the screen border counts as visible.
+// levels: of the pyramid.
+bool pyramid_hides(Texture2D<float4> pyramid, uint levels, float3 bmin, float3 bmax, float4x4 view_proj, float3 eye) {
     float2 lo = float2(1.0), hi = float2(0.0);
-    float nearest = FLT_MAX;
+    float nearest = -FLT_MAX;
+    // The corners from the lowest one along the edges of the box.
+    float3 size = bmax - bmin;
+    float4 low = mul(view_proj, float4(bmin - eye, 1.0));
+    float4 dx = mul(view_proj, float4(size.x, 0.0, 0.0, 0.0));
+    float4 dy = mul(view_proj, float4(0.0, size.y, 0.0, 0.0));
+    float4 dz = mul(view_proj, float4(0.0, 0.0, size.z, 0.0));
     for (int i = 0; i < 8; i++) {
-        float3 corner = float3((i & 1) != 0 ? bmax.x : bmin.x, (i & 2) != 0 ? bmax.y : bmin.y, (i & 4) != 0 ? bmax.z : bmin.z);
-        float4 clip = mul(view_proj, float4(corner - eye, 1.0));
-        float depth = dot(depth_plane.xyz, corner) + depth_plane.w;
-        if (depth <= frame.camera_position.w || clip.w <= 0.0) return false;
+        float4 clip = low + ((i & 1) != 0 ? dx : 0.0) + ((i & 2) != 0 ? dy : 0.0) + ((i & 4) != 0 ? dz : 0.0);
+        // Behind the eye, or on the near plane (depth 1) or nearer.
+        if (clip.w <= 0.0 || clip.z >= clip.w) return false;
         float2 ndc = clip.xy / clip.w;
         float2 uv = float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
         lo = min(lo, uv);
         hi = max(hi, uv);
-        nearest = min(nearest, depth);
+        nearest = max(nearest, clip.z / clip.w);
     }
     lo = clamp(lo, float2(0.0), float2(1.0));
     hi = clamp(hi, float2(0.0), float2(1.0));
@@ -50,12 +65,12 @@ bool pyramid_hides(Texture2D<float4> pyramid, uint levels, float3 bmin, float3 b
     int2 level_size = (int2(frame.resolution) + ((2 << level) - 1)) >> (level + 1);
     int2 a = min(texels.xy >> level, level_size - 1);
     int2 b = min(texels.zw >> level, level_size - 1);
-    float farthest = 0.0;
+    float farthest = 1.0;
     for (int y = a.y; y <= b.y; y++) {
         for (int x = a.x; x <= b.x; x++) {
-            farthest = max(farthest, pyramid.Load(int3(int2(x, y), level)).r);
+            farthest = min(farthest, pyramid.Load(int3(int2(x, y), level)).r);
         }
     }
-    return nearest > farthest;
+    return nearest < farthest * (1.0 - PYRAMID_DEPTH_SLACK) - PYRAMID_DEPTH_FLOOR;
 }
 #endif

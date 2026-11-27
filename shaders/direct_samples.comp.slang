@@ -25,6 +25,7 @@
 #define GBUFFER_NORMAL SLOT_PASS0
 #define SUN_SHADOW_SLOT SLOT_PASS8
 #define SHADOW_DATA_SLOT SLOT_PASS9
+#define DIRECT_TILES_SLOT SLOT_PASS4
 #include "lighting.slang"
 #include "gbuffer.slang"
 #include "pixel.slang"
@@ -42,7 +43,7 @@ struct Params_Block { uint pad0; uint samples; float sun_radius; uint scale; uin
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS1, 0)]] Texture2D<float4> g_depth : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 [[vk::binding(SLOT_PASS2, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_samples : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
-[[vk::binding(SLOT_PASS4, 0)]] Texture2D<uint> blockers : register(MIRAI_REGISTER(t, SLOT_PASS4), space0);
+[[vk::binding(SLOT_DIRECT_BLOCKERS, 0)]] Texture2D<uint> blockers : register(MIRAI_REGISTER(t, SLOT_DIRECT_BLOCKERS), space0);
 // The linear depth (0 for none) of each point, and the radii of its penumbrae,
 // in points, that of the sun (y) and that of the local lights (w): half the
 // width of the penumbra of what hid its samples, by the light each brought
@@ -167,7 +168,8 @@ float direct_hit(float3 o, float3 w, float reach, uint2 mask) {
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
     int scale = int(max(params.scale, 1u));
-    int2 p = direct_group_pixel(group.xy, index);
+    // While the view draws maps, only the tiles with a point it marked.
+    int2 p = direct_group_pixel(direct_tile(DIRECT_TILES_SAMPLES_LIST, group.x, group.xy, scale), index);
     int2 source = p * scale;
     int2 size = direct_points(scale);
     bool inside = all(p < size);

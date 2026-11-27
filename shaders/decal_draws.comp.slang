@@ -42,7 +42,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         && view_draws_layers(inst.meta.w >> INSTANCE_LAYERS_SHIFT, inst.meta.w)
         && decal_frustum(inst.bounds_min.xyz, inst.bounds_max.xyz)
         && !(params.occlusion != 0u && pyramid_hides(hiz, params.hiz_levels, inst.bounds_min.xyz, inst.bounds_max.xyz,
-            frame.view_proj_unjittered, frame.camera_position.xyz, frame.depth_plane));
+            frame.view_proj_unjittered, frame.camera_position.xyz));
     uint2 clusters = shown ? instance_clusters(view_detail(), inst, mesh) : uint2(0u, 0u);
     uint at = k * 5u;
     draws[at] = clusters.y * CLUSTER_DRAW_VERTICES;

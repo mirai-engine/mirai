@@ -21,17 +21,24 @@ Vk_Buffer :: struct {
 	address:  u64,
 	usage:    Buffer_Usage,
 	kind:     Memory,
-	write:    Access,          // last write not yet superseded (None = clean)
-	reads:    bit_set[Access], // reads made visible since that write
+	hazard:   Vk_Hazard,
 	fresh:    bool,            // of GPU memory, waiting in Device.fresh for the fill that zeroes it
 	name:     Resource_Name,
+}
+
+// The last write of a resource not yet superseded (None = clean) and the reads
+// made visible since, with the pipeline stages each ran in.
+Vk_Hazard :: struct {
+	write:        Access,
+	reads:        bit_set[Access],
+	write_stages: vk.PipelineStageFlags2,
+	read_stages:  vk.PipelineStageFlags2,
 }
 
 // The hazard state of a mip of a texture; its layers share it.
 Vk_Level :: struct {
 	layout: vk.ImageLayout,
-	write:  Access,
-	reads:  bit_set[Access],
+	hazard: Vk_Hazard,
 }
 
 Vk_Texture :: struct {
@@ -51,8 +58,9 @@ Vk_Texture :: struct {
 }
 
 Slot_Info :: struct {
-	used: bool,
-	kind: Binding_Kind,
+	used:   bool,
+	kind:   Binding_Kind,
+	stages: Shader_Stages, // of the shaders that bind it
 }
 
 Vk_Pipeline :: struct {

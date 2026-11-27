@@ -325,6 +325,117 @@ render_soft_shadow_leaves_with_its_caster :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// The passes of the direct light after direct_maps.comp take only the tiles it
+// lists: in each case the image, the points and the light of the pixels are
+// those of every tile of rays and block listed, bit for bit, the same frame after frame, with
+// the tiles the case asks for listed; the frame of a view without maps, of
+// two views side by side and of a view made again at another size too.
+@(test)
+render_direct_tiles_give_what_every_tile_gives :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 256, 160, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	instances := []Instance_Desc{
+		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {16, 0.2, 16}), tint = {0.8, 0.8, 0.8}},
+		{object_id = 2, mesh = f.cube, transform = trs({0, 1.5, 0}, {2, 0.2, 2}), tint = {0.5, 0.5, 0.5}},
+		{object_id = 3, mesh = f.cube, transform = trs({-3, 1.5, -1}, {0.3, 3, 0.3}), tint = {0.5, 0.5, 0.5}},
+		{object_id = 4, mesh = f.cube, transform = trs({3, 0.15, 2}, {0.2, 0.3, 0.2}), tint = {0.5, 0.5, 0.5}},
+	}
+	sun := Sun_Desc{direction = {0.4, 1, 0.3}, color = {1, 1, 1}, illuminance = 1.2 * math.PI, enabled = true, indirect = 1, scattering = 1}
+	// Too small in the view for a map: its samples trace.
+	small := Light_Desc{position = {3.3, 0.5, 2.2}, color = {1, 0.8, 0.6}, intensity = 4 * math.PI, range = 0.8, radius = 0.05, indirect = 1, scattering = 1}
+	wide := Light_Desc{position = {2, 3, 1}, color = {0.6, 0.8, 1}, intensity = 30 * math.PI, range = 10, radius = 0.4, indirect = 1, scattering = 1}
+	camera := Camera{position = {0, 8, 7}, forward = {0, -8, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	above := Camera{position = {0, 10, 0.001}, forward = {0, -10, -0.001}, up = {0, 0, -1}, near = 0.05, far = 100, projection = .Orthographic, height = 12, exposure = UNIT_EXPOSURE}
+	// What a frame gives: its image, and of each view the light of its pixels,
+	// its points and their sun, and the tiles of samples, of rays and the
+	// blocks of the spread it lists, of the tiles and blocks it has.
+	Taken :: struct {image, direct, points, sun: [dynamic]u8, listed: [3]u32, tiles, blocks: u32}
+	take :: proc(t: ^testing.T, f: ^Cube_Fixture, frame: Frame_Desc, every: bool, loc := #caller_location) -> (taken: Taken) {
+		r := f.renderer
+		r.direct_every = every
+		testing.expect(t, renderer_frame(r, frame), r.error, loc = loc)
+		rhi.device_wait_idle(f.device)
+		image, _, _, ok := golden_capture(r, context.temp_allocator)
+		testing.expect(t, ok, r.error, loc = loc)
+		taken.image = slice.into_dynamic(image)
+		taken.direct.allocator, taken.points.allocator, taken.sun.allocator = context.temp_allocator, context.temp_allocator, context.temp_allocator
+		views := []View_State{r.main} if len(frame.views) == 0 else r.views[:r.view_count]
+		for &view in views {
+			v := &view.targets
+			across := [2]u32{groups(v.width, v.direct_scale), groups(v.height, v.direct_scale)}
+			at := [3]int{len(taken.direct), len(taken.points), len(taken.sun)}
+			resize(&taken.direct, at[0] + int(v.width * v.height) * 8)
+			resize(&taken.points, at[1] + int(across.x * across.y) * 8)
+			resize(&taken.sun, at[2] + int(across.x * across.y) * 2)
+			testing.expect(t, rhi.texture_read(f.device, v.direct, taken.direct[at[0]:]), loc = loc)
+			testing.expect(t, rhi.texture_read(f.device, v.direct_points, taken.points[at[1]:]), loc = loc)
+			testing.expect(t, rhi.texture_read(f.device, v.direct_sun_points, taken.sun[at[2]:]), loc = loc)
+			header: [DIRECT_TILES_HEADER]u32
+			testing.expect(t, rhi.buffer_read_slice(f.device, v.direct_tiles, 0, header[:]), loc = loc)
+			taken.listed += {header[DIRECT_TILES_SAMPLES], header[DIRECT_TILES_RAYS], header[DIRECT_TILES_SPREAD]}
+			tiles := [2]u32{groups(across.x, DIRECT_TILE), groups(across.y, DIRECT_TILE)}
+			run := u32(DIRECT_SPREAD_RUN / DIRECT_TILE)
+			taken.tiles += tiles.x * tiles.y
+			taken.blocks += groups(tiles.x, run) * groups(tiles.y, run)
+		}
+		return
+	}
+	// None: no tile listed; Some: some but not all.
+	Listed :: enum {Any, None, Some}
+	Case :: struct {what: string, lights: []Light_Desc, sun: Sun_Desc, frame: Frame_Desc, sun_radius: f32, samples, spread: Listed}
+	views := []Frame_View{{camera = camera, rect = {0, 0, 160, 160}}, {camera = camera, rect = {160, 0, 96, 160}}}
+	cases := []Case{
+		// Points at the borders of the view and of the floor that no map holds take samples.
+		{what = "the sun alone", sun = sun, frame = {camera = camera}, spread = .Some},
+		{what = "a light its maps hold", lights = {wide}, frame = {camera = camera}, samples = .None, spread = .Some},
+		{what = "a light without a map", lights = {small}, sun = sun, frame = {camera = camera}, samples = .Some},
+		{what = "wide penumbrae", lights = {small, wide}, sun = sun, frame = {camera = camera}, sun_radius = 0.1, spread = .Some},
+		{what = "a view without maps", lights = {small}, sun = sun, frame = {camera = above}},
+		{what = "two views", lights = {small}, sun = sun, frame = {views = views}, samples = .Some},
+	}
+	expect_listed :: proc(t: ^testing.T, listed: Listed, count, all: u32, what, of: string, loc := #caller_location) {
+		switch listed {
+		case .Any:
+		case .None: testing.expectf(t, count == 0, "%s lists %d %s", what, count, of, loc = loc)
+		case .Some: testing.expectf(t, count > 0 && count < all, "%s lists %d %s of %d", what, count, of, all, loc = loc)
+		}
+	}
+	// A view that slides by a block of the spread over wide penumbrae, so that
+	// their borders cross those of the blocks; the frames of a case.
+	slid := make([dynamic]Case, context.temp_allocator)
+	append(&slid, ..cases)
+	for k in 0 ..< 16 {
+		at := Vec3{0.25 * f32(k) - 2, 9, 0.25 * f32(k) - 2}
+		append(&slid, Case{what = "penumbrae across the blocks", lights = {wide}, sun = sun, frame = {camera = {position = at, forward = {0, -9, -0.001}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}}, sun_radius = 0.1})
+	}
+	cases = slid[:]
+	for size, round in ([2][2]u32{{256, 160}, {200, 120}}) {
+		renderer_resize(r, size.x, size.y)
+		for c in cases {
+			// The second round makes the targets of a view again at another size.
+			if round == 1 && (c.samples != .Some || len(c.frame.views) > 0) {continue}
+			r.settings.sun_radius = c.sun_radius if c.sun_radius != 0 else SUN_RADIUS
+			testing.expect(t, scene_given(r, instances, c.lights, c.sun, {sky = {0, 0, 0}}))
+			for _ in 0 ..< 12 {testing.expect(t, renderer_frame(r, c.frame), r.error)}
+			every, again, own := take(t, &f, c.frame, true), take(t, &f, c.frame, true), take(t, &f, c.frame, false)
+			for pair in ([2][2]Taken{{every, again}, {every, own}}) {
+				a, b := pair[0], pair[1]
+				same := [4]bool{slice.equal(a.image[:], b.image[:]), slice.equal(a.direct[:], b.direct[:]), slice.equal(a.points[:], b.points[:]), slice.equal(a.sun[:], b.sun[:])}
+				testing.expectf(t, same == {true, true, true, true}, "%s at %v: the image, the light, the points and their sun %v as with every tile listed", c.what, size, same)
+			}
+			expect_listed(t, c.samples, own.listed[0], own.tiles, c.what, "tiles of samples")
+			if c.samples == .None {expect_listed(t, .None, own.listed[1], own.tiles, c.what, "tiles of rays")}
+			expect_listed(t, c.spread, own.listed[2], own.blocks, c.what, "blocks of the spread")
+		}
+	}
+	expect_clean(t, f.device)
+}
+
 // The maps of the shadows keep what does not move: a caster that moves once,
 // one that keeps moving, one that stops and a light that moves each change the
 // shadow in the frame they change it.
@@ -3933,6 +4044,121 @@ render_many_overlapping_instances_stay_valid :: proc(t: ^testing.T) {
 	camera := Camera{position = {0, 2, 5}, forward = {0, -1.5, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 3 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	testing.expect(t, len(r.scene.tlas_refs) == 300 && r.scene.tlas_ref_capacity >= 300)
+	expect_clean(t, f.device)
+}
+
+// The depth pyramid keeps, in each texel, the farthest depth of the pixels it
+// covers as the depth target holds it (the least reverse Z, 0 where nothing
+// is), at sizes whose last texels cover part of their share: what lies past
+// the view never takes the place of a pixel in it.
+@(test)
+render_the_depth_pyramid_keeps_the_farthest_depth_of_its_pixels :: proc(t: ^testing.T) {
+	for size in ([3][2]u32{{250, 180}, {77, 45}, {64, 48}}) {
+		f: Cube_Fixture
+		settings := test_settings()
+		settings.gi_enabled = false
+		settings.taa = false
+		if !cube_fixture_init(t, &f, size.x, size.y, settings) {return}
+		defer fixture_destroy(&f)
+		r := f.renderer
+		instances := []Instance_Desc{
+			{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 8}), tint = {0.5, 0.5, 0.5}},
+			{object_id = 2, mesh = f.cube, transform = trs({1, 0.6, 0}, {0.8, 1.2, 0.8}), tint = {1, 1, 1}},
+			{object_id = 3, mesh = f.cube, transform = trs({-3, 6, -30}, {0.3, 0.3, 0.3}), tint = {1, 1, 1}},
+		}
+		scene_given(r, instances, nil, {}, {})
+		camera := Camera{position = {0, 3, 9}, forward = {0, -0.25, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+		for _ in 0 ..< 3 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+		rhi.device_wait_idle(f.device)
+		v := &r.main.targets
+		width, height := int(v.width), int(v.height)
+		depth := make([]f32, width * height, context.temp_allocator)
+		if !testing.expect(t, rhi.texture_read(f.device, v.depth, slice.to_bytes(depth)), rhi.device_error(f.device)) {return}
+		pyramid := v.hiz[(r.main.frames - 1) % 2]
+		desc := rhi.texture_desc(f.device, pyramid)
+		below, below_size := depth, [2]int{width, height}
+		empty := 0
+		for value in depth {empty += int(value == 0)}
+		testing.expectf(t, empty > 0 && empty < len(depth), "%v: the view shows the sky and surfaces: %d of %d pixels empty", size, empty, len(depth))
+		for level in 0 ..< int(v.hiz_levels) {
+			side := [2]int{int(max(desc.width >> u32(level), 1)), int(max(desc.height >> u32(level), 1))}
+			copy := rhi.texture_create(f.device, {width = u32(side.x), height = u32(side.y), format = .R32_Float, usage = {.Sampled}, name = "pyramid level"})
+			defer rhi.texture_destroy(f.device, copy)
+			cmd := rhi.immediate_begin(f.device)
+			rhi.cmd_copy_texture(cmd, pyramid, copy, u32(level), 0)
+			if !testing.expect(t, rhi.immediate_end(f.device, cmd), rhi.device_error(f.device)) {return}
+			texels := make([]f32, side.x * side.y, context.temp_allocator)
+			if !testing.expect(t, rhi.texture_read(f.device, copy, slice.to_bytes(texels)), rhi.device_error(f.device)) {return}
+			level_size := [2]int{(below_size.x + 1) / 2, (below_size.y + 1) / 2}
+			wanted := make([]f32, level_size.x * level_size.y, context.temp_allocator)
+			wrong := 0
+			for y in 0 ..< level_size.y {
+				for x in 0 ..< level_size.x {
+					farthest := f32(1)
+					for k in 0 ..< 4 {
+						at := [2]int{2 * x + k % 2, 2 * y + k / 2}
+						if at.x < below_size.x && at.y < below_size.y {farthest = min(farthest, below[at.y * below_size.x + at.x])}
+					}
+					wanted[y * level_size.x + x] = farthest
+					wrong += int(texels[y * side.x + x] != farthest)
+				}
+			}
+			testing.expectf(t, wrong == 0, "%v: %d texels of level %d of %v are not the farthest depth of their pixels", size, wrong, level, level_size)
+			below, below_size = wanted, level_size
+		}
+		testing.expectf(t, below_size == {1, 1} && below[0] == 0, "%v: the last level is one texel, of the sky: %v %v", size, below_size, below[0])
+		expect_clean(t, f.device)
+	}
+}
+
+// What shows is never taken as hidden by the depth pyramid, not even by
+// itself: a wall that fills the view head on, whose near face lies on its own
+// box, near and a step before the far plane; cubes from a step past the near
+// plane to the far one in front of such a wall, through a perspective and an
+// orthographic camera; and a cube that crosses the near plane. Phase 0 tests
+// against the pyramid of the frame before: in a still view it draws them all.
+@(test)
+render_occlusion_never_hides_what_shows :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 250, 180, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	Case :: enum {Wall_Near, Wall_Far, Perspective, Orthographic, Near_Plane}
+	for c in Case {
+		instances := make([dynamic]Instance_Desc, context.temp_allocator)
+		camera := Camera{position = {0, 0, 0}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+		switch c {
+		case .Wall_Near, .Wall_Far:
+			append(&instances, Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0.3, -0.2, -3.1 if c == .Wall_Near else -99.98}, {300, 300, 0.02}), tint = {0.5, 0.5, 0.5}})
+		case .Perspective:
+			// Each a twentieth of the height of the view, side by side across it.
+			for i in 0 ..< 10 {
+				distance := 0.3 + 10.9 * f32(i) if i < 9 else 99.2
+				append(&instances, Instance_Desc{object_id = u64(i + 1), mesh = f.cube, transform = trs({(f32(i) - 4.5) * 0.09 * distance, 0, -distance}, 0.05 * distance), tint = {1, 1, 1}})
+			}
+			append(&instances, Instance_Desc{object_id = 11, mesh = f.cube, transform = trs({0, 0, -99.7}, {200, 200, 0.2}), tint = {0.5, 0.5, 0.5}})
+		case .Orthographic:
+			camera.projection, camera.height = .Orthographic, 12
+			for i in 0 ..< 10 {
+				append(&instances, Instance_Desc{object_id = u64(i + 1), mesh = f.cube, transform = trs({(f32(i) - 4.5) * 1.5, 0, -1 - 10.8 * f32(i)}, {1, 1, 1}), tint = {1, 1, 1}})
+			}
+			append(&instances, Instance_Desc{object_id = 11, mesh = f.cube, transform = trs({0, 0, -99.7}, {200, 200, 0.2}), tint = {0.5, 0.5, 0.5}})
+		case .Near_Plane:
+			append(&instances, Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0.4, 0, -0.2}, {0.6, 0.6, 0.6}), tint = {1, 1, 1}})
+			append(&instances, Instance_Desc{object_id = 2, mesh = f.cube, transform = trs({0, 0, -6}, {12, 12, 0.2}), tint = {0.5, 0.5, 0.5}})
+		}
+		scene_given(r, instances[:], nil, {}, {sky = {0.2, 0.2, 0.2}})
+		renderer_camera_cut(r)
+		for _ in 0 ..< 6 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+		rhi.device_wait_idle(f.device)
+		stats := renderer_stats_of_last_frame(r)
+		// What the pyramid of the frame before took as hidden phase 1 draws late.
+		testing.expectf(t, stats.occluded_instances == 0 && stats.visible_instances == u32(len(instances)) && stats.visible_late == {}, "%v: every instance shows and on time: %d visible, %d occluded of %d, late %v", c, stats.visible_instances, stats.occluded_instances, len(instances), stats.visible_late)
+		free_all(context.temp_allocator)
+	}
 	expect_clean(t, f.device)
 }
 

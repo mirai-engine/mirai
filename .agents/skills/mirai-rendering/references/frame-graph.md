@@ -23,7 +23,8 @@ omit or interleave stages.
    `gbuffer_output.slang`; read only via `include/gbuffer.slang`). Optional reflectance/layers
    targets exist only when visible (`frame_gbuffer_mesh`, `frame_mesh_whole` pins level-0 pages;
    nested views after `Mask` backfill reflectance + `FRAME_FLAG_REFLECTANCE`).
-4. **occlusion & extension geometry.** Max depth pyramid (4x4 footprint, +1 step) -> phase 1
+4. **occlusion & extension geometry.** Depth pyramid of the farthest reverse Z (gathers, 4x4
+   footprint, +1 step; `pyramid_hides` compares projected depth with a slack) -> phase 1
    retest/raster -> rebuild pyramid (`pass_depth_pyramid_build` for `Gbuffer` extensions).
    `Stats.resolved_pixels`, `resolve_helpers`, `resolve_quads_again` (counted only while
    `Renderer.resolve_counted`: atomics per wave); `Stats.cull_dropped` grows

@@ -433,6 +433,7 @@ Targets :: struct {
 	glass_zbuffer:           rhi.Texture,
 	glass_scene:             rhi.Texture, // copy of the scene a glass layer is drawn over, for the layer to read, and its levels to blur it (glass_levels.comp)
 	direct_scale:            u32, // the pixels across a point of the direct targets
+	direct_tiles:            rhi.Buffer, // the tiles of points the passes of the direct light take after direct_maps.comp (DIRECT_TILES_REGIONS)
 	reactive:                rhi.Texture, // the share of each pixel the Blend stage and additive materials drew over: TAA keeps less of its history there
 	reactive_discard:        rhi.Texture, // discard attachment for translucent_forward when nothing writes reactive
 	reactive_drawn:          bool,        // reactive was drawn in since it was last cleared
@@ -698,6 +699,7 @@ Renderer :: struct {
 	plans:           [RENDER_PIPELINE_CAPACITY]Render_Plan, // of the pipelines asked for
 	standard_pipelines: [Standard_Pipeline]Render_Pipeline_Handle,
 	main_pipeline:   Render_Pipeline_Handle, // of the views of the window in the next frame; 0: Full
+	direct_every:    bool, // direct_maps.comp lists every tile for the passes after it, the work the tests compare its lists with
 	antialiasing:    [ANTIALIASING_CAPACITY]Antialiasing_Desc, // the techniques extensions offer for the next frame
 	antialiasing_count: int,
 	antialiasing_offered: [ANTIALIASING_CAPACITY]Antialiasing_Desc, // those they offered for the last frame
@@ -1854,6 +1856,7 @@ destroy_targets :: proc(r: ^Renderer, t: ^Targets, shadows := false) {
 	defer t.shadow_raster = kept
 	for tex in targets_textures(t) {if tex != 0 {rhi.texture_destroy(d, tex)}}
 	if t.shadow_raster.pages != 0 {rhi.buffer_destroy(d, t.shadow_raster.pages)}
+	if t.direct_tiles != 0 {rhi.buffer_destroy(d, t.direct_tiles)}
 	shadow_reach_release(r, &t.shadow_raster)
 	shared_targets_release(r, targets_frame(&t.frame))
 	destroy_glass_targets(r, t)
@@ -1936,6 +1939,8 @@ destroy_gi_targets :: proc(r: ^Renderer, t: ^Targets) {
 @(private)
 destroy_direct_targets :: proc(r: ^Renderer, t: ^Targets) {
 	shared_targets_release(r, targets_frame(&t.direct_targets))
+	if t.direct_tiles != 0 {rhi.buffer_destroy(r.device, t.direct_tiles)}
+	t.direct_tiles = 0
 	t.direct_scale = 0
 	destroy_shadow_maps(r, t)
 }
@@ -1959,7 +1964,18 @@ ensure_direct_targets :: proc(r: ^Renderer, cmd: ^rhi.Command_List, t: ^Targets,
 	ok &&= target(r, cmd, &t.direct_sun_points, width, height, .R16_Float, {.Sampled, .Storage}, "direct sun points", shared = true)
 	ok &&= target(r, cmd, &t.direct_spread, width, height, .RG16_Float, {.Sampled, .Storage}, "direct spread", shared = true)
 	ok &&= target(r, cmd, &t.direct_marks, t.width, t.height, .R8_Unorm, HISTORY_USAGE, "direct marks", true, true)
+	if t.direct_tiles == 0 {
+		words := DIRECT_TILES_HEADER + DIRECT_TILES_REGIONS * direct_tile_count(width, height)
+		t.direct_tiles = rhi.buffer_create(r.device, {size = u64(words) * size_of(u32), usage = {.Storage, .Indirect}, name = "direct tiles"})
+		if t.direct_tiles == 0 {set_error(r, "direct tiles: %s", rhi.device_error(r.device)); return false}
+	}
 	return ok
+}
+
+// The tiles of DIRECT_TILE points a side across points of the direct light.
+@(private)
+direct_tile_count :: proc(width, height: u32) -> u32 {
+	return ((width + DIRECT_TILE - 1) / DIRECT_TILE) * ((height + DIRECT_TILE - 1) / DIRECT_TILE)
 }
 
 // The mask of the highlighted instances and its filtered coat, in window

@@ -1,32 +1,29 @@
 #include "native.slang"
-// Depth pyramid for occlusion culling: each texel keeps the farthest linear
-// depth of the pixels it covers (background counts as infinitely far). Texel
-// j of level L covers pixels j * 2^(L+1) to (j + 1) * 2^(L+1), those of the
-// view among them: a level is as large as it takes to cover the view, and
-// the last texel of an odd size covers the pixels left (pyramid.slang).
-// Level 0 is made from the depth target (reverse Z, 0 where nothing is).
+// Depth pyramid for occlusion culling: each texel keeps the farthest depth of
+// the pixels it covers, as the depth target holds it (reverse Z: the least
+// value, 0 where nothing is). Texel j of level L covers pixels j * 2^(L+1) to
+// (j + 1) * 2^(L+1), those of the view among them: a level is as large as it
+// takes to cover the view, and the last texel of an odd size covers the
+// pixels left (pyramid.slang).
 //
 // A dispatch makes up to DEPTH_PYRAMID_BATCH levels from the one before them: a
-// group of 8x8 threads reduces a tile of 8x8 texels of the first, then 4x4
-// of the next, 2x2 and 1 through group memory. Its threads take their texels
-// in an order where the four that reduce into one are a bank apart, so each
-// level reads only what the group wrote.
+// group of 8x8 threads gathers a tile of 8x8 texels of the first, then reduces
+// 4x4 of the next, 2x2 and 1. Its threads take their texels in an order where
+// the four that reduce into one are a bank apart, so each level reads only
+// what the group wrote, through group memory: it writes below the banks the
+// level before read, so one wait a level orders its writes after those reads.
 #include "common.slang"
 #define MIRAI_GROUP_X 64
 #define MIRAI_GROUP_Y 1
 #define MIRAI_GROUP_Z 1
 #define PYRAMID_TILE 8u
 
-// from_depth: the source is the depth target, whose value d at the point p =
-// (ndc x, ndc y, d, 1) of a pixel is at the linear depth dot(along, p) / dot(by, p).
-// Relative: well above the rounding of the depth and of the inverse of the
-// projection, well below any distance between two surfaces that matters.
-#define HIZ_DEPTH_SLACK 1e-4
-
-// source_size: of the depth target or of the level before the first of this
-// dispatch. levels: how many it makes, up to DEPTH_PYRAMID_BATCH.
-struct Params_Block { int2 source_size; uint from_depth; uint levels; float4 along; float4 by; };
+// source_size: of the view, or of the level before the first of this dispatch.
+// levels: how many it makes, up to DEPTH_PYRAMID_BATCH. inv_extent: 1 over
+// the size of the texture of the source, which holds more past the view.
+struct Params_Block { int2 source_size; uint levels; uint pad0; float2 inv_extent; float2 pad1; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
+[[vk::binding(SLOT_POINT_SAMPLER, 0)]] SamplerState point_sampler : register(MIRAI_REGISTER(s, SLOT_POINT_SAMPLER), space0);
 [[vk::binding(SLOT_PASS0, 0)]] Texture2D<float4> source : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS1, 0)]] [[vk::image_format("r32f")]] RWTexture2D<float4> target0 : register(MIRAI_REGISTER(u, SLOT_PASS1), space0);
 [[vk::binding(SLOT_PASS2, 0)]] [[vk::image_format("r32f")]] RWTexture2D<float4> target1 : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
@@ -35,19 +32,19 @@ struct Params_Block { int2 source_size; uint from_depth; uint levels; float4 alo
 
 groupshared float farthest[PYRAMID_TILE * PYRAMID_TILE];
 
-// The farthest depth a texel of the source holds; what is past the source
-// covers no pixel and holds nothing.
-float fetch_depth(int2 p) {
-    if (any(p >= params.source_size)) return 0.0;
-    float d = source.Load(int3(p, 0)).r;
-    if (params.from_depth == 0u) return d;
-    if (d <= 0.0) return 1e30;
-    float2 ndc = (float2(p) + 0.5) / float2(params.source_size) * float2(2.0, -2.0) + float2(-1.0, 1.0);
-    float4 point = float4(ndc, d, 1.0);
-    // What f32 holds of the depth and of the inverse of the projection puts the
-    // linear depth a hair nearer or farther than the surface that wrote it:
-    // the step farther keeps the surface itself from being hidden by it.
-    return dot(params.along, point) / dot(params.by, point) * (1.0 + HIZ_DEPTH_SLACK);
+// The farthest depth of the 2x2 texels of the source from s: one gather at
+// their shared corner. A texel past the source covers no pixel, holds what is
+// past the view in a level larger than it, and counts as the near plane.
+float gather_farthest(int2 s) {
+    // w: (s.x, s.y), z: (s.x + 1, s.y), x: (s.x, s.y + 1), y: (s.x + 1, s.y + 1).
+    float4 d = source.GatherRed(point_sampler, float2(s + 1) * params.inv_extent);
+    // The columns and rows of the source from s: 2 or more, none past it.
+    int2 left = params.source_size - s;
+    if (left.x < 2) d.zy = float2(1.0);
+    if (left.x < 1) d.xw = float2(1.0);
+    if (left.y < 2) d.xy = float2(1.0);
+    if (left.y < 1) d.zw = float2(1.0);
+    return min(min(d.x, d.y), min(d.z, d.w));
 }
 
 // The texel of the tile of a thread: the bits of its index alternate x and
@@ -79,17 +76,15 @@ void pyramid_store(uint k, int2 p, float d) {
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
     int2 p = int2(group.xy * PYRAMID_TILE + pyramid_texel(index));
-    int2 s = p * 2;
-    float d = max(max(fetch_depth(s), fetch_depth(s + int2(1, 0))), max(fetch_depth(s + int2(0, 1)), fetch_depth(s + int2(1, 1))));
+    float d = gather_farthest(p * 2);
     pyramid_store(0u, p, d);
     for (uint k = 1u; k < DEPTH_PYRAMID_BATCH; k++) {
         if (k >= params.levels) break;
         uint bank = (PYRAMID_TILE >> k) * (PYRAMID_TILE >> k);
-        GroupMemoryBarrierWithGroupSync();
         if (index < bank * 4u) farthest[index] = d;
         GroupMemoryBarrierWithGroupSync();
         if (index < bank) {
-            d = max(max(d, farthest[index + bank]), max(farthest[index + 2u * bank], farthest[index + 3u * bank]));
+            d = min(min(d, farthest[index + bank]), min(farthest[index + 2u * bank], farthest[index + 3u * bank]));
             p >>= 1;
             pyramid_store(k, p, d);
         }

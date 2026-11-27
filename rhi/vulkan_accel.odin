@@ -348,8 +348,8 @@ cmd_build_tlas :: proc(c: ^Command_List, accel: Accel, instances: Buffer, offset
 	// The translation binds what it needs and gives the list back as it was.
 	slots := c.slots
 	pipeline := c.pipeline
-	cmd_barrier_buffer(c, instances, .Shader_Read)
-	cmd_barrier_buffer(c, a.native, .Shader_Write)
+	vk_barrier_buffer(c, instances, .Shader_Read, {.Compute})
+	vk_barrier_buffer(c, a.native, .Shader_Write, {.Compute})
 	cmd_bind_pipeline(c, d.tlas_translator)
 	cmd_bind_transient(c, TLAS_SLOT_TABLE, table)
 	cmd_bind_buffer(c, TLAS_SLOT_SOURCE, instances)
