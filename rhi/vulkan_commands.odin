@@ -612,8 +612,22 @@ cmd_bind_accel :: proc(c: ^Command_List, slot: u32, accel: Accel) {
 	vk_slot_set(c, slot, {set = true, accel = accel})
 }
 
+// Whether another slot of the bound compute pipeline writes the same buffer or
+// covers the same texture mip(s), so its write barrier already covers reads.
+@(private)
+vk_slot_written :: proc(p: ^Vk_Pipeline, c: ^Command_List, buffer: Buffer = 0, texture: Texture = 0, mip: i32 = -1) -> bool {
+	for slot, i in p.slots {
+		if !slot.used || !c.slots[i].set {continue}
+		s := c.slots[i]
+		if buffer != 0 && slot.kind == .Storage_Buffer_RW && s.buffer == buffer {return true}
+		if texture != 0 && slot.kind == .Storage_Texture && s.texture == texture && (s.mip < 0 || s.mip == mip) {return true}
+	}
+	return false
+}
+
 // Transitions every resource bound to the current compute pipeline to the
-// access its binding kind implies.
+// access its binding kind implies. Writes go first and suppress matching reads
+// so a resource bound to both slots stays dirty for later readers.
 @(private)
 vk_auto_transitions :: proc(c: ^Command_List) {
 	p := pool_get(&c.device.pipelines, base.Handle(c.pipeline)) // by handle: the pool may grow while bound
@@ -621,12 +635,19 @@ vk_auto_transitions :: proc(c: ^Command_List) {
 	for slot, i in p.slots {
 		if !slot.used || !c.slots[i].set {continue}
 		s := c.slots[i]
-		switch slot.kind {
-		case .Uniform_Buffer, .Storage_Buffer: vk_barrier_buffer(c, s.buffer, .Shader_Read, {.Compute})
-		case .Storage_Buffer_RW:               vk_barrier_buffer(c, s.buffer, .Shader_Write, {.Compute})
-		case .Sampled_Texture:                 vk_barrier_texture(c, s.texture, .Shader_Read, s.mip, {.Compute})
-		case .Storage_Texture:                 vk_barrier_texture(c, s.texture, .Shader_Write, s.mip, {.Compute})
-		case .Sampler, .Texture_Table:
+		#partial switch slot.kind {
+		case .Storage_Buffer_RW: vk_barrier_buffer(c, s.buffer, .Shader_Write, {.Compute})
+		case .Storage_Texture:   vk_barrier_texture(c, s.texture, .Shader_Write, s.mip, {.Compute})
+		}
+	}
+	for slot, i in p.slots {
+		if !slot.used || !c.slots[i].set {continue}
+		s := c.slots[i]
+		#partial switch slot.kind {
+		case .Uniform_Buffer, .Storage_Buffer:
+			if !vk_slot_written(p, c, buffer = s.buffer) {vk_barrier_buffer(c, s.buffer, .Shader_Read, {.Compute})}
+		case .Sampled_Texture:
+			if !vk_slot_written(p, c, texture = s.texture, mip = s.mip) {vk_barrier_texture(c, s.texture, .Shader_Read, s.mip, {.Compute})}
 		case .Accel:
 			if a := pool_get(&d.accels, base.Handle(s.accel)); a != nil {vk_barrier_buffer(c, a.buffer, .Accel_Read, {.Compute})}
 		}
