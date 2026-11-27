@@ -559,8 +559,10 @@ vk_merge_bindings :: proc(d: ^Device, p: ^Vk_Pipeline, stages: Shader_Stages, co
 	for slot, i in p.slots {
 		if !slot.used {continue}
 		entries[count] = {binding = u32(i), descriptorType = vk_descriptor_type(slot.kind), descriptorCount = 1, stageFlags = vk_stage_flags(slot.stages)}
+		p.used_slots[count] = u8(i)
 		count += 1
 	}
+	p.used_count = u8(count)
 	set_info := vk.DescriptorSetLayoutCreateInfo{sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO, flags = {.PUSH_DESCRIPTOR_KHR}, bindingCount = count, pBindings = &entries[0]}
 	if !vk_check(d, d.dvk.CreateDescriptorSetLayout(d.handle, &set_info, nil, &p.set_layout), "descriptor set layout") {return false}
 	set_layouts := [2]vk.DescriptorSetLayout{p.set_layout, d.table_layout}

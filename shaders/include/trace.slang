@@ -18,12 +18,21 @@
 static float3 ray_through = float3(1.0);
 static float3 ray_through_each = float3(1.0);
 static uint ray_through_crossed = 0u;
+// The instance and the distance of the surface a ray crossed last.
+static uint ray_through_instance = INVALID;
+static float ray_through_t = 0.0;
 
 // Whether a ray of trace_through goes on through a covered surface of
-// material m: a thin surface that lets light through leaves it
-// ray_through_each of what reaches it.
-bool thin_passes(Material m) {
+// material m, which it meets at distance t in an instance: a thin surface
+// that lets light through leaves it ray_through_each of what reaches it,
+// once. A ray along an edge two triangles share meets both, and a tracer may
+// give a triangle again, one after the other at one distance: the ray
+// crosses that surface once.
+bool thin_passes(Material m, uint instance_index, float t) {
     if ((m.layers & MATERIAL_LAYER_DIFFUSE_TRANSMISSION) == 0u || (m.layers & MATERIAL_LAYER_UNLIT) != 0u) return false;
+    if (instance_index == ray_through_instance && abs(t - ray_through_t) <= 1e-5 * t) return true;
+    ray_through_instance = instance_index;
+    ray_through_t = t;
     ray_through *= ray_through_each;
     ray_through_crossed++;
     return max(ray_through.r, max(ray_through.g, ray_through.b)) >= 1e-3;
@@ -61,7 +70,7 @@ bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, float
         float2 uv1 = tri.a.uv1 * weights.x + tri.b.uv1 * weights.y + tri.c.uv1 * weights.z;
         if (!material_covers(m, material_mask(m, uv, uv1, lod, true))) return false;
     }
-    return !thin || !thin_passes(m);
+    return !thin || !thin_passes(m, instance_index, t);
 }
 
 
@@ -453,6 +462,7 @@ Hit trace_ray(float3 origin, float3 direction, float t_min, float t_max, bool an
 Hit trace_past_thin(float3 origin, float3 direction, float t_max, out Ray_Path path) {
     ray_through = float3(1.0);
     ray_through_each = float3(1.0);
+    ray_through_instance = INVALID;
     return trace_ray(origin, direction, 0.0, t_max, true, path, BLEND_PASSES | BLEND_THIN);
 }
 
@@ -486,6 +496,7 @@ float3 trace_through(float3 origin, float3 direction, float t_max, float3 each, 
     ray_through = float3(1.0);
     ray_through_each = each;
     ray_through_crossed = 0u;
+    ray_through_instance = INVALID;
     bool stopped = trace_ray_impl(origin, direction, 0.0, t_max, true, BLEND_PASSES | BLEND_THIN, RAY_SHADOWS).instance != INVALID;
     crossed = ray_through_crossed;
     return stopped ? float3(0.0) : ray_through;

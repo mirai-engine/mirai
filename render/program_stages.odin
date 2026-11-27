@@ -88,9 +88,9 @@ program_graphics_entry :: proc(r: ^Renderer, target: ^rhi.Pipeline, program: u32
 // whose pipeline is target^; target^ until it is made, or while the shaders
 // in use have no stage of that program. now: a draw that is read back at once
 // (a thumbnail) waits for it. early: asked ahead of time, before a draw needs
-// it, which raises it; speculative: early, for a variant that only spares work.
+// it, which raises it.
 @(private)
-program_graphics :: proc(r: ^Renderer, target: ^rhi.Pipeline, program: u32, now := false, early := false, speculative := false) -> rhi.Pipeline {
+program_graphics :: proc(r: ^Renderer, target: ^rhi.Pipeline, program: u32, now := false, early := false) -> rhi.Pipeline {
 	if program == 0 || program == GPU_NONE {return target^}
 	entry, found := program_graphics_entry(r, target, program)
 	if entry == nil {return target^}
@@ -99,7 +99,7 @@ program_graphics :: proc(r: ^Renderer, target: ^rhi.Pipeline, program: u32, now 
 		if desc, ok := pipeline_desc_of(r, target); ok && desc.fragment != nil {
 			if entry.code = program_stage(r, desc.fragment, program); entry.code != nil {
 				desc.fragment, desc.name = entry.code, entry.code.name
-				if !pipeline_make(r, &entry.pipeline, graphics = desc, now = now, early = early, speculative = speculative) {entry^ = {}}
+				if !pipeline_make(r, &entry.pipeline, graphics = desc, now = now, early = early) {entry^ = {}}
 			}
 		}
 	} else if entry.pipeline == 0 && entry.code != nil && !early {
@@ -111,12 +111,13 @@ program_graphics :: proc(r: ^Renderer, target: ^rhi.Pipeline, program: u32, now 
 
 // The pipeline of a Surface program for the stage of `spared`, a variant of
 // the stage of `base` with constants that only spare work: that of base while
-// the one of spared is made (pipeline_of, `optional`).
+// the one of spared is made, which a frame asks for as it asks for any other
+// (pipeline_of, `optional`).
 @(private)
 program_spared :: proc(r: ^Renderer, base, spared: ^rhi.Pipeline, program: u32) -> rhi.Pipeline {
 	if spared == base {return program_graphics(r, base, program)}
 	if program == 0 || program == GPU_NONE {return spared^}
-	if made := program_graphics(r, spared, program, early = true, speculative = true); made != spared^ {return made}
+	if made := program_graphics(r, spared, program); made != spared^ {return made}
 	return program_graphics(r, base, program)
 }
 

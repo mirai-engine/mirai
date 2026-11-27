@@ -70,6 +70,8 @@ Vk_Pipeline :: struct {
 	descriptor_pool: vk.DescriptorPool, // of copies of the texture table it outgrew
 	bind_point: vk.PipelineBindPoint,
 	slots:      [MAX_BINDING_SLOTS]Slot_Info,
+	used_slots: [MAX_BINDING_SLOTS]u8, // the indices of the used slots, ascending
+	used_count: u8,
 	uses_table: bool, // the layout has the texture table as set 1
 	name_bytes: [PIPELINE_NAME_BYTES]u8, // a copy of its name: what it was made from may go before it (vk_pipeline_name)
 	name_length: u8,

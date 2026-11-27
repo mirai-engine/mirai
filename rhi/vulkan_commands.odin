@@ -491,8 +491,9 @@ vk_pass_draw :: proc(c: ^Command_List) -> bool {
 	if p.bind_point != .GRAPHICS {set_error(d, "pipeline %s cannot be used inside a render pass", vk_pipeline_name(p)); return false}
 	if !c.dirty {return true}
 	c.dirty = false
-	for slot, i in p.slots {
-		if !slot.used || !c.slots[i].set {continue}
+	for i in p.used_slots[:p.used_count] {
+		slot := p.slots[i]
+		if !c.slots[i].set {continue}
 		s := c.slots[i]
 		switch slot.kind {
 		case .Uniform_Buffer, .Storage_Buffer: vk_pass_use(c, 0, s.buffer, .Shader_Read, stages = slot.stages)
@@ -612,17 +613,13 @@ cmd_bind_accel :: proc(c: ^Command_List, slot: u32, accel: Accel) {
 	vk_slot_set(c, slot, {set = true, accel = accel})
 }
 
-// Whether another slot of the bound compute pipeline writes the same buffer or
-// covers the same texture mip(s), so its write barrier already covers reads.
+// A resource a slot of the bound compute pipeline writes: its write barrier
+// already covers reads of the same buffer or texture mip(s) by other slots.
 @(private)
-vk_slot_written :: proc(p: ^Vk_Pipeline, c: ^Command_List, buffer: Buffer = 0, texture: Texture = 0, mip: i32 = -1) -> bool {
-	for slot, i in p.slots {
-		if !slot.used || !c.slots[i].set {continue}
-		s := c.slots[i]
-		if buffer != 0 && slot.kind == .Storage_Buffer_RW && s.buffer == buffer {return true}
-		if texture != 0 && slot.kind == .Storage_Texture && s.texture == texture && (s.mip < 0 || s.mip == mip) {return true}
-	}
-	return false
+Vk_Slot_Write :: struct {
+	buffer:  Buffer,
+	texture: Texture,
+	mip:     i32,
 }
 
 // Transitions every resource bound to the current compute pipeline to the
@@ -632,22 +629,36 @@ vk_slot_written :: proc(p: ^Vk_Pipeline, c: ^Command_List, buffer: Buffer = 0, t
 vk_auto_transitions :: proc(c: ^Command_List) {
 	p := pool_get(&c.device.pipelines, base.Handle(c.pipeline)) // by handle: the pool may grow while bound
 	d := c.device
-	for slot, i in p.slots {
-		if !slot.used || !c.slots[i].set {continue}
+	used := p.used_slots[:p.used_count]
+	writes: [MAX_BINDING_SLOTS]Vk_Slot_Write = ---
+	write_count := 0
+	for i in used {
+		if !c.slots[i].set {continue}
 		s := c.slots[i]
-		#partial switch slot.kind {
-		case .Storage_Buffer_RW: vk_barrier_buffer(c, s.buffer, .Shader_Write, {.Compute})
-		case .Storage_Texture:   vk_barrier_texture(c, s.texture, .Shader_Write, s.mip, {.Compute})
+		#partial switch p.slots[i].kind {
+		case .Storage_Buffer_RW:
+			vk_barrier_buffer(c, s.buffer, .Shader_Write, {.Compute})
+			writes[write_count] = {buffer = s.buffer}
+			write_count += 1
+		case .Storage_Texture:
+			vk_barrier_texture(c, s.texture, .Shader_Write, s.mip, {.Compute})
+			writes[write_count] = {texture = s.texture, mip = s.mip}
+			write_count += 1
 		}
 	}
-	for slot, i in p.slots {
-		if !slot.used || !c.slots[i].set {continue}
+	written := writes[:write_count]
+	for i in used {
+		if !c.slots[i].set {continue}
 		s := c.slots[i]
-		#partial switch slot.kind {
+		#partial switch p.slots[i].kind {
 		case .Uniform_Buffer, .Storage_Buffer:
-			if !vk_slot_written(p, c, buffer = s.buffer) {vk_barrier_buffer(c, s.buffer, .Shader_Read, {.Compute})}
+			covered := false
+			for w in written {if w.buffer != 0 && w.buffer == s.buffer {covered = true; break}}
+			if !covered {vk_barrier_buffer(c, s.buffer, .Shader_Read, {.Compute})}
 		case .Sampled_Texture:
-			if !vk_slot_written(p, c, texture = s.texture, mip = s.mip) {vk_barrier_texture(c, s.texture, .Shader_Read, s.mip, {.Compute})}
+			covered := false
+			for w in written {if w.texture != 0 && w.texture == s.texture && (w.mip < 0 || w.mip == s.mip) {covered = true; break}}
+			if !covered {vk_barrier_texture(c, s.texture, .Shader_Read, s.mip, {.Compute})}
 		case .Accel:
 			if a := pool_get(&d.accels, base.Handle(s.accel)); a != nil {vk_barrier_buffer(c, a.buffer, .Accel_Read, {.Compute})}
 		}
@@ -674,8 +685,8 @@ vk_flush_bindings :: proc(c: ^Command_List, bind_point: vk.PipelineBindPoint) ->
 	accels: [MAX_BINDING_SLOTS]vk.WriteDescriptorSetAccelerationStructureKHR
 	accel_handles: [MAX_BINDING_SLOTS]vk.AccelerationStructureKHR
 	count: u32
-	for slot, i in p.slots {
-		if !slot.used {continue}
+	for i in p.used_slots[:p.used_count] {
+		slot := p.slots[i]
 		s := c.slots[i]
 		if !s.set {set_error(d, "pipeline %s: slot %d is not bound", vk_pipeline_name(p), i); return false}
 		w := vk.WriteDescriptorSet{sType = .WRITE_DESCRIPTOR_SET, dstBinding = u32(i), descriptorCount = 1, descriptorType = vk_descriptor_type(slot.kind)}
