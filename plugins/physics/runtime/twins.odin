@@ -101,10 +101,19 @@ twin_body :: proc(state:^Physics_State,e:core.Entity) -> sim.Body_Handle {
     return {}
 }
 
-// The box of the shapes of the body of the entity, without the copies of its twin.
+// The box of the shapes of the body of the entity, without the copies of its twin; for an entity
+// without a body of its own, that of the bodies a library made for it (owned_body_create).
 body_bounds :: proc(physics:core.Ref(Physics_State),e:core.Entity) -> (bounds:mm.Aabb,ok:bool) {
     if physics.ptr==nil || !physics.ready {return}
-    return sim.body_bounds(&physics.world,body_of(physics,e))
+    if link_find(physics.ptr,e)!=nil {return sim.body_bounds(&physics.world,body_of(physics,e))}
+    for o in physics.ptr.owned {
+        if o.body=={} || sim.body_user_data(&physics.world,o.body)!=u64(e) {continue}
+        box,has:=sim.body_bounds(&physics.world,o.body)
+        if !has {continue}
+        bounds=ok ? mm.aabb_merge(bounds,box) : box
+        ok=true
+    }
+    return
 }
 
 // The ray against the collider of the entity alone, whatever its collision and its cuts: where its shape is.

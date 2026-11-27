@@ -966,7 +966,7 @@ hitboxes :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,before,at:Ability_Tim
                 if t.w.tags!=nil {target_tags,_=core.get(t.w.tags,target)}
                 if at:=hitbox_effect_at(h,target_tags);at>=0 {
                     effect:=h.effect if at==0 else h.target_effects[at-1]
-                    cue_emit(t,effect.on_hit,t.sheets.hit_channels[hrow][at],target,e)
+                    cue_emit(t,effect.on_hit,t.sheets.hit_channels[hrow][at],target,e,hit_point(t.w,h,pose,target))
                     if effect!={} {ability_effect(t.requests,target,effect,e)}
                 }
             }
@@ -1090,11 +1090,23 @@ event_push :: proc(t:^Tick,event:Ability_Event) {
 
 // Plays cue where entity is (where fallback is when entity is not placed), by entity.
 @(private)
-cue_emit :: proc(t:^Tick,cue:audio.Cue,channel:core.Birth_Channel,entity:core.Entity,fallback:=core.NONE) {
+cue_emit :: proc(t:^Tick,cue:audio.Cue,channel:core.Birth_Channel,entity:core.Entity,fallback:=core.NONE,point:Maybe(mm.Transform)=nil) {
     if cue.sound=={} && channel==0 {return}
-    pose,placed:=core.get(t.w.worlds,entity)
-    if !placed && fallback!=core.NONE {pose,placed=core.get(t.w.worlds,fallback)}
-    at:Maybe(mm.Transform)
-    if placed {at=pose.transform}
+    at:=point
+    if at==nil {
+        pose,placed:=core.get(t.w.worlds,entity)
+        if !placed && fallback!=core.NONE {pose,placed=core.get(t.w.worlds,fallback)}
+        if placed {at=pose.transform}
+    }
     audio.cue_play(t.w.sounds,t.w.births,cue,channel,at,entity)
+}
+
+// Where a hitbox at pose meets a target it overlaps: the point of the box of the target's body
+// nearest the hitbox's centre, turned as the hitbox. Nil without a body, where the target's own
+// place stands in.
+hit_point :: proc(w:^Ability_World,h:^Ability_Hitbox,pose:mm.Transform,target:core.Entity) -> Maybe(mm.Transform) {
+    bounds,ok:=phys.body_bounds(w.physics,target)
+    if !ok {return nil}
+    center,rotation:=hitbox_world(h,pose)
+    return mm.Transform{position=linalg.clamp(center,bounds.min,bounds.max),rotation=rotation,scale=1}
 }

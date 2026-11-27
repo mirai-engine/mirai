@@ -193,7 +193,7 @@ target_make :: proc(f:^Rifle,center,half:[3]f32,health:=true) -> core.Entity {
 data :: proc(f:^Rifle) -> Ability_Data {return {{&f.sheet_set},{&f.kit_set},{&f.hitbox_set}}}
 
 @(private="file")
-rifle_step :: proc(f:^Rifle,ticks:=1) {
+rifle_step :: proc(f:^Rifle,ticks:=1,overlap:Hitbox_Overlap=nil) {
     for _ in 0..<ticks {
         seat:=inp.seat_runtime_edit(&f.seat_runtime,f.seat)
         seat.actions.count=3
@@ -211,7 +211,7 @@ rifle_step :: proc(f:^Rifle,ticks:=1) {
         from:=len(f.events.queue.items)
         ability_rows({&f.users,&f.states,&f.tracking,&f.locals,&f.wielded},&f.checks,&f.problems)
         test_world_settle(&f.w)
-        abilities_tick({&f.users,&f.states,&f.tracking,&f.locals,&f.wielded},data(f),&f.cache,&f.checks,&f.requests,&f.events,&w,nil)
+        abilities_tick({&f.users,&f.states,&f.tracking,&f.locals,&f.wielded},data(f),&f.cache,&f.checks,&f.requests,&f.events,&w,overlap)
         sw:=Shot_World{
             physics=core.ref(&f.physics),zone_sets=core.read(&f.zone_sets),zone_poses=core.read(&f.zone_poses),
             zones={&f.zone_set},tags=core.read(&f.tags),remotes=core.read(&f.remotes),sounds=&f.sounds,births=&f.births,problems=&f.problems,
@@ -489,4 +489,31 @@ no_shot_does_no_work :: proc(t:^testing.T) {
     context=saved
     testing.expect_value(t,len(f.events.queue.items),0)
     testing.expect_value(t,f.problems.count,0)
+}
+
+// A box hitbox's hit plays its cue where it meets the target: the point of the target's body
+// nearest the hitbox, at the height of the swing, not at the target's feet.
+@(test)
+a_hit_plays_its_cue_where_the_hitbox_meets_the_target :: proc(t:^testing.T) {
+    f:=new(Rifle);defer free(f)
+    if !rifle_make(t,f) {return}
+    defer rifle_destroy(f)
+    cue:=audio.Cue{sound={1,0}}
+    base.text_set(cue.channel[:],"impact")
+    f.hitboxes[RAY]={shape=.Box,center={0,0,-1},size={0.2,0.2,0.2},effect={attribute=HEALTH,amount=-25,on_hit=cue}}
+    gun:=gun_make(f,30,1)
+    ability_wield(&f.requests,gun,f.player)
+    rifle_step(f)
+    // A body 2 m tall whose entity stands at its feet, 2 m ahead.
+    target:=target_make(f,{0,1,-2},{0.4,1,0.4})
+    core.edit(&f.worlds,target).transform.position={0,0,-2}
+    test_world_settle(&f.w)
+    f.down[FIRE_ACTION]=true
+    rifle_step(f,1,physics_overlap)
+    f.down[FIRE_ACTION]=false
+    rifle_step(f,2,physics_overlap)
+    births:=f.births.log.items[:]
+    if !testing.expectf(t,len(births)==1,"one hit, one birth: %v",len(births)) {return}
+    testing.expect_value(t,births[0].channel,core.birth_channel("impact"))
+    testing.expectf(t,linalg.length(births[0].position-[3]f32{0,1.2,-1.6})<1e-4,"the impact is at %v, where the swing meets the body",births[0].position)
 }
