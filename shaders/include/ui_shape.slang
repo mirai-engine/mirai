@@ -3,7 +3,7 @@
 
 struct Ui_Shape {
     float4 bounds;
-    float4 radii;
+    float4 radii;  // of the corners; of an ellipse: the turn its arc starts at and whether its ends are round
     float4 fill;
     float4 fill2;
     float4 stroke;
@@ -59,21 +59,44 @@ float ui_shadow_coverage(float2 p, Ui_Shape shape) {
     return saturate(coverage);
 }
 
-// The coverage of the sector an arc keeps: from the top of its bounds,
-// clockwise, the part of a turn params.z says (0 or 1: all of it), with the
-// edges as soft as aa.
-float ui_arc_coverage(float2 p, Ui_Shape shape, float aa) {
-    float sweep = shape.params.z;
-    if (sweep <= 0.0 || sweep >= 1.0) return 1.0;
+// How far around from the middle of the arc of a shape p is, in turns from -0.5
+// to 0.5, and half the turn the arc covers. An arc starts radii.x turns
+// clockwise from the top of its bounds and covers params.z of a turn;
+// negative: counterclockwise.
+float2 ui_arc_place(float2 p, Ui_Shape shape) {
     float2 d = p - (shape.bounds.xy + shape.bounds.zw * 0.5);
-    float angle = atan2(d.x, -d.y);
-    if (angle < 0.0) angle += 6.28318531;
-    float along = length(d);
-    return saturate(0.5 + min(angle, sweep * 6.28318531 - angle) * along / aa);
+    float middle = shape.radii.x + shape.params.z * 0.5;
+    return float2(frac(atan2(d.x, -d.y) / 6.28318531 - middle + 0.5) - 0.5, abs(shape.params.z) * 0.5);
+}
+
+// The coverage of the sector an arc keeps (all of it when params.z covers no
+// turn or a whole one), with the edges as soft as aa.
+float ui_arc_coverage(float2 p, Ui_Shape shape, float aa) {
+    float sweep = abs(shape.params.z);
+    if (sweep <= 0.0 || sweep >= 1.0) return 1.0;
+    float2 place = ui_arc_place(p, shape);
+    float along = length(p - (shape.bounds.xy + shape.bounds.zw * 0.5));
+    return saturate(0.5 + (place.y - abs(place.x)) * 6.28318531 * along / aa);
+}
+
+// A ring of stroke width params.x cut to its arc, its ends round (radii.y).
+float4 ui_round_arc_color(float2 p, Ui_Shape shape) {
+    float2 d = p - (shape.bounds.xy + shape.bounds.zw * 0.5);
+    float width = shape.params.x;
+    float radius = min(shape.bounds.z, shape.bounds.w) * 0.5 - width * 0.5;
+    float2 place = ui_arc_place(p, shape);
+    float distance = abs(length(d) - radius) - width * 0.5;
+    if (abs(place.x) > place.y) {
+        float end = (shape.radii.x + shape.params.z * 0.5 + sign(place.x) * place.y) * 6.28318531;
+        distance = length(d - radius * float2(sin(end), -cos(end))) - width * 0.5;
+    }
+    float aa = max(fwidth(distance), 1e-4);
+    return float4(shape.stroke.rgb, shape.stroke.a * saturate(0.5 - distance / aa));
 }
 
 float4 ui_shape_color(float2 p, Ui_Shape shape) {
     if (shape.params.y > 1.5) return float4(shape.fill.rgb, shape.fill.a * ui_shadow_coverage(p, shape));
+    if (shape.params.y > 0.5 && shape.radii.y > 0.5) return ui_round_arc_color(p, shape);
     float distance = shape.params.y > 0.5 ? ui_ellipse_distance(p, shape.bounds) : ui_rounded_distance(p, shape.bounds, shape.radii);
     float aa = max(fwidth(distance), 1e-4);
     float outer = saturate(0.5 - distance / aa);

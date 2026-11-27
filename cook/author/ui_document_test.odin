@@ -332,6 +332,34 @@ what_a_style_extends_reaches_its_values_rules_and_nodes_when_they_change :: proc
     testing.expect(t,records_load_as_tree(&r))
 }
 
+// The arc of a radial gauge and the tint a node's own look gives an image are
+// said by name and read back the same.
+@(test)
+a_gauge_says_its_arc_and_an_image_its_tint_and_both_come_back_the_same :: proc(t:^testing.T) {
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    r:Records
+    if !document_of(t,&types,&r,`{"styles":{"gauge":{"fill":"#30c0ff","track":"#ffffff33","fill_mode":"radial","border":10,"radius":5,"arc_start":-0.375,"arc_sweep":0.75},
+        "icon":{"width":32,"height":32}},"nodes":[
+        {"name":"depth","kind":"Progress","style":"gauge"},
+        {"name":"badge","kind":"Image","look":{"extends":"icon","fill":"#ff8000"}}]}`) {return}
+    gauge:=r.styles[tree_style_row(&r,"gauge")]
+    testing.expect_value(t,gauge.fill_mode,ui.Progress_Fill.Radial)
+    testing.expect_value(t,gauge.arc,[2]f32{-0.375,0.75})
+    testing.expect_value(t,gauge.stroke_width,f32(10))
+    testing.expect_value(t,r.styles[r.nodes[document_row_of(&r,"badge")].style].fill,ui.Color{0xff,0x80,0x00,255})
+    first:=document_text(&types,&r,-1)
+    for expected in ([]string{`"arc_start":-0.375`,`"arc_sweep":0.75`,`"look":{"extends":"icon","fill":"#ff8000"`}) {
+        testing.expectf(t,strings.contains(first,expected),"the document says %s: %s",expected,first)
+    }
+    reading:Reading
+    args:=call_args(&reading,&types,"{}")
+    _,_,ok:=document_apply(&args,&r,-1,first)
+    if !testing.expectf(t,ok,"%s",reading.problem) {return}
+    ui.tree_settle(r.styles[:],r.style_infos[:],&r.variants,r.tokens[:],r.token_uses[:])
+    testing.expect_value(t,document_text(&types,&r,-1),first)
+    testing.expect(t,records_load_as_tree(&r))
+}
+
 // A style names the cursor of its nodes, and a state another; the document
 // says them by name and reads back the same, and a name of no shape is refused.
 @(test)

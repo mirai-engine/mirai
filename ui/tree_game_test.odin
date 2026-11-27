@@ -577,11 +577,12 @@ a_progress_fills_from_the_side_its_style_says :: proc(t:^testing.T) {
             progress(ctx,{value=0.25,width=fixed(40),height=fixed(10),fill={255,0,0,255},track={0,0,255,255},fill_mode=.Left})
             progress(ctx,{value=0.5,width=fixed(10),height=fixed(40),fill={255,0,0,255},track={0,0,255,255},fill_mode=.Up})
             progress(ctx,{value=0.5,width=fixed(40),height=fixed(40),fill={255,0,0,255},track={0,0,255,255},fill_mode=.Radial})
+            progress(ctx,{value=0.5,width=fixed(40),height=fixed(40),fill={255,0,0,255},track={0,0,255,255},fill_mode=.Radial,stroke_width=10,radius=5,arc={-0.375,0.75}})
         }
     }
-    input:=test_input(64,128)
+    input:=test_input(64,176)
     frame:=test_frame(&ctx,&input,build)
-    image:=test_raster(&ctx,frame,64,128,1,{0,0,0,255})
+    image:=test_raster(&ctx,frame,64,176,1,{0,0,0,255})
     defer test_image_destroy(&image)
     testing.expect(t,test_color_near(test_pixel(&image,36,5),{255,0,0,255},8),"Left fills from the right edge")
     testing.expect(t,test_color_near(test_pixel(&image,3,5),{0,0,255,255},8))
@@ -589,6 +590,29 @@ a_progress_fills_from_the_side_its_style_says :: proc(t:^testing.T) {
     testing.expect(t,test_color_near(test_pixel(&image,5,16),{0,0,255,255},8))
     testing.expect(t,test_color_near(test_pixel(&image,30,78),{255,0,0,255},8),"Radial fills clockwise from the top")
     testing.expect(t,test_color_near(test_pixel(&image,10,78),{0,0,255,255},8))
+    // A gauge of three quarters from the bottom left, half full: up to the top.
+    testing.expect(t,test_color_near(test_pixel(&image,9,111),{255,0,0,255},8),"The gauge fills from where its arc starts")
+    testing.expect(t,test_color_near(test_pixel(&image,31,111),{0,0,255,255},8),"The rest of its arc is track")
+    testing.expect(t,test_color_near(test_pixel(&image,20,137),{0,0,0,255},8),"Past its arc it draws nothing")
+    test_image_dump(&image,"progress-fills")
+}
+
+@(test)
+the_style_of_a_radial_progress_gives_it_its_arc :: proc(t:^testing.T) {
+    s:Test_Game
+    test_game_init(t,&s)
+    defer test_game_destroy(&s)
+    gauge,_:=tree_style(&s.tree,{fill={255,0,0,255},track={0,0,255,255},fill_mode=.Radial,stroke_width=6,arc={0.25,-0.5}})
+    tree_node(&s.tree,-1,{kind=.Progress,name="depth",style=gauge,layout={width=fixed(40),height=fixed(40)}})
+    testing.expect(t,test_game_instance(&s))
+    ctx:Context
+    test_game_context(t,&ctx,&s)
+    defer context_destroy(&ctx)
+    input:=test_input()
+    test_frame(&ctx,&input,test_game_build,&s)
+    bar:^Paint
+    for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Progress {bar=&p}}
+    testing.expect(t,bar!=nil && bar.fill_mode==.Radial && bar.arc==[2]f32{0.25,-0.5} && bar.stroke_width==6,"The arc and the ring of its style reach what it draws")
 }
 
 @(test)

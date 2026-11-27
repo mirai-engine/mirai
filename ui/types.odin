@@ -68,6 +68,8 @@ quad_whole :: proc "contextless" (kind:Quad_Kind,data:u32) -> Quad {return {kind
 
 // Per-primitive data; the shader evaluates coverage in local coordinates.
 // The vertex color applies the scope tint without duplicating this data.
+// params: stroke width, kind, shadow sigma or the turn an arc covers, gradient;
+// radii of an ellipse: the turn its arc starts at and whether its ends are round.
 Shape :: struct {
     bounds,radii,fill,fill2,stroke,params:[4]f32,
 }

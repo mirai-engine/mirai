@@ -128,7 +128,9 @@ bar -> canvas -> `panel` -> `card` -> `raised`, darker `well`, violet accent onl
 
 ## Game interfaces
 
-- `image` (tint/9-slice/`Image.fit`/`image_frame`), `text` (`reveal` typewriter without reflow),
+- `image` (tint/9-slice/`Image.fit`/`image_frame`), `progress` (`fill_mode`; `Radial` is one
+  analytic arc shape per track and fill: `arc` start and sweep in turns, round ends from its
+  corners), `text` (`reveal` typewriter without reflow),
   `anchored` (safe area), `skin_look`, and style-driven game controls (`game.odin`: radio,
   selector, dropdown with `Options` `|`/`Label=Value`, slider, checkbox, button).
 - **Animation (`anim.odin`):** `Anim_Library` (`std/anim` `Keyframe` + `Ease`/`Loop`), caller-owned

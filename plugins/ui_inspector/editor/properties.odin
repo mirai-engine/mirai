@@ -54,6 +54,7 @@ import "mirai:ui"
 @(private) Align_Y_Value :: struct {value:ui.Align `mirai:"icons=Align_Top Align_Center_Y Align_Bottom"`}
 @(private) Color_Value :: struct {value:[4]f32 `mirai:"color"`}
 @(private) Pair_Value :: struct {value:[2]f32}
+@(private) Arc_Value :: struct {value:[2]f32 `mirai:"min=-1,max=1,axes=Start Sweep"`}
 @(private) Limits_Value :: struct {value:[2]f32 `mirai:"min=0,axes=Min Max"`}
 @(private) Frames_Value :: struct {value:[2]u16 `mirai:"axes=Columns Rows"`}
 @(private) Sides_Value :: struct {value:[4]f32 `mirai:"min=0,axes=LTRB"`}
@@ -865,6 +866,9 @@ fixed_rows :: proc(p:^Pane,n:^ui.Tree_Node) {
         style_changed(p,"Text",value_row(p,"Line height",Positive_Value,&t.line_height,d.text.line_height,"In sizes of the text; 0: the one of the font"))
     }
     if n.kind==.Progress {style_changed(p,"Style",value_row(p,"Fills",Enum_Value(ui.Progress_Fill),&st.fill_mode,d.fill_mode,"Which way the bar grows: from a side, from the center or around"))}
+    if n.kind==.Progress && st.fill_mode==.Radial {
+        style_changed(p,"Style",value_row(p,"Arc",Arc_Value,&st.arc,d.arc,"In turns: where it starts, clockwise from the top, and how much it covers; a negative sweep goes counterclockwise; 0: a whole turn. Corners round its ends"))
+    }
     style_changed(p,"Style",value_row(p,"Transition",Seconds_Value,&st.transition,d.transition,"How long its colors take to go from the look of one state to that of the next; 0: at once"))
     style_changed(p,"Style",value_row(p,"Layout transition",Seconds_Value,&st.layout_transition,d.layout_transition,"How long it takes to go to a new place or size the layout gives it; 0: at once"))
 }

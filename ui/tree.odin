@@ -62,6 +62,7 @@ Node_Style :: struct {
     shadow_blur:f32,
     shadow_offset:[2]f32,
     fill_mode:Progress_Fill,
+    arc:[2]f32,     // of a Radial Progress: the turn it starts at, clockwise from the top, and how much of a turn it covers; negative: counterclockwise; 0: all
     program:[TREE_NAME_CAPACITY]u8 `mirai:"text"`, // a ui program that colors the fill
     program_values:[4]f32,                         // the first parameters of that program
     sounds:[Sound_Cue]base.Asset_Id,

@@ -74,7 +74,7 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:in
         }
         progress(ctx,{id=node_id,value=f32(shown),width=node.layout.width,height=node.layout.height,
             fill=style.fill,track=style.track,stroke=style.stroke,corners=style.radius,quad=image_ref.quad,border=image_ref.border,border_uv=image_ref.border_uv,
-            fill_mode=style.fill_mode,stroke_width=style.stroke_width,program=tree_program(tree,node.style),program_values=style.program_values})
+            fill_mode=style.fill_mode,arc=style.arc,stroke_width=style.stroke_width,program=tree_program(tree,node.style),program_values=style.program_values})
     case .Button:
         tree_button(ctx,b,node,index,next,slot,node_id,values,copy,item,base_style,style,image_ref,content,selected,disabled)
     case .Checkbox:

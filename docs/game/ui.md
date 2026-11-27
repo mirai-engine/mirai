@@ -19,6 +19,7 @@ and extend them with [ui.write](ui/writing-ui.md); do not write another menu sys
   [menus-settings.md](ui/menus-settings.md).
 - A HUD, a counter or bar, a sign in the world, a panel on a mesh, a minimap drawn by code:
   [hud-panels.md](ui/hud-panels.md).
+- A bar, a ring or arc gauge (cooldown, depth), a tinted image: [bars-images.md](ui/bars-images.md).
 - Named styles, tokens, states, widgets and animations: [styles.md](ui/styles.md).
 - Write a `.ui` (ui.write): [writing-ui.md](ui/writing-ui.md); translate: [texts.md](ui/texts.md).
 - Check a screen without playing it by hand: [testing](testing.md#ui-and-menus).

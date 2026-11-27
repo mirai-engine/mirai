@@ -110,9 +110,39 @@ raster_shadow :: proc(p:[2]f32,shape:Shape) -> f32 {
     return clamp(coverage,0,1)
 }
 
+// As ui_arc_place: how far around from the middle of its arc p is, in turns,
+// and half the turn the arc covers.
+@(private="file")
+raster_arc_place :: proc(p:[2]f32,shape:Shape) -> [2]f32 {
+    d:=p-(shape.bounds.xy+shape.bounds.zw*0.5)
+    around:=math.atan2(d.x,-d.y)/math.TAU-(shape.radii.x+shape.params.z*0.5)+0.5
+    return {around-math.floor(around)-0.5,abs(shape.params.z)*0.5}
+}
+
+// As ui_round_arc_color: the distance to a ring cut to its arc with round ends.
+@(private="file")
+raster_round_arc :: proc(p:[2]f32,shape:Shape) -> f32 {
+    d:=p-(shape.bounds.xy+shape.bounds.zw*0.5)
+    width:=shape.params.x
+    radius:=min(shape.bounds.z,shape.bounds.w)*0.5-width*0.5
+    place:=raster_arc_place(p,shape)
+    if abs(place.x)>place.y {
+        end:=(shape.radii.x+shape.params.z*0.5+(place.x<0 ? -1 : 1)*place.y)*math.TAU
+        e:=d-radius*[2]f32{math.sin(end),-math.cos(end)}
+        return math.sqrt(e.x*e.x+e.y*e.y)-width*0.5
+    }
+    return abs(math.sqrt(d.x*d.x+d.y*d.y)-radius)-width*0.5
+}
+
 @(private="file")
 raster_shape :: proc(p,neighbor_x,neighbor_y:[2]f32,shape:Shape) -> [4]f32 {
     if shape.params.y>1.5 {return {shape.fill.r,shape.fill.g,shape.fill.b,shape.fill.a*raster_shadow(p,shape)}}
+    if shape.params.y>0.5 && shape.radii.y>0.5 {
+        // As ui_round_arc_color.
+        distance:=raster_round_arc(p,shape)
+        aa:=max(abs(raster_round_arc(neighbor_x,shape)-distance)+abs(raster_round_arc(neighbor_y,shape)-distance),1e-4)
+        return {shape.stroke.r,shape.stroke.g,shape.stroke.b,shape.stroke.a*clamp(0.5-distance/aa,0,1)}
+    }
     distance:=raster_distance(p,shape)
     aa:=max(abs(raster_distance(neighbor_x,shape)-distance)+abs(raster_distance(neighbor_y,shape)-distance),1e-4)
     outer:=clamp(0.5-distance/aa,0,1)
@@ -123,13 +153,12 @@ raster_shape :: proc(p,neighbor_x,neighbor_y:[2]f32,shape:Shape) -> [4]f32 {
     fill:=shape.fill*(1-amount)+shape.fill2*amount
     inner:=clamp(0.5-(distance+max(shape.params.x,0))/aa,0,1)
     border:=clamp((outer-inner)/max(outer,1e-6),0,1)*shape.stroke.a
-    // As ui_arc_coverage: the sector an arc keeps, from the top clockwise.
+    // As ui_arc_coverage: the sector an arc keeps.
     arc:f32=1
-    if sweep:=shape.params.z;sweep>0 && sweep<1 {
+    if sweep:=abs(shape.params.z);sweep>0 && sweep<1 {
         d:=p-(shape.bounds.xy+shape.bounds.zw*0.5)
-        angle:=math.atan2(d.x,-d.y)
-        if angle<0 {angle+=math.TAU}
-        arc=clamp(0.5+min(angle,sweep*math.TAU-angle)*math.sqrt(d.x*d.x+d.y*d.y)/aa,0,1)
+        place:=raster_arc_place(p,shape)
+        arc=clamp(0.5+(place.y-abs(place.x))*math.TAU*math.sqrt(d.x*d.x+d.y*d.y)/aa,0,1)
     }
     alpha:=(border+fill.a*(1-border))*outer*arc
     rgb:=(shape.stroke.rgb*border+fill.rgb*fill.a*(1-border))*outer*arc
