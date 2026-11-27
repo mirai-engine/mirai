@@ -127,7 +127,8 @@ Projects :: struct {
     cancelling:bool,      // user asked to cancel; projects_poll cleans up without blocking a frame
     error:[1024]u8,
     error_length:int,
-    next:bool,      // built: this editor starts it when it ends
+    next:bool,          // built: this editor starts it when it ends
+    next_launcher:bool, // next starts the standalone launcher (--launcher) instead of a project
     started:subprocess.Process, // the editor started on it, which this process waits for once it closes
     starts:bool,
     join:[wire.INVITE_TEXT_BYTES+1]u8, // the session the editor started on this project joins
@@ -543,11 +544,17 @@ projects_start :: proc(s:^Session) -> bool {
     }
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,exe,"--project",base.text_get(p.opening[:]))
-    if p.launcher {append(&command,"--from-launcher")}
+    if p.next_launcher {
+        append(&command,"--launcher")
+    } else if p.launcher {
+        append(&command,"--from-launcher")
+    }
     for arg in s.args {append(&command,arg)}
-    if code:=base.text_get(p.join[:]);code!="" {
-        append(&command,"--join",code)
-        if name:=base.text_get(p.join_name[:]);name!="" {append(&command,"--name",name)}
+    if !p.next_launcher {
+        if code:=base.text_get(p.join[:]);code!="" {
+            append(&command,"--join",code)
+            if name:=base.text_get(p.join_name[:]);name!="" {append(&command,"--name",name)}
+        }
     }
     turn:=gpu_turn_pass(s,&command)
     preferences_save(s)
@@ -585,18 +592,35 @@ launcher_return :: proc(user:rawptr) {
     }
 }
 
+// Closes the open project (through the normal quit confirmation if needed) and
+// opens the standalone launcher window.
+projects_return_to_launcher :: proc(s:^Session) {
+    p:=s.projects
+    if p==nil || p.launcher || projects_opening(p) || s.engine_root=="" {return}
+    template:=build.template_folder(s.engine_root,allocator=context.temp_allocator)
+    if !os.is_dir(template) {
+        notify(s,"The launcher template could not be found")
+        return
+    }
+    base.text_set(p.opening[:],template)
+    p.join[0],p.join_name[0]=0,0
+    p.next,p.next_launcher,p.shown=true,true,false
+    quit_request(s)
+}
+
 // As the editor ends after asking: the project built waits to be started.
 // False when it could not be, and the editor goes on.
 projects_next_start :: proc(s:^Session) -> bool {
     p:=s.projects
     if p==nil || !p.next {return true}
     p.next=false
+    defer p.next_launcher=false
     return projects_start(s)
 }
 
 // A quit that was cancelled leaves the project built unopened.
 projects_next_cancel :: proc(s:^Session) {
-    if p:=s.projects;p!=nil {p.next=false}
+    if p:=s.projects;p!=nil {p.next,p.next_launcher=false,false}
 }
 
 // Asks the opening build to stop without blocking a frame.
@@ -720,7 +744,7 @@ projects_location_default :: proc(p:^Projects) {
 @(private)
 projects_dialogs_answer :: proc(s:^Session) {
     p:=s.projects
-    if p==nil || s.app==nil {return}
+    if p==nil || s.app==nil || s.app.platform==nil {return}
     answer:=platform.dialog_result(s.app.platform)
     if answer.state!=.Accepted {return}
     switch answer.tag {
@@ -742,7 +766,7 @@ projects_build :: proc(s:^Session) {
     g:=s.gui
     ctx:=g.ctx
     projects_dialogs_answer(s)
-    if ui.box(ctx,{width=ui.fixed(ctx.size.x),height=ui.fixed(ctx.size.y),fill=ui.tone(ctx,"panel"),float={to=.Surface},block=true}) {
+    if ui.box(ctx,{id=shell_id(g,"projects_screen"),width=ui.fixed(ctx.size.x),height=ui.fixed(ctx.size.y),fill=ui.tone(ctx,"panel"),float={to=.Surface},block=true}) {
         projects_body(s,false)
     }
     if !s.headless && platform.WINDOW_CONTROLS==.Right {
@@ -799,6 +823,12 @@ projects_body :: proc(s:^Session,popup:bool) {
         ui.spacer(ctx,0,8)
         if ui.button(ctx,ui.id(ctx,"projects_folder"),{label="Open folder",icon=ui.icon_user(u8(User_Icon.Folder)),variant="field",width=-1,height=34,disabled=busy}).clicked {
             if !platform.dialog_show(s.app.platform,{kind=.Open_Folder,tag=DIALOG_PROJECT_FOLDER}) {notify(s,"A file dialog is already open")}
+        }
+        if popup && !p.launcher {
+            ui.spacer(ctx,0,8)
+            if ui.button(ctx,ui.id(ctx,"projects_return_launcher"),{label="Return to launcher",icon=ui.icon_user(u8(User_Icon.Back)),variant="ghost",width=-1,height=32,disabled=busy || s.engine_root==""}).clicked {
+                projects_return_to_launcher(s)
+            }
         }
         ui.spacer(ctx)
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(20),gap=8,align_y=.Center}) {
@@ -904,7 +934,14 @@ projects_content :: proc(s:^Session,popup:bool) {
         if ui.button(ctx,ui.id(ctx,"projects_team"),{label="Team",icon=ui.icon_user(u8(User_Icon.Users)),variant="toggle",active=p.team,height=30}).clicked {
             p.team=!p.team
             p.scroll=0
-            if p.team {kai_team_open(s)}
+            if p.team {
+                kai_team_open(s)
+                if s.kai!=nil && s.kai.team!=nil {
+                    s.kai.team.selected_org={}
+                    s.kai.team.panel_mode=.Overview
+                    s.kai.team.show_web_login=false
+                }
+            }
         }
         ui.spacer(ctx)
         cooling:=projects_refresh_cooling(p)

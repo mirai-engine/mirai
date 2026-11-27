@@ -380,3 +380,69 @@ projects_list_refreshes_and_publishes_linked_workspaces :: proc(t:^testing.T) {
     p.refreshed_at=time.Tick{_nsec=time.tick_now()._nsec-i64(PROJECTS_REFRESH_COOLDOWN+time.Millisecond)}
     testing.expect(t,!projects_refresh_cooling(p),"Refresh is ready again after 1 second")
 }
+
+// Mouse-wheel scrolling works over non-interactive space in the Launcher's Team
+// view (projects_build must register its root blocking box with a valid id so
+// wheel_target routes into projects_team_view).
+@(test)
+the_launcher_team_view_scrolls_with_the_wheel :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    if !prefab_fixture_init(t,f,"projects-team-scroll") {return}
+    defer prefab_fixture_destroy(f)
+    s:=&f.s
+    opened,se:=store.open(project.path(f.root,"store",allocator=context.temp_allocator))
+    if !testing.expect_value(t,se,store.Error.None) {return}
+    defer store.close(&opened)
+    s.store=opened
+    k:Kai
+    k.mesh_loopback=true
+    s.kai=&k
+    defer kai_team_close(s)
+    kai_team_open(s)
+    if !testing.expect(t,s.kai.team!=nil && s.kai.team.opened) {return}
+    team:=&s.kai.team.team
+    testing.expect_value(t,vcs.team_profile_set(team,"ana","mac"),vcs.Error.None)
+    for i in 0..<10 {
+        _,oe:=vcs.team_org_create(team,fmt.tprintf("org-%d",i))
+        if !testing.expect_value(t,oe,vcs.Error.None) {return}
+    }
+    kai_team_wrote(s)
+
+    ctx:ui.Context
+    if !testing.expect(t,test_ui_init(&ctx,{})) {return}
+    defer ui.context_destroy(&ctx)
+    f.gui.ctx,f.gui.begun=&ctx,true
+    p:=new(Projects);defer free(p)
+    p.shown,p.team=true,true
+    s.projects=p
+    s.headless=true
+    defer s.projects=nil
+    size:=[2]f32{f32(PROJECTS_WINDOW.x),420}
+    for _ in 0..<2 {
+        ui.frame_begin(&ctx,{size=size,pointer_absent=true})
+        projects_build(s)
+        ui.frame_end(&ctx)
+    }
+    area,found:=ui.widget_rect(&ctx,ui.id(&ctx,"projects_team_view"))
+    if !testing.expect(t,found,"projects_team_view exists") {return}
+    // Place pointer inside the scroll area over non-interactive padding/gap and scroll down.
+    pt:=[2]f32{area.x+4,area.y+area.h-4}
+    ui.frame_begin(&ctx,{size=size,pointer=pt,wheel={0,-3}})
+    projects_build(s)
+    ui.frame_end(&ctx)
+    testing.expectf(t,p.scroll.y>0,"wheel scrolls Team view in Launcher: scroll=%v",p.scroll)
+
+    // Returning to the launcher from an open project queues the empty template with --launcher and clears on cancel.
+    template:=project.path(f.root,"templates","empty",allocator=context.temp_allocator)
+    testing.expect(t,base.make_directory_all(template)==nil)
+    old_engine:=s.engine_root
+    defer s.engine_root=old_engine
+    s.engine_root=f.root
+    p.launcher=false
+    p.shown=true
+    projects_return_to_launcher(s)
+    testing.expect(t,p.next && p.next_launcher && !p.shown,"return to launcher queues next_launcher and closes modal")
+    testing.expect(t,project.path_same(base.text_get(p.opening[:]),template),"return to launcher targets empty template")
+    projects_next_cancel(s)
+    testing.expect(t,!p.next && !p.next_launcher,"cancel clears pending launcher return")
+}

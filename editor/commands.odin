@@ -561,6 +561,7 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="new_prefab",view=proc(s:^Session) {file_new(s,true)},label="New prefab",icon=.Prefab,menu=.File,group=0,modes=edit},
         {name="open",view=file_open,label="Open...",icon=user(.Scene),shortcut=key(.O,{.Primary}),menu=.File,group=0,modes=edit},
         {name="projects",view=projects_show,label="Open project...",icon=user(.Folder),menu=.File,group=0,modes=edit,state=state_projects},
+        {name="launcher",view=projects_return_to_launcher,label="Return to launcher",icon=user(.Back),menu=.File,group=0,modes=edit,state=state_launcher},
         {name="keep_file",view=proc(s:^Session) {dialog_new(s,true)},label="Keep in a file...",icon=user(.Save),menu=.File,group=1,modes=edit,scene=true,state=state_keep_file},
         {name="kai_snapshot",method="kai.snapshot",label="Snapshot",icon=.Check,shortcut=key(.S,{.Primary}),menu=.File,group=1,modes=edit,state=state_kai},
         {name="kai_new",method="kai.new",label="New change",icon=user(.Branch),shortcut=key(.S,{.Primary,.Shift}),menu=.File,group=1,modes=edit,state=state_kai},
@@ -703,6 +704,7 @@ state_redo :: proc(s:^Session,b:^Binding) -> (state:Command_State) {
 @(private="file") state_kai :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=kai_workspace(s)==nil}}
 @(private="file") state_keep_file :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=document_file(s.document)!=""}}
 @(private="file") state_projects :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.engine_root=="" || s.projects==nil}}
+@(private="file") state_launcher :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.engine_root=="" || s.projects==nil || s.projects.launcher || projects_opening(s.projects)}}
 @(private="file") state_settings :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=!s.has_project,checked=s.gui.modal==.Settings}}
 @(private="file") state_camera_preview :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=camera_preview_target(s,shown_world(s))==core.NONE}}
 @(private="file") state_camera_previewing :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=!camera_previewing(s)}}

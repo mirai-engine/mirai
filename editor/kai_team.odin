@@ -42,12 +42,24 @@ Kai_Repository :: struct {
 // A row of the team views: a name and what follows it.
 Kai_Line :: struct {name,rest:string}
 
+// A member row of an org, preformatted in the team's arena.
+Kai_Member_Line :: struct {
+    name,rest,key_hex:string,
+    role_index:int, // 0=Reader, 1=Writer, 2=Admin, -1=Node (server)
+    you,is_node:bool,
+}
+
+// Which inline action card is open in the launcher's Team overview.
+Kai_Team_Panel_Mode :: enum u8 {Overview,New_Org,Join_Org}
+
 // What a view shows of an org, its texts made when it is read.
 Kai_Org_Lines :: struct {
-    title:string,  // the org's name, in capitals
-    role:string,   // "You are admin."
-    server:string, // "Server synced · host:port" when attached, "" otherwise
-    members:[]Kai_Line,
+    title:string,   // the org's name, in capitals
+    role:string,    // "You are admin."
+    summary:string, // "3 members · 1 repo"
+    server:string,  // "Server synced · host:port" when attached, "" otherwise
+    admins:int,
+    members:[]Kai_Member_Line,
     repos:[]Kai_Line,
 }
 
@@ -160,6 +172,9 @@ Kai_Team :: struct {
     invite_local:bool,       // it carries no address another network reaches
     invite_via_server:bool,  // it targets the org's central server (works while admin is off)
     publish_org:int,         // of view.orgs, where a first publish goes
+    selected_org:vcs.Org_Id, // in the launcher's Team view: zero for the org cards overview
+    panel_mode:Kai_Team_Panel_Mode,
+    show_web_login:bool,
     scroll:[2]f32,
     width:f32,
 }
@@ -249,6 +264,8 @@ kai_team_poll :: proc(s:^Session) {
         case .Join:
             if x.stage==.Done {
                 t.fields.invite_length=0
+                t.panel_mode=.Overview
+                t.selected_org=x.org
                 kai_team_wrote(s)
                 o,_,_:=vcs.team_org(&t.team,x.org)
                 notify(s,fmt.tprintf("Kai: this machine joined %s",o.name))
@@ -389,11 +406,27 @@ kai_team_read :: proc(s:^Session) {
         x:=&v.lines[i]
         x.title=strings.to_upper(o.name,a)
         x.role=fmt.aprintf("You are %s.",o.role,allocator=a)
+        x.summary=fmt.aprintf("%d %s · %d %s",len(o.members),len(o.members)==1?"member":"members",len(o.repos),len(o.repos)==1?"repo":"repos",allocator=a)
         if o.server!="" {x.server=fmt.aprintf("Server synced · %s",o.server,allocator=a)}
-        x.members=make([]Kai_Line,len(o.members),a)
+        x.members=make([]Kai_Member_Line,len(o.members),a)
         for m,k in o.members {
-            role:=m.role=="node"?"server":m.role
-            x.members[k]={fmt.aprintf("%s (%s)",m.name,m.device,allocator=a),m.you?fmt.aprintf("%s, this machine",role,allocator=a):role}
+            is_node:=m.role=="node"
+            role:=is_node?"server":m.role
+            role_index:=-1
+            switch m.role {
+            case "reader": role_index=0
+            case "writer": role_index=1
+            case "admin":  role_index=2; x.admins+=1
+            }
+            key:=m.key
+            x.members[k]={
+                name=fmt.aprintf("%s (%s)",m.name,m.device,allocator=a),
+                rest=m.you?fmt.aprintf("%s, this machine",role,allocator=a):role,
+                key_hex=ka.hex(key[:8],a),
+                role_index=role_index,
+                you=m.you,
+                is_node=is_node,
+            }
         }
         x.repos=make([]Kai_Line,len(o.repos),a)
         for r,k in o.repos {

@@ -539,35 +539,77 @@ editor_kai_team_view_reads_only_when_the_agent_moves :: proc(t:^testing.T) {
     kai_poll(s)
     testing.expect_value(t,team.generation,generation)
 
-    // Before the project is in an org: in-project Team hides NEW ORG, JOIN AN ORG and unrelated orgs.
+    // Before the project is in an org: in-project Team hides New organization, Join and unrelated orgs.
     kai_panel_still(t,s)
-    _,has_new_org:=ui.widget_rect(&ctx,ui.id(&ctx,"kai_org_new",0))
-    _,has_join:=ui.widget_rect(&ctx,ui.id(&ctx,"kai_join",0))
+    _,has_new_org:=ui.widget_rect(&ctx,ui.id(&ctx,"kai_org_new_open"))
+    _,has_join:=ui.widget_rect(&ctx,ui.id(&ctx,"kai_join_open"))
     ui.id_push(&ctx,ui.id(&ctx,"org",0))
     unlinked_invite_id:=ui.id(&ctx,"kai_invite",0)
     ui.id_pop(&ctx)
     _,has_unlinked_invite:=ui.widget_rect(&ctx,unlinked_invite_id)
-    testing.expect(t,!has_new_org && !has_join && !has_unlinked_invite,"in-project Team hides NEW ORG, JOIN AN ORG and unlinked orgs")
+    testing.expect(t,!has_new_org && !has_join && !has_unlinked_invite,"in-project Team hides New organization, Join and unlinked orgs")
     kai_panel_stable(t,s,"Team unlinked")
 
-    // Launcher Team view (launcher=true) DOES show NEW ORG, JOIN AN ORG and all orgs.
-    ui.frame_begin(&ctx,{size={900,900},pointer_absent=true})
-    if ui.box(&ctx,{width=ui.fixed(500),height=ui.fixed(860),direction=.Column,gap=4}) {kai_team_build(s,true)}
-    launcher_frame:=ui.frame_end(&ctx)
-    testing.expect(t,!launcher_frame.overflow && ctx.stats.layout_errors==0,"launcher Team lays out")
-    _,launcher_new_org:=ui.widget_rect(&ctx,ui.id(&ctx,"kai_org_new",0))
-    _,launcher_join:=ui.widget_rect(&ctx,ui.id(&ctx,"kai_join",0))
-    testing.expect(t,launcher_new_org && launcher_join,"launcher Team shows NEW ORG and JOIN AN ORG")
+    // Add a second member so admin role-change and remove controls are exercised.
+    other_key:vcs.Key; other_key[0]=0xab; other_key[1]=0xcd
+    testing.expect_value(t,vcs.team_member_set(&team.team,team.view.orgs[0].id,{key=other_key,name="bob",device="pc",role=.Writer}),vcs.Error.None)
+    kai_team_wrote(s)
 
-    // Link/publish the project into "studio": in-project Team now shows "studio" (still no NEW ORG / JOIN AN ORG).
+    // Launcher Team view (launcher=true) shows org cards, New organization and Join; clicking a card enters org detail.
+    launcher_frame_run :: proc(ctx:^ui.Context,s:^Session,input:ui.Input) -> ui.Frame {
+        ui.frame_begin(ctx,input)
+        if ui.box(ctx,{width=ui.fixed(500),height=ui.fixed(860),direction=.Column,gap=4}) {kai_team_build(s,true)}
+        return ui.frame_end(ctx)
+    }
+    team.width=500
+    launcher_frame:=launcher_frame_run(&ctx,s,{size={900,900},pointer_absent=true})
+    testing.expect(t,!launcher_frame.overflow && ctx.stats.layout_errors==0,"launcher Team overview lays out")
+    _,launcher_new_org:=ui.widget_rect(&ctx,ui.id(&ctx,"kai_org_new_open"))
+    _,launcher_join:=ui.widget_rect(&ctx,ui.id(&ctx,"kai_join_open"))
+    card_rect,has_card:=ui.widget_rect(&ctx,ui.id(&ctx,"kai_org_card",0))
+    testing.expect(t,launcher_new_org && launcher_join && has_card,"launcher Team shows New organization, Join and org card")
+
+    // Clicking the org card drills into the org detail view with Back, member role dropdown, remove button and Invite.
+    click_at:=[2]f32{card_rect.x+card_rect.w*0.5,card_rect.y+card_rect.h*0.5}
+    launcher_frame_run(&ctx,s,{size={900,900},pointer=click_at,pressed={.Left},down={.Left}})
+    launcher_frame_run(&ctx,s,{size={900,900},pointer=click_at,released={.Left}})
+    launcher_frame=launcher_frame_run(&ctx,s,{size={900,900},pointer_absent=true})
+    testing.expect(t,!launcher_frame.overflow && ctx.stats.layout_errors==0,"launcher Team org detail lays out")
+    _,has_back:=ui.widget_rect(&ctx,ui.id(&ctx,"kai_org_back"))
+    testing.expect(t,has_back && team.selected_org==team.view.orgs[0].id,"clicking org card opens org detail with Back")
+
+    other_idx:=-1
+    for m,k in team.view.lines[0].members {if !m.you {other_idx=k;break}}
+    testing.expect(t,other_idx>=0,"second member is listed")
+    ui.id_push(&ctx,ui.id(&ctx,"org",0))
+    ui.id_push(&ctx,ui.id(&ctx,"member",other_idx))
+    member_role_id,member_remove_id:=ui.id(&ctx,"role"),ui.id(&ctx,"remove")
+    ui.id_pop(&ctx)
+    ui.id_pop(&ctx)
+    _,has_role_dd:=ui.widget_rect(&ctx,member_role_id)
+    remove_rect,has_remove:=ui.widget_rect(&ctx,member_remove_id)
+    testing.expect(t,has_role_dd && has_remove,"admin sees role selector and remove button for other member")
+
+    // Clicking remove asks kai.org with remove=true for that member.
+    api_state(s).commands.asked_count=0
+    rm_at:=[2]f32{remove_rect.x+remove_rect.w*0.5,remove_rect.y+remove_rect.h*0.5}
+    launcher_frame_run(&ctx,s,{size={900,900},pointer=rm_at,pressed={.Left},down={.Left}})
+    launcher_frame_run(&ctx,s,{size={900,900},pointer=rm_at,released={.Left}})
+    method,params=kai_panel_asked(s)
+    testing.expectf(t,method=="kai.org" && strings.contains(params,"\"remove\":true") && strings.contains(params,"abcd"),"Remove asks kai.org remove: %s %s",method,params)
+    team.selected_org={}
+    testing.expect_value(t,vcs.team_member_remove(&team.team,team.view.orgs[0].id,other_key),vcs.Error.None)
+    kai_team_wrote(s)
+
+    // Link/publish the project into "studio": in-project Team now shows "studio" (still no New organization / Join).
     kai_write(t,s,fmt.tprintf("%s/a.txt",k.root),transmute([]u8)string("one\n"))
     pub:=Api_Kai_Publish_Params{description="first",org="studio",visibility="org"}
     call,_:=kai_call(s,api_kai_publish,&pub,Api_Kai_Published)
     if !kai_ok(t,call,"publish") {return}
     kai_panel_still(t,s)
-    _,has_new_org=ui.widget_rect(&ctx,ui.id(&ctx,"kai_org_new",0))
-    _,has_join=ui.widget_rect(&ctx,ui.id(&ctx,"kai_join",0))
-    testing.expect(t,!has_new_org && !has_join,"linked in-project Team still hides NEW ORG and JOIN AN ORG")
+    _,has_new_org=ui.widget_rect(&ctx,ui.id(&ctx,"kai_org_new_open"))
+    _,has_join=ui.widget_rect(&ctx,ui.id(&ctx,"kai_join_open"))
+    testing.expect(t,!has_new_org && !has_join,"linked in-project Team still hides New organization and Join")
     kai_panel_stable(t,s,"Team")
 
     // An admin invites writers and readers, never a server; the invite shows

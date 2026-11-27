@@ -75,15 +75,18 @@ pulls what the shared bookmarks reach.
   most every `KAI_READ_EVERY` (15 s), on explicit Refresh (`kai_team_refresh`), on local writes
   (`kai_team_wrote`), or when an active pull finishes `whole` (`agent_pull_of`): a frame that
   changes nothing reads and allocates nothing. Live pull progress reads `agent_pull_of` directly.
-- The Launcher's Team view (`kai_team_build(s, true)`) manages all orgs of the machine:
-  THIS MACHINE (`kai.profile`, defaulted from `USER`/`USERNAME` and host name), JOIN AN ORG
-  (`kai.join`), every org with its members, server sync status (`Server synced · host:port` or
-  1-click Sync to server via `kai.org` `attach`), repositories and `INVITE` section for admins,
-  NEW ORG (`kai.org` `new`, which silently auto-attaches the default central server off the frame)
-  and WEB SIGN-IN (`kai.web_login`, zeroing the password immediately).
+- The Launcher's Team view (`kai_team_build(s, true)`) shows a compact machine status bar, `Join`
+  and `New organization` buttons (opening inline create/join cards), and a grid of clickable
+  organization cards (filtered by the launcher search box). Clicking a card drills into that org's
+  detail view with a Back button, server sync status (`Server synced · host:port` or 1-click Sync
+  to server via `kai.org` `attach`), `MEMBERS` (where admins can change non-server members' roles
+  via dropdown and remove other members via trash button, calling `kai.org`), `REPOSITORIES`,
+  `INVITE` for admins, and a collapsed-by-default `Web view sign-in` disclosure when the org has
+  an attached server (`kai.web_login`, zeroing the password immediately).
 - Inside an open project, Kai -> Team (`kai_team_build(s, false)`) shows ONLY THIS MACHINE and
-  this project's linked org (or a 1-line note pointing to Changes or Projects -> Team when not in
-  an org yet); NEW ORG, JOIN AN ORG and unrelated orgs never appear inside a project.
+  this project's linked org (including admin member role/remove controls, or a 1-line note
+  pointing to Changes or Projects -> Team when not in an org yet); New organization, Join and
+  unrelated orgs never appear inside a project.
 - Each org's `INVITE` section sits under a divider with its own `INVITE` header above the
   Writer | Reader role switcher, For another machine of mine and Make invite.
   The generated read-only invite field sits beside a compact clipboard icon button

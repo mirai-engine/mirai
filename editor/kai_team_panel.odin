@@ -160,9 +160,10 @@ kai_shared_build :: proc(s:^Session) {
     }
 }
 
-// The Team view. In the launcher (launcher=true): this machine, joining an org,
-// all orgs, creating a new org, and web sign-in. Inside a project's Kai tab
-// (launcher=false): this machine and only this project's org.
+// The Team view. In the launcher (launcher=true): org cards overview with
+// New organization / Join actions, drilling into a selected org's members,
+// repositories and invite controls. Inside a project's Kai tab (launcher=false):
+// this machine and only this project's org.
 kai_team_build :: proc(s:^Session,launcher:=false) {
     ctx:=s.gui.ctx
     t:=s.kai.team
@@ -172,8 +173,8 @@ kai_team_build :: proc(s:^Session,launcher:=false) {
     }
     v:=&t.view
     f:=&t.fields
-    kai_head(ctx,"THIS MACHINE",-1)
     if t.team.name=="" {
+        kai_head(ctx,"THIS MACHINE",-1)
         kai_field(ctx,"kai_name",f.name[:],&f.name_length,"Your name")
         kai_field(ctx,"kai_device",f.device[:],&f.device_length,"This machine's name, as Mac or Studio PC")
         name,device:=kai_typed(f.name[:],f.name_length),kai_typed(f.device[:],f.device_length)
@@ -182,12 +183,12 @@ kai_team_build :: proc(s:^Session,launcher:=false) {
         }
         return
     }
-    status:=v.reach if t.running else "Offline" if t.why_length==0 else ""
-    kai_row_names(ctx,v.machine,status,ui.tone(ctx,"text"))
-    if !t.running && t.why_length>0 {kai_line(ctx,string(t.why[:t.why_length]),"danger")}
-    for p in v.peer_lines {kai_row_names(ctx,p.name,p.rest,ui.tone(ctx,"text"))}
-
     if !launcher {
+        kai_head(ctx,"THIS MACHINE",-1)
+        status:=v.reach if t.running else "Offline" if t.why_length==0 else ""
+        kai_row_names(ctx,v.machine,status,ui.tone(ctx,"text"))
+        if !t.running && t.why_length>0 {kai_line(ctx,string(t.why[:t.why_length]),"danger")}
+        for p in v.peer_lines {kai_row_names(ctx,p.name,p.rest,ui.tone(ctx,"text"))}
         if v.org>=0 && v.org<len(v.orgs) {
             kai_org_build(s,v.org,false)
         } else {
@@ -195,40 +196,198 @@ kai_team_build :: proc(s:^Session,launcher:=false) {
         }
         return
     }
+    kai_team_launcher_build(s)
+}
 
-    kai_head(ctx,"JOIN AN ORG",-1)
-    kai_field(ctx,"kai_invite_in",f.invite[:],&f.invite_length,"Paste an invite")
-    invite:=kai_typed(f.invite[:],f.invite_length)
-    joining:=&t.tasks[.Join]
-    if kai_buttons(s,"kai_join",{"Join"},accent=0,disabled=invite=="" || joining.stage==.Waiting)==0 {kai_ask(s,"kai.join",`{{"invite":%s}}`,kai_quote(invite))}
-    kai_task_line(ctx,joining,"Joining…")
-
-    for _,i in v.orgs {kai_org_build(s,i,true)}
-
-    kai_head(ctx,"NEW ORG",-1)
-    kai_field(ctx,"kai_org_name",f.org[:],&f.org_length,"Org name")
-    org:=kai_typed(f.org[:],f.org_length)
-    if kai_buttons(s,"kai_org_new",{"Make org"},disabled=org=="")==0 {kai_ask(s,"kai.org",`{{"new":%s}}`,kai_quote(org))}
-
-    if len(v.orgs)>0 {
-        kai_head(ctx,"WEB SIGN-IN",-1)
-        kai_field(ctx,"kai_server",f.server[:],&f.server_length,"Server host:port")
-        kai_field(ctx,"kai_login",f.login[:],&f.login_length,"Sign-in name")
-        kai_field(ctx,"kai_password",f.password[:],&f.password_length,"Password, 8 or more characters",password=true)
-        server,login:=kai_typed(f.server[:],f.server_length),kai_typed(f.login[:],f.login_length)
-        signing:=&t.tasks[.Web_Login]
-        if kai_buttons(s,"kai_web",{"Set sign-in"},disabled=server=="" || login=="" || f.password_length<8 || signing.stage==.Waiting)==0 {
-            // Straight to the agent's thread: the password goes into no call's text.
-            if message:=kai_task_start(s,.Web_Login,server,login,string(f.password[:f.password_length]));message!="" {notify(s,message)}
-            crypto.zero_explicit(&f.password,size_of(f.password))
-            f.password_length=0
+// Launcher Team view: overview of organization cards + New/Join actions, or
+// the detail view of a selected organization.
+@(private)
+kai_team_launcher_build :: proc(s:^Session) {
+    ctx:=s.gui.ctx
+    t:=s.kai.team
+    v:=&t.view
+    f:=&t.fields
+    if t.selected_org!={} {
+        selected:=-1
+        for o,i in v.orgs {
+            if o.id==t.selected_org {selected=i;break}
         }
-        kai_task_line(ctx,signing,"Connecting…")
+        if selected>=0 {
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(30),gap=8,align_y=.Center}) {
+                if ui.button(ctx,ui.id(ctx,"kai_org_back"),{label="Organizations",icon=ui.icon_user(u8(User_Icon.Back)),variant="ghost",height=28,size=ui.metric(ctx,"font_small")}).clicked {
+                    t.selected_org={}
+                    t.show_web_login=false
+                    if s.projects!=nil {s.projects.scroll=0}
+                }
+            }
+            kai_org_build(s,selected,true)
+            kai_web_login_build(s,&v.orgs[selected])
+            return
+        }
+        t.selected_org={}
+    }
+
+    // Compact machine summary bar.
+    status:=v.reach if t.running else "Offline" if t.why_length==0 else ""
+    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=2,padding={12,8,12,8},fill=ui.tone(ctx,"well"),stroke=ui.tone(ctx,"border"),stroke_width=1,radius=8}) {
+        kai_row_names(ctx,v.machine,status,ui.tone(ctx,"text"))
+        if !t.running && t.why_length>0 {kai_line(ctx,string(t.why[:t.why_length]),"danger")}
+        for p in v.peer_lines {kai_row_names(ctx,p.name,p.rest,ui.tone(ctx,"text_muted"))}
+    }
+
+    ui.spacer(ctx,0,6)
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(32),gap=8,align_y=.Center}) {
+        ui.label(ctx,"ORGANIZATIONS",ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_caption"),font=ui.FONT_SEMIBOLD)
+        ui.spacer(ctx)
+        if ui.button(ctx,ui.id(ctx,"kai_join_open"),{label="Join",icon=.Link,variant=t.panel_mode==.Join_Org?"toggle":"field",active=t.panel_mode==.Join_Org,height=28,size=ui.metric(ctx,"font_small")}).clicked {
+            t.panel_mode=t.panel_mode==.Join_Org?.Overview:.Join_Org
+        }
+        if ui.button(ctx,ui.id(ctx,"kai_org_new_open"),{label="New organization",icon=.Plus,variant=t.panel_mode==.New_Org?"toggle":"accent",active=t.panel_mode==.New_Org,height=28,size=ui.metric(ctx,"font_small")}).clicked {
+            t.panel_mode=t.panel_mode==.New_Org?.Overview:.New_Org
+        }
+    }
+
+    if t.panel_mode==.New_Org {
+        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=8,padding=ui.padding_all(12),fill=ui.tone(ctx,"raised"),stroke=ui.tone(ctx,"border"),stroke_width=1,radius=8}) {
+            kai_field(ctx,"kai_org_name",f.org[:],&f.org_length,"Organization name")
+            org:=kai_typed(f.org[:],f.org_length)
+            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,align_y=.Center}) {
+                if ui.button(ctx,ui.id(ctx,"kai_org_new",0),{label="Create",variant="accent",height=28,center=true,disabled=org==""}).clicked {
+                    kai_ask(s,"kai.org",`{{"new":%s}}`,kai_quote(org))
+                    f.org_length=0
+                    t.panel_mode=.Overview
+                }
+                if ui.button(ctx,ui.id(ctx,"kai_org_new_cancel"),{label="Cancel",variant="ghost",height=28}).clicked {
+                    f.org_length=0
+                    t.panel_mode=.Overview
+                }
+            }
+        }
+    } else if t.panel_mode==.Join_Org {
+        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=8,padding=ui.padding_all(12),fill=ui.tone(ctx,"raised"),stroke=ui.tone(ctx,"border"),stroke_width=1,radius=8}) {
+            kai_field(ctx,"kai_invite_in",f.invite[:],&f.invite_length,"Paste an invite")
+            invite:=kai_typed(f.invite[:],f.invite_length)
+            joining:=&t.tasks[.Join]
+            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,align_y=.Center}) {
+                if ui.button(ctx,ui.id(ctx,"kai_join",0),{label="Join",variant="accent",height=28,center=true,disabled=invite=="" || joining.stage==.Waiting}).clicked {
+                    kai_ask(s,"kai.join",`{{"invite":%s}}`,kai_quote(invite))
+                }
+                if ui.button(ctx,ui.id(ctx,"kai_join_cancel"),{label="Cancel",variant="ghost",height=28}).clicked {
+                    f.invite_length=0
+                    t.panel_mode=.Overview
+                }
+            }
+            kai_task_line(ctx,joining,"Joining…")
+        }
+    }
+
+    needle:=""
+    if s.projects!=nil && s.projects.search_length>0 {
+        needle=strings.to_lower(strings.trim_space(string(s.projects.search[:s.projects.search_length])),context.temp_allocator)
+    }
+    shown:=make([dynamic]int,0,len(v.orgs),context.temp_allocator)
+    for o,i in v.orgs {
+        if needle!="" && !strings.contains(strings.to_lower(o.name,context.temp_allocator),needle) {continue}
+        append(&shown,i)
+    }
+    if len(shown)==0 {
+        empty:="No organizations match the search." if needle!="" else "No organizations yet. Create one or join with an invite."
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(88),align_x=.Center,align_y=.Center}) {
+            ui.label(ctx,empty,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
+        }
+        return
+    }
+
+    cols:=2 if t.width>=440 || t.width<=0 else 1
+    ui.spacer(ctx,0,2)
+    for row_start:=0;row_start<len(shown);row_start+=cols {
+        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Row,gap=10}) {
+            for c in 0..<cols {
+                idx:=row_start+c
+                if idx>=len(shown) {
+                    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1)}) {}
+                    continue
+                }
+                kai_org_card_build(s,shown[idx])
+            }
+        }
+        ui.spacer(ctx,0,6)
     }
 }
 
-// One org block: its members, server sync status / 1-click attach, optional
-// repo list (in launcher), and INVITE controls for admins.
+// One clickable organization card in the launcher's Team overview.
+@(private)
+kai_org_card_build :: proc(s:^Session,i:int) {
+    ctx:=s.gui.ctx
+    t:=s.kai.team
+    v:=&t.view
+    o:=&v.orgs[i]
+    x:=&v.lines[i]
+    card_id:=ui.id(ctx,"kai_org_card",i)
+    it:=ui.interact(ctx,card_id,{.Focusable})
+    on:=ai_pointer_on(ctx,card_id)
+    fill:=ui.tone(ctx,"chip") if on else ui.tone(ctx,"raised")
+    stroke:=ui.tone(ctx,"accent") if on else ui.tone(ctx,"border")
+    if ui.box(ctx,{id=card_id,width=ui.GROW,height=ui.fixed(86),gap=12,padding=ui.padding_all(12),align_y=.Center,fill=fill,stroke=stroke,stroke_width=1,radius=8}) {
+        projects_tile(ctx,o.name,42,false)
+        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=3}) {
+            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,align_y=.Center}) {
+                ui.label(ctx,o.name,ui.metric(ctx,"font"),ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD,fade=true)
+                ui.label(ctx,o.role,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
+            }
+            ui.label(ctx,x.summary,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),0,fade=true)
+            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=5,align_y=.Center}) {
+                if x.server!="" {
+                    ui.icon(ctx,.Check,ui.tone(ctx,"success"),11)
+                    ui.label(ctx,"Server synced",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
+                } else {
+                    ui.label(ctx,"Local / P2P",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
+                }
+            }
+        }
+        ui.icon(ctx,.Chevron_Right,ui.tone(ctx,"text_faint"),12)
+    }
+    if it.clicked {
+        t.selected_org=o.id
+        t.panel_mode=.Overview
+        t.show_web_login=false
+        if s.projects!=nil {s.projects.scroll=0}
+    }
+}
+
+// Collapsible web sign-in settings for an org that has an attached Kai server.
+@(private)
+kai_web_login_build :: proc(s:^Session,o:^ka.Org_View) {
+    if o.server=="" {return}
+    ctx:=s.gui.ctx
+    t:=s.kai.team
+    f:=&t.fields
+    ui.spacer(ctx,0,6)
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"divider")}) {}
+    ui.spacer(ctx,0,2)
+    if ui.button(ctx,ui.id(ctx,"kai_web_toggle"),{label="Web view sign-in",icon=t.show_web_login?.Chevron_Down:.Chevron_Right,variant="ghost",height=26,size=ui.metric(ctx,"font_small")}).clicked {
+        t.show_web_login=!t.show_web_login
+        if t.show_web_login && f.server_length==0 {f.server_length=copy(f.server[:],o.server)}
+    }
+    if !t.show_web_login {return}
+    kai_line(ctx,"Optional username and password to browse this org's repositories in a web browser on the server's HTML view.","text_faint")
+    kai_field(ctx,"kai_server",f.server[:],&f.server_length,"Server host:port")
+    kai_field(ctx,"kai_login",f.login[:],&f.login_length,"Sign-in name")
+    kai_field(ctx,"kai_password",f.password[:],&f.password_length,"Password, 8 or more characters",password=true)
+    server,login:=kai_typed(f.server[:],f.server_length),kai_typed(f.login[:],f.login_length)
+    signing:=&t.tasks[.Web_Login]
+    if kai_buttons(s,"kai_web",{"Set sign-in"},disabled=server=="" || login=="" || f.password_length<8 || signing.stage==.Waiting)==0 {
+        // Straight to the agent's thread: the password goes into no call's text.
+        if message:=kai_task_start(s,.Web_Login,server,login,string(f.password[:f.password_length]));message!="" {notify(s,message)}
+        crypto.zero_explicit(&f.password,size_of(f.password))
+        f.password_length=0
+    }
+    kai_task_line(ctx,signing,"Connecting…")
+}
+
+// One org block: its members (with role change and remove controls for admins),
+// server sync status / 1-click attach, optional repo list (in launcher), and
+// INVITE controls for admins.
 @(private)
 kai_org_build :: proc(s:^Session,i:int,show_repos:bool) {
     ctx:=s.gui.ctx
@@ -258,11 +417,49 @@ kai_org_build :: proc(s:^Session,i:int,show_repos:bool) {
             kai_line(ctx,string(attaching.why[:attaching.why_length]),"danger")
         }
     }
-    for m in x.members {kai_row_names(ctx,m.name,m.rest,ui.tone(ctx,"text"))}
+    is_admin:=o.role=="admin"
+    for &m,k in x.members {kai_member_row(s,o,x,&m,k,is_admin)}
     if show_repos {
+        ui.spacer(ctx,0,4)
+        kai_head(ctx,"REPOSITORIES",len(x.repos))
         for r in x.repos {kai_row_names(ctx,r.name,r.rest,ui.tone(ctx,"text_muted"))}
+        if len(x.repos)==0 {kai_line(ctx,"No repositories published to this org yet.","text_faint")}
     }
-    if o.role=="admin" {kai_invite_build(s,o)}
+    if is_admin {kai_invite_build(s,o)}
+}
+
+// One member row: static role text for non-admins or protected rows; role
+// selector and remove button for admins managing other devices.
+@(private)
+kai_member_row :: proc(s:^Session,o:^ka.Org_View,x:^Kai_Org_Lines,m:^Kai_Member_Line,k:int,is_admin:bool) {
+    ctx:=s.gui.ctx
+    can_role:=is_admin && !m.is_node && m.role_index>=0 && !(m.you && x.admins<=1)
+    can_remove:=is_admin && !m.you
+    if !can_role && !can_remove {
+        kai_row_names(ctx,m.name,m.rest,ui.tone(ctx,"text"))
+        return
+    }
+    ui.id_push(ctx,ui.id(ctx,"member",k))
+    defer ui.id_pop(ctx)
+    row_h:=max(ui.metric(ctx,"row"),f32(26))
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(row_h),gap=6,align_y=.Center,padding={0,0,KAI_ROW_PAD,0}}) {
+        size:=ui.metric(ctx,"font_small")
+        ui.text(ctx,m.name,{size=size,color=ui.tone(ctx,"text"),align_y=.Center,ellipsis=true},ui.GROW,ui.fixed(size+6))
+        if can_role {
+            selected:=m.role_index
+            roles:=[3]string{"reader","writer","admin"}
+            if ui.dropdown(ctx,ui.id(ctx,"role"),{list={"Reader","Writer","Admin"}},&selected,{width=78,height=24}) && selected>=0 && selected<len(roles) && selected!=m.role_index {
+                kai_ask(s,"kai.org",`{{"org":%s,"member":%s,"role":%s}}`,kai_quote(org_hex(o.id)),kai_quote(m.key_hex),kai_quote(roles[selected]))
+            }
+        } else {
+            ui.label(ctx,m.rest,size,ui.tone(ctx,"text_faint"))
+        }
+        if can_remove {
+            if ui.icon_button(ctx,ui.id(ctx,"remove"),ui.icon_user(u8(User_Icon.Trash)),24,"ghost","Remove member").clicked {
+                kai_ask(s,"kai.org",`{{"org":%s,"member":%s,"remove":true}}`,kai_quote(org_hex(o.id)),kai_quote(m.key_hex))
+            }
+        }
+    }
 }
 
 // An admin's invite: separated under INVITE so the role switcher is clearly
