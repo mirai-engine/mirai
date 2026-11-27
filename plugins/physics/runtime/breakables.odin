@@ -25,6 +25,7 @@ Piece_Flag :: sim.Piece_Flag
 Piece_Flags :: sim.Piece_Flags
 Cluster_Desc :: sim.Cluster_Desc
 Cluster_Info :: sim.Cluster_Info
+Breakable_Pose :: sim.Breakable_Pose
 Body_Pose :: sim.Transform
 
 BREAKABLE_DESC_DEFAULT :: sim.BREAKABLE_DESC_DEFAULT
@@ -91,12 +92,22 @@ breakable_check :: proc(physics:core.Ref(Physics_State),h:Breakable_Handle) -> u
 breakable_state_size :: proc(physics:core.Ref(Physics_State),h:Breakable_Handle) -> int {
     return made(physics.ptr)?sim.breakable_state_size(&physics.world,h):0
 }
-breakable_state_write :: proc(physics:core.Ref(Physics_State),h:Breakable_Handle,out:[]u8) -> int {
-    return made(physics.ptr)?sim.breakable_state_write(&physics.world,h,out):0
+breakable_state_version :: proc(physics:core.Ref(Physics_State),h:Breakable_Handle) -> u32 {
+    return made(physics.ptr)?sim.breakable_state_version(&physics.world,h):0
+}
+breakable_state_write :: proc(physics:core.Ref(Physics_State),h:Breakable_Handle,out:[]u8,debris:=false) -> int {
+    return made(physics.ptr)?sim.breakable_state_write(&physics.world,h,out,debris):0
 }
 breakable_state_apply :: proc(state:^Physics_State,h:Breakable_Handle,data:[]u8) -> bool {
     return made(state) && sim.breakable_state_apply(&state.world,h,data)
 }
+breakable_poses :: proc(physics:core.Ref(Physics_State),h:Breakable_Handle,out:[]Breakable_Pose) -> int {
+    return made(physics.ptr)?sim.breakable_poses(&physics.world,h,out):0
+}
+breakable_poses_apply :: proc(state:^Physics_State,h:Breakable_Handle,poses:[]Breakable_Pose,hold:bool) -> bool {
+    return made(state) && sim.breakable_poses_apply(&state.world,h,poses,hold)
+}
+breakable_poses_blend :: sim.breakable_poses_blend
 breakable_shortfall :: proc(physics:core.Ref(Physics_State),h:Breakable_Handle) -> (events:int,refused:Break_Capacities) {
     if !made(physics.ptr) {return}
     return sim.breakable_shortfall(&physics.world,h)

@@ -1,7 +1,6 @@
 package mirai_physics
 
 import "core:math/linalg"
-import "core:mem"
 import "mirai:std/geom"
 
 // How much of a region a point of the world is in.
@@ -25,11 +24,7 @@ breakables_strain :: proc(w:^World,region:Break_Region,amount:f32,impulse:Vec3={
     for &d,slot in w.breakables[:w.breakable_high] {
         if d.generation&1==0 || query_filter_response(filter,d.filter)==.Ignore {continue}
         // One piece of each body, taken before any of them breaks.
-        s.mark+=1
-        if s.mark==0 {
-            mem.zero_slice(s.marks)
-            s.mark=1
-        }
+        break_mark(s)
         bodies:=0
         for piece:=d.piece_list;piece>=0;piece=w.pieces[piece].next {
             body:=shape_body(w,w.pieces[piece].shape)

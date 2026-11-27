@@ -129,7 +129,11 @@ Bond :: struct {
 }
 #assert(size_of(Bond)==44)
 
-@(private) Breakable_Flag :: enum u32 {Anchored,Remove_On_Sleep,Passive_Removal,Impact_Damage}
+@(private) Breakable_Flag :: enum u32 {
+    Anchored,Remove_On_Sleep,Passive_Removal,Impact_Damage,
+    Kinematic, // made kinematic: the body it was created as stays so when it is let go
+    Held,      // its bodies are kinematic and neither take hits nor expire (breakable_poses_apply)
+}
 @(private) Breakable_Flags :: bit_set[Breakable_Flag;u32]
 
 @(private)
@@ -151,8 +155,10 @@ Breakable :: struct {
     revision:u32,     // changes of its pieces: every group that left, every cut, every piece removed
     generation:u32, // odd while the slot is in use
     next_free:i32,
+    version:u32,      // changes of what breakable_state_write writes, the passing of time aside
+    _:u32,
 }
-#assert(size_of(Breakable)==224)
+#assert(size_of(Breakable)==232)
 
 Piece_Info :: struct {
     id:i32,             // stable while the breakable lives
@@ -507,6 +513,7 @@ piece_remove :: proc(w:^World,index:i32) {
     }
     piece.shape={}
     w.breakables[piece.breakable].revision+=1
+    w.breakables[piece.breakable].version+=1
     piece.flags+={.Gone}
 }
 
@@ -518,6 +525,36 @@ break_changed :: proc(w:^World,body:Body_Handle) {
     s.changed[slot]=true
     s.changed_list[s.changed_count]=body
     s.changed_count+=1
+}
+
+// A new body for a group that leaves a body at xf: kinematic while the breakable is held.
+@(private)
+break_body_desc :: proc(d:^Breakable,xf:Transform,debris:bool) -> Body_Desc {
+    desc:=BODY_DESC_DEFAULT
+    desc.type=.Held in d.flags?.Kinematic:.Dynamic
+    desc.gravity_scale=d.gravity_scale
+    desc.position,desc.rotation,desc.user_data=xf.p,xf.q,d.user_data
+    desc.debris=debris
+    return desc
+}
+
+// The type a body of the breakable has when it is not held.
+@(private)
+break_nature :: proc(w:^World,d:^Breakable,body:Body_Handle) -> Body_Type {
+    type:=body_type(w,body)
+    if type==.Kinematic && .Held in d.flags && (body!=d.body || .Kinematic not_in d.flags) {return .Dynamic}
+    return type
+}
+
+// A new mark for the bodies taken in a pass over the scratch.
+@(private)
+break_mark :: proc(s:^Break_Scratch) -> u32 {
+    s.mark+=1
+    if s.mark==0 {
+        mem.zero_slice(s.marks)
+        s.mark=1
+    }
+    return s.mark
 }
 
 // The mass of every body whose shapes changed, once: what it holds now, with the velocity its center
@@ -696,6 +733,7 @@ breakable_create :: proc(w:^World,desc:Breakable_Desc) -> (handle:Breakable_Hand
         filter=desc.filter,anchor_count=i32(len(desc.anchors)),generation=d.generation+1,next_free=-1,
     }
     if desc.impact_damage {d.flags+={.Impact_Damage}}
+    if desc.kinematic {d.flags+={.Kinematic}}
     copy(d.anchors[:],desc.anchors)
     slots,slots_error:=make([]i32,count,w.allocator)
     cluster_slots,clusters_error:=make([]i32,len(desc.clusters),w.allocator)
@@ -972,6 +1010,7 @@ break_damage :: proc(w:^World,index:i32,event:^Break_Event) -> (broke,strained:b
     }
     if d.propagation>0 {break_propagate(w,index,broken)}
     if broke {breakable_regroup(w,index,event)}
+    if broke || strained {d.version+=1}
     return
 }
 
@@ -1009,14 +1048,9 @@ breakable_regroup :: proc(w:^World,index:i32,event:^Break_Event) {
         from:=s.body[slot]
         if from=={} || .Debris in piece.flags {continue}
         root:=union_find(s.parent,slot)
-        if body_type(w,from)!=.Dynamic && .Anchored in d.flags?s.anchored[root]:s.keeper[body_slot(from)]==root {continue}
+        if break_nature(w,d,from)!=.Dynamic && .Anchored in d.flags?s.anchored[root]:s.keeper[body_slot(from)]==root {continue}
         if s.group[root]==-1 {
-            xf:=body_transform(w,from)
-            desc:=BODY_DESC_DEFAULT
-            desc.gravity_scale=d.gravity_scale
-            desc.position,desc.rotation,desc.user_data=xf.p,xf.q,d.user_data
-            desc.debris=s.volume[root]<d.debris_volume
-            created:=body_create(w,desc)
+            created:=body_create(w,break_body_desc(d,body_transform(w,from),s.volume[root]<d.debris_volume))
             if created=={} {
                 w.stats.breakable_capacity_exhausted+=1
                 s.refused[index]+={.Bodies}
@@ -1052,6 +1086,11 @@ breakable_regroup :: proc(w:^World,index:i32,event:^Break_Event) {
     for slot:=d.piece_list;slot>=0;slot=w.pieces[slot].next {
         if s.group[slot]!=0 {continue}
         body,parent:=s.made_body[slot],s.from[slot]
+        // One made while the breakable is held stays at rest.
+        if body_type(w,body)!=.Dynamic {
+            s.volume[slot]=0
+            continue
+        }
         center:=body_center(w,body)
         parent_type:=body_type(w,parent)
         if parent_type!=.Static {
@@ -1213,6 +1252,7 @@ break_slice :: proc(w:^World,index:i32,event:^Break_Event) -> bool {
             c:=&w.bonds[slot]
             if .Cluster in c.flags {c.flags+={.Broken}} else {c.cluster=-1}
         }
+        d.version+=1
         breakable_regroup(w,index,event)
     } else if cuts>0 {
         break_bodies(w,d)
@@ -1249,7 +1289,7 @@ breakables_update :: proc(w:^World) {
             piece:=&w.pieces[tag-1]
             if piece.flags&{.Debris,.Gone}!={} {continue}
             d:=&w.breakables[piece.breakable]
-            if .Impact_Damage not_in d.flags || hit.impulse<d.damage_threshold {continue}
+            if d.flags&{.Impact_Damage,.Held}!={.Impact_Damage} || hit.impulse<d.damage_threshold {continue}
             // The normal goes from shape A to shape B: the impulse on each one points into it.
             s.hits[count]={
                 breakable=breakable_handle(w,piece.breakable),tick=u32(w.breaking.tick),piece=i32(tag-1),point=hit.point,
@@ -1265,8 +1305,8 @@ breakables_update :: proc(w:^World) {
         }
     }
     for &d,index in w.breakables[:w.breakable_high] {
-        // Only a broken breakable has bodies that expire.
-        if d.generation&1==0 || d.revision==0 {continue}
+        // Only a broken breakable has bodies that expire, and not while it is held.
+        if d.generation&1==0 || d.revision==0 || .Held in d.flags {continue}
         for slot:=d.piece_list;slot>=0;slot=w.pieces[slot].next {
             piece:=&w.pieces[slot]
             if .Gone in piece.flags {continue}

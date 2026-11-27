@@ -507,3 +507,28 @@ a_piece_without_room_for_its_shape_leaves_the_world_alone :: proc(t:^testing.T) 
         testing.expectf(t,w.pieces[slot].shape!={} && shape_body(&w,w.pieces[slot].shape)==other,"piece %d is on the body it goes to",slot)
     }
 }
+
+@(test)
+a_clustered_breakable_cut_and_broken_takes_back_its_whole_clusters_from_a_recorded_state :: proc(t:^testing.T) {
+    w:World;testing.expect(t,test_destruct_world(&w));defer world_destroy(&w)
+    settings:=BREAKABLE_DESC_DEFAULT;settings.gravity_scale=0
+    h,error:=test_authored_destructible(&w,true,settings)
+    if !testing.expect_value(t,error,Breakable_Error.None) {return}
+    root:=breakable_body(&w,h)
+    shapes:=body_shapes(&w,root,nil)
+    whole:=make([]u8,breakable_state_size(&w,h));defer delete(whole)
+    breakable_state_write(&w,h,whole,true)
+    breakable_strain(&w,h,{0,3,0},100,1000)
+    _,cut:=breakable_slice(&w,h,{-1.6,3,0},{1,0,0})
+    testing.expect(t,cut && break_group_count(&w,h)>1)
+    testing.expect(t,breakable_state_apply(&w,h,whole))
+    clusters:[3]Cluster_Info
+    testing.expect_value(t,breakable_clusters(&w,h,clusters[:]),3)
+    for cluster in clusters {testing.expect(t,!cluster.broken && cluster.strain==0)}
+    testing.expect(t,break_group_count(&w,h)==1 && body_shapes(&w,root,nil)==shapes,"the whole cluster collides as its hull again")
+    again:=make([]u8,len(whole));defer delete(again)
+    testing.expect(t,breakable_state_write(&w,h,again,true)==len(whole) && string(again)==string(whole))
+    // And it breaks as it did the first time.
+    breakable_strain(&w,h,{0,3,0},100,1000)
+    testing.expect_value(t,break_group_count(&w,h),2)
+}

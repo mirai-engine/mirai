@@ -1,6 +1,7 @@
 package destruct
 
 import "core:fmt"
+import "core:math/linalg"
 import "core:mem"
 import "core:strings"
 import "core:testing"
@@ -528,4 +529,134 @@ impacts_lost_for_lack_of_events_name_the_setting_to_raise :: proc(t:^testing.T) 
         }
     }
     testing.expect(t,false,"an impact that did not fit was not reported")
+}
+
+// A tick of physics, then of destruct.
+@(private="file")
+destruct_test_tick :: proc(f:^Destruct_Test) {
+    phys.simulate(&f.physics,nil,&f.app.jobs,1.0/60)
+    destruct_test_step(f)
+}
+
+// What a recording of a destructible keeps of a tick: the state it had then, and its poses.
+@(private="file")
+Recorded_Tick :: struct {
+    state:int,
+    poses:[4]Group_Pose,
+    count:int,
+}
+
+@(private="file")
+Shown_Group :: struct {entity:core.Entity,group:u32,mesh:base.Asset_Id}
+
+@(private="file")
+shown_groups :: proc(f:^Destruct_Test,owner:core.Entity,out:[]Shown_Group) -> int {
+    count:=0
+    for row in 0..<core.count(&f.groups) {
+        group:=f.groups.values[row]
+        if group.owner!=owner || !core.alive(&f.entities,f.groups.entities[row]) {continue}
+        out[count]={f.groups.entities[row],group.group,group.mesh}
+        count+=1
+    }
+    return count
+}
+
+@(test)
+a_recording_of_a_destructible_plays_back_tick_by_tick_in_place_and_goes_on_when_let_go :: proc(t:^testing.T) {
+    f:Destruct_Test
+    if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-playback"),pieces=3)) {return}
+    defer destruct_test_destroy(&f)
+    config:=destructible();config.fracture={1,2};config.debris_volume=2;config.debris_lifetime=0.1
+    e:=destruct_test_entity(&f,config)
+    view:=Destruct_View{core.ref(&f.physics),core.read(&f.states),core.read(&f.groups)}
+    destruct_test_tick(&f);destruct_test_tick(&f)
+    // Recorded: a state each time it changes, with the debris, and the poses of every tick.
+    states:[dynamic][]u8
+    defer {
+        for state in states {delete(state)}
+        delete(states)
+    }
+    ticks:[dynamic]Recorded_Tick
+    defer delete(ticks)
+    version:u32
+    for at in 0..<24 {
+        if at==3 {strain(&f.requests,e,{},4,1000)}
+        destruct_test_tick(&f)
+        if now:=state_version(view,e);len(states)==0 || now!=version {
+            version=now
+            state:=make([]u8,state_size(view,e))
+            testing.expect_value(t,state_write(view,e,state,true),len(state))
+            append(&states,state)
+        }
+        recorded:=Recorded_Tick{state=len(states)-1}
+        recorded.count=poses(view,e,recorded.poses[:])
+        append(&ticks,recorded)
+    }
+    shown:[4]Shown_Group
+    if !testing.expect(t,len(states)>=3,"recorded as created, broken and with its debris expired") {return}
+    testing.expect_value(t,shown_groups(&f,e,shown[:]),1)
+    // Back, tick by tick, held: each state where it changed, the poses every tick.
+    current,came_back:=-1,0
+    for k:=len(ticks)-1;k>=0;k-=1 {
+        recorded:=&ticks[k]
+        before:[4]Shown_Group
+        had:=shown_groups(&f,e,before[:])
+        restated:=recorded.state!=current
+        if restated {state_replay(&f.requests,e,states[recorded.state])}
+        current=recorded.state
+        poses_replay(&f.requests,e,recorded.poses[:recorded.count],hold=true)
+        destruct_test_tick(&f)
+        for item in f.events.replayed.items {testing.expect(t,item.done,"a state applies in the tick it is asked")}
+        testing.expect_value(t,len(f.events.fractured.items),0)
+        now:[4]Group_Pose
+        if !testing.expect_value(t,poses(view,e,now[:]),recorded.count) {return}
+        for pose,at in now[:recorded.count] {
+            testing.expectf(t,pose.group==recorded.poses[at].group && linalg.length(pose.position-recorded.poses[at].position)<1e-5,"tick %v: group %v is where it was",k,pose.group)
+        }
+        count:=shown_groups(&f,e,shown[:])
+        for group in shown[:count] {
+            made:=true
+            for old in before[:had] {
+                if old.entity!=group.entity {continue}
+                made=false
+                // A group whose pieces did not change keeps its entity and its mesh.
+                if !restated {testing.expect(t,old.mesh==group.mesh && old.group==group.group)}
+            }
+            if !made || group.group==0 {continue}
+            // A group that comes back stands where its pose is from its first tick.
+            for pose in recorded.poses[:recorded.count] {
+                if pose.group!=group.group {continue}
+                testing.expectf(t,linalg.length(core.at(&f.transforms,core.row_of(&f.transforms,group.entity)).position-pose.position)<1e-5,"tick %v: group %v comes back where it was",k,group.group)
+                came_back+=1
+            }
+        }
+        if !restated {testing.expect(t,count==had,"poses alone make and end no group")}
+        // Let go in the air, a tick after the break: it falls from there with its velocity, and its debris expires again.
+        if k!=5 {continue}
+        flying:=recorded.poses[1]
+        poses_replay(&f.requests,e,recorded.poses[:recorded.count],hold=false)
+        destruct_test_tick(&f)
+        handle:=core.at(&f.states,core.row_of(&f.states,e)).handle
+        body:phys.Body_Handle
+        pieces:[3]Piece_Info
+        for piece in pieces[:phys.breakable_pieces(view.physics,handle,pieces[:])] {
+            if piece.group==flying.group {body=piece.body}
+        }
+        info,found:=phys.body_info(view.physics,body)
+        if !testing.expect(t,found,"the group let go is there") {return}
+        testing.expect(t,info.linear==flying.linear && info.awake,"it is let go with the velocity it had")
+        destruct_test_tick(&f)
+        info,_=phys.body_info(view.physics,body)
+        testing.expect(t,info.pose.position.y<flying.position.y && info.linear.y<flying.linear.y,"it falls from where it was let go")
+        for _ in 0..<11 {destruct_test_tick(&f)}
+        testing.expect_value(t,shown_groups(&f,e,shown[:]),1)
+        current=-1
+    }
+    testing.expect(t,came_back>=4,"the expired debris came back twice")
+    // As created again: its own mesh, no group, no generated mesh.
+    st:=core.at(&f.states,core.row_of(&f.states,e))
+    testing.expect(t,st.revision==0 && !st.broken && !core.has(&f.elsewhere,e))
+    testing.expect_value(t,shown_groups(&f,e,shown[:]),0)
+    testing.expect_value(t,len(f.cache.meshes),0)
+    testing.expect_value(t,f.problems.count,0)
 }

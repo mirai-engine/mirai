@@ -103,6 +103,7 @@ Entry :: struct {
     event_tick:u64,
     pass:u32,                                       // the last tick that looked at it
     mirrored:bool,                                  // its groups were drawn from this entry
+    restated:bool,                                  // a state replaced its pieces: its groups are looked at again
 }
 
 // Frees the memory of the cache and the meshes it made.

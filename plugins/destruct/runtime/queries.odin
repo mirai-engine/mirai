@@ -62,6 +62,31 @@ groups :: proc(v:Destruct_View,e:core.Entity,out:[]Group_Info) -> int {
     return count
 }
 
+// What a recording of a destructible keeps: its state, again each time
+// state_version changes, with debris, and the poses of its bodies by group.
+// state_replay and poses_replay play them back.
+state_version :: proc(v:Destruct_View,e:core.Entity) -> u32 {
+    state,has:=core.get(v.states,e)
+    return has?phys.breakable_state_version(v.physics,state.handle):0
+}
+
+state_size :: proc(v:Destruct_View,e:core.Entity) -> int {
+    state,has:=core.get(v.states,e)
+    return has?phys.breakable_state_size(v.physics,state.handle):0
+}
+
+state_write :: proc(v:Destruct_View,e:core.Entity,out:[]u8,debris:=false) -> int {
+    state,has:=core.get(v.states,e)
+    return has?phys.breakable_state_write(v.physics,state.handle,out,debris):0
+}
+
+poses :: proc(v:Destruct_View,e:core.Entity,out:[]Group_Pose) -> int {
+    state,has:=core.get(v.states,e)
+    return has?phys.breakable_poses(v.physics,state.handle,out):0
+}
+
+poses_blend :: phys.breakable_poses_blend
+
 piece_geometry :: proc(cache:core.Ref(Destruct_Cache),e:core.Entity,id:i32,out:^geom.Mesh_Buffer) -> bool {
     if out==nil {return false}
     entry:=entry_find(cache.ptr,e)

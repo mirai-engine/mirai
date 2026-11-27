@@ -137,6 +137,9 @@ the_breakables_of_a_simulation_that_is_not_ready_or_of_stale_handles_are_refused
         testing.expect(t,breakable_clusters(view,c.handle,nil)==0)
         testing.expect(t,breakable_revision(view,c.handle)==0 && breakable_check(view,c.handle)==0 && breakable_state_size(view,c.handle)==0)
         testing.expect(t,breakable_state_write(view,c.handle,bytes[:])==0 && !breakable_state_apply(c.state,c.handle,bytes[:]))
+        poses:[2]Breakable_Pose
+        testing.expect(t,breakable_state_version(view,c.handle)==0 && breakable_poses(view,c.handle,poses[:])==0)
+        testing.expect(t,!breakable_poses_apply(c.state,c.handle,poses[:],true) && !breakable_poses_apply(c.state,c.handle,nil,false))
         for kind in Break_Kind {
             applied,changed,strained:=break_apply(c.state,{breakable=c.handle,piece=-1,region={point={0,1,0},radius=4},vector={0,1,0},strain=1e6,kind=kind})
             testing.expect(t,!changed && !strained && applied.breakable==c.handle)

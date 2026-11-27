@@ -2,11 +2,22 @@ package mirai_physics
 
 import "core:mem"
 import "mirai:std/geom"
+import math "mirai:std/math"
 
 // What a breakable has become, as data small enough to send: the cuts by their plane, the body and the
 // flags of every piece, and every bond. No geometry: whoever reads it made the same breakable
 // from the same description and repeats the cuts. Pieces and bonds are named by their place in the
-// lists of the breakable, which is the same wherever the same events were applied.
+// lists of the breakable, which is the same wherever the same events were applied. Where its bodies are
+// travels apart, by group (Breakable_Pose), so that a recording of it keeps a state only when it changes.
+
+// Where a body of a breakable is and how it moves, named by its group (Piece_Info.group).
+Breakable_Pose :: struct {
+    rotation:Quat,       // zero means identity
+    position:Vec3,
+    group:u32,
+    linear,angular:Vec3, // m/s of its center of mass, rad/s
+    remaining:u32,       // steps until its pieces expire; max: never, or as they are
+}
 
 @(private) Break_State_Header :: struct {pieces,connections,original,revision:u32}
 @(private) Break_State_Piece :: struct {remaining:u64,parent:i32,group:u32,flags:Piece_Flags,front:u32,normal:Vec3,offset:f32,cluster:i32,_:u32}
@@ -102,10 +113,18 @@ breakable_state_size :: proc(w:^World,h:Breakable_Handle) -> int {
     return size_of(Break_State_Header)+int(d.piece_count)*size_of(Break_State_Piece)+int(d.bond_count)*size_of(Break_State_Bond)
 }
 
+// Changes when what breakable_state_write writes changes, the passing of time aside: what a recording of
+// the breakable writes again.
+breakable_state_version :: proc(w:^World,h:Breakable_Handle) -> u32 {
+    d,_:=breakable_read(w,h)
+    return d!=nil?d.version:0
+}
+
 // Writes what the breakable has become since it was created: its cuts, the body and the flags of
-// every piece and the strain of every bond. Debris is written as gone, since it is of each world.
-// Returns the bytes written; zero when `out` is too small.
-breakable_state_write :: proc(w:^World,h:Breakable_Handle,out:[]u8) -> int {
+// every piece and the strain of every bond. Debris is written as gone, since it is of each world, unless
+// debris asks for it, as a recording of this world does. Returns the bytes written; zero when `out` is
+// too small.
+breakable_state_write :: proc(w:^World,h:Breakable_Handle,out:[]u8,debris:=false) -> int {
     d,_:=breakable_read(w,h)
     size:=breakable_state_size(w,h)
     if d==nil || len(out)<size {return 0}
@@ -119,7 +138,7 @@ breakable_state_write :: proc(w:^World,h:Breakable_Handle,out:[]u8) -> int {
         remaining:=piece.expire==max(u64)?max(u64):piece.expire>w.breaking.tick?piece.expire-w.breaking.tick:0
         record:=Break_State_Piece{remaining=remaining,parent=-1,group=piece.group,flags=piece.flags,front=u32(origin.front),normal=origin.plane,offset=origin.offset,cluster=cluster_ordinal(w,d,piece.cluster)}
         if origin.parent>=0 {record.parent=ordinals[origin.parent]} else {header.original+=1}
-        if !shape_valid(w,piece.shape) || .Debris in piece.flags {record.flags+={.Gone}}
+        if !shape_valid(w,piece.shape) || .Debris in piece.flags && !debris {record.flags+={.Gone}}
         mem.copy(&out[at],&record,size_of(Break_State_Piece))
         at+=size_of(Break_State_Piece)
     }
@@ -133,23 +152,29 @@ breakable_state_write :: proc(w:^World,h:Breakable_Handle,out:[]u8) -> int {
     return at
 }
 
-// Makes a breakable that is still as created what breakable_state_write described of another one
-// made from the same description: the same cuts, pieces gone, bodies and strains. Every body starts in
-// the frame of the breakable, at rest: whoever sent the state says where they are. False when the
-// state is not of such a breakable or a capacity runs out; the breakable may then be half changed
-// and is only good for breakable_destroy. A transaction that allocates.
+// Makes a breakable made from the same description as another one what breakable_state_write described
+// of that one, in place: the same cuts, pieces gone, groups, bonds and strains. The cuts both share stay
+// and the others are undone; the body of a group both have stays where it is, with its velocity, and a
+// group it lacks starts in the frame of the breakable, at rest: whoever wrote the state says where its
+// bodies are (breakable_poses_apply). Only repeating a cut allocates. False when the state is not of such
+// a breakable or a capacity runs out; the breakable may then be half changed and is only good for
+// breakable_destroy.
 breakable_state_apply :: proc(w:^World,h:Breakable_Handle,state:[]u8) -> bool {
     d,index:=breakable_get(w,h)
-    if d==nil || d.revision!=0 || len(state)<size_of(Break_State_Header) {return false}
+    if d==nil || len(state)<size_of(Break_State_Header) {return false}
     header:Break_State_Header
     mem.copy(&header,raw_data(state),size_of(Break_State_Header))
     pieces,original,connections:=int(header.pieces),int(header.original),int(header.connections)
-    if original!=int(d.piece_count) || pieces<original || (pieces-original)%2!=0 {return false}
-    if len(state)<size_of(Break_State_Header)+pieces*size_of(Break_State_Piece)+connections*size_of(Break_State_Bond) {return false}
-    if int(w.piece_count)+pieces-original>len(w.pieces) || int(w.bond_count)-int(d.bond_count)+connections>len(w.bonds) {
-        w.stats.breakable_capacity_exhausted+=1
-        return false
+    s:=&w.breaking
+    slots:=s.source // the slot of the piece at each place of the list
+    count,made:=0,0
+    for slot:=d.piece_list;slot>=0;slot=w.pieces[slot].next {
+        slots[count]=slot
+        made+=int(w.piece_origins[slot].parent<0)
+        count+=1
     }
+    if original!=made || pieces<original || (pieces-original)%2!=0 || pieces>len(w.pieces) {return false}
+    if len(state)<size_of(Break_State_Header)+pieces*size_of(Break_State_Piece)+connections*size_of(Break_State_Bond) {return false}
     piece_record :: proc(state:[]u8,at:int) -> (record:Break_State_Piece) {
         mem.copy(&record,&state[size_of(Break_State_Header)+at*size_of(Break_State_Piece)],size_of(Break_State_Piece))
         return
@@ -158,8 +183,6 @@ breakable_state_apply :: proc(w:^World,h:Breakable_Handle,state:[]u8) -> bool {
         mem.copy(&record,&state[size_of(Break_State_Header)+pieces*size_of(Break_State_Piece)+at*size_of(Break_State_Bond)],size_of(Break_State_Bond))
         return
     }
-    s:=&w.breaking
-    w.breaking.tick=w.tick
     // The clusters are those it was made with, which keep their hulls, and come before what they hold.
     standing,clusters:=0,0
     for slot:=d.bond_list;slot>=0;slot=w.bonds[slot].next {standing+=int(.Cluster in w.bonds[slot].flags)}
@@ -172,17 +195,79 @@ breakable_state_apply :: proc(w:^World,h:Breakable_Handle,state:[]u8) -> bool {
         clusters+=int(is_cluster)
     }
     if clusters!=standing {return false}
-    defer break_settle(w)
-    slots:=s.source // the slot of the piece at each place of the list
-    count:=0
-    for slot:=d.piece_list;slot>=0;slot=w.pieces[slot].next {
-        slots[count]=slot
-        count+=1
+    for at in 0..<pieces {
+        record:=piece_record(state,at)
+        if record.flags-{.Anchor,.Debris,.Gone}!={} || record.cluster < -1 || int(record.cluster)>=clusters {return false}
+        if at<original || (at-original)%2!=0 {continue}
+        back:=piece_record(state,at+1)
+        if record.parent<0 || int(record.parent)>=at || back.parent!=record.parent || record.front==0 || back.front!=0 ||
+           !finite(record.offset,record.normal.x,record.normal.y,record.normal.z) {return false}
     }
-    if pieces>original {
-        // The cuts take the pieces out of their clusters.
-        break_bodies(w,d)
-        if !break_collide(w,index,false) {return false}
+    // The cuts it shares with the state, from the first, stay.
+    same_cut :: proc(w:^World,slots:[]i32,slot:i32,record:Break_State_Piece) -> bool {
+        origin:=w.piece_origins[slot]
+        return origin.parent==slots[record.parent] && origin.front==(record.front!=0) && origin.plane==record.normal && origin.offset==record.offset
+    }
+    keep:=original
+    for at:=original;at<min(pieces,count);at+=2 {
+        if !same_cut(w,slots,slots[at],piece_record(state,at)) || !same_cut(w,slots,slots[at+1],piece_record(state,at+1)) {break}
+        keep=at+2
+    }
+    if int(w.piece_count)-(count-keep)+(pieces-keep)>len(w.pieces) || int(w.bond_count)-int(d.bond_count)+connections>len(w.bonds) ||
+       pieces>count && !piece_hulls_available(w,pieces-count) {
+        w.stats.breakable_capacity_exhausted+=1
+        return false
+    }
+    // The bodies it has, by group, and each group of the state once with the body it keeps: the one of
+    // that group, of the same kind.
+    break_bodies(w,d)
+    ids,bodies:=s.ids,s.made_body
+    have:=0
+    for at in 0..<count {
+        body:=s.body[slots[at]]
+        group:=w.pieces[slots[at]].group
+        if body=={} || body==d.body {continue}
+        known:=false
+        for id in ids[:have] {known||=id==group}
+        if !known {ids[have],bodies[have]=group,body;have+=1}
+    }
+    wanted,to:=s.parent,s.from
+    groups,kept:=0,0
+    mark:=break_mark(s)
+    for at in 0..<pieces {
+        record:=piece_record(state,at)
+        if .Gone in record.flags || record.group==0 {continue}
+        known:=false
+        for group in wanted[:groups] {known||=group==i32(record.group)}
+        if known {continue}
+        wanted[groups],to[groups]=i32(record.group),{}
+        for id,k in ids[:have] {
+            if id!=record.group || body_is_debris(w,bodies[k])!=(.Debris in record.flags) || s.marks[body_slot(bodies[k])]==mark {continue}
+            to[groups]=bodies[k]
+            s.marks[body_slot(bodies[k])]=mark
+            kept+=1
+        }
+        groups+=1
+    }
+    if world_stats(w).bodies-(have-kept)+(groups-kept)>w.desc.body_capacity {
+        w.stats.breakable_capacity_exhausted+=1
+        s.refused[index]+={.Bodies}
+        return false
+    }
+    defer break_settle(w)
+    // The bodies of the groups it keeps no more go first, with their shapes, and so do the cuts it undoes.
+    for body in bodies[:have] {
+        if s.marks[body_slot(body)]!=mark {body_destroy(w,body)}
+    }
+    #reverse for slot in slots[keep:count] {
+        piece_detach(w,slot)
+        piece_release(w,slot)
+    }
+    if keep<count {
+        d.piece_tail,d.piece_count=slots[keep-1],i32(keep)
+        w.pieces[d.piece_tail].next=-1
+    }
+    if pieces>keep {
         slicer:geom.Slicer
         buffers:[3]geom.Mesh_Buffer
         geom.slicer_init(&slicer,w.allocator)
@@ -195,58 +280,42 @@ breakable_state_apply :: proc(w:^World,h:Breakable_Handle,state:[]u8) -> bool {
             delete(counts)
             delete(indices)
         }
-        for at:=original;at<pieces;at+=2 {
-            front,back:=piece_record(state,at),piece_record(state,at+1)
-            if front.parent<0 || int(front.parent)>=at || back.parent!=front.parent || front.front==0 || back.front!=0 {return false}
+        for at:=keep;at<pieces;at+=2 {
+            front:=piece_record(state,at)
             parent:=slots[front.parent]
-            if !shape_valid(w,w.pieces[parent].shape) {return false}
+            if hull_get(w,w.pieces[parent].hull)==nil {return false}
             halves:=piece_cut(w,index,parent,front.normal,front.offset,&slicer,&buffers,&counts,&indices) or_return
             piece_detach(w,parent)
-            w.pieces[parent].flags+={.Gone}
             for half,k in halves {
                 piece_append(w,d,half)
-                if !piece_attach(w,half,d.body) {return false}
                 slots[at+k]=half
             }
         }
     }
     // What is gone leaves, and every other piece goes to the body of its group.
-    ids,made:=s.ids,s.made_body
-    groups:=0
-    first:=d.body
+    xf:=body_transform(w,d.body)
     for at in 0..<pieces {
         record:=piece_record(state,at)
         slot:=slots[at]
         piece:=&w.pieces[slot]
-        piece.group=record.group
-        piece.expire=record.remaining==max(u64)?max(u64):w.breaking.tick+min(record.remaining,max(u64)-w.breaking.tick)
-        if .Gone in record.flags {
-            s.body[slot]={}
-            piece.flags+=record.flags&{.Gone,.Debris}
-            continue
-        }
-        if !shape_valid(w,piece.shape) {return false}
-        s.body[slot]=first
-        if record.group==0 {continue}
-        to:Body_Handle
-        for id,k in ids[:groups] {
-            if id==record.group {to=made[k]}
-        }
-        if to=={} {
-            xf:=body_transform(w,d.body)
-            desc:=BODY_DESC_DEFAULT
-            desc.gravity_scale=d.gravity_scale
-            desc.position,desc.rotation,desc.user_data=xf.p,xf.q,d.user_data
-            to=body_create(w,desc)
-            if to=={} {
-                w.stats.breakable_capacity_exhausted+=1
-                s.refused[index]+={.Bodies}
-                return false
+        piece.group,piece.flags=record.group,record.flags
+        piece.expire=record.remaining==max(u64)?max(u64):w.tick+min(record.remaining,max(u64)-w.tick)
+        s.body[slot]={}
+        if .Gone in record.flags {continue}
+        if hull_get(w,piece.hull)==nil {return false}
+        s.body[slot]=d.body
+        for group,k in wanted[:groups] {
+            if group!=i32(record.group) {continue}
+            if to[k]=={} {
+                if to[k]=body_create(w,break_body_desc(d,xf,.Debris in record.flags));to[k]=={} {
+                    w.stats.breakable_capacity_exhausted+=1
+                    s.refused[index]+={.Bodies}
+                    return false
+                }
             }
-            ids[groups],made[groups]=record.group,to
-            groups+=1
+            s.body[slot]=to[k]
+            break
         }
-        s.body[slot]=to
     }
     phantoms:=s.cluster_body // the slot of the hull of each cluster, in order
     clusters=0
@@ -273,9 +342,124 @@ breakable_state_apply :: proc(w:^World,h:Breakable_Handle,state:[]u8) -> bool {
     }
     for at in 0..<pieces {
         record:=piece_record(state,at)
-        if record.cluster < -1 || int(record.cluster)>=clusters {return false}
         w.pieces[slots[at]].cluster=record.cluster>=0?i32(s.ids[record.cluster]):-1
     }
     d.revision=header.revision
+    d.version+=1
     return break_collide(w,index,true)
+}
+
+// The pose of every body of the breakable, the one it was created as first, written to `out`; returns
+// how many there are.
+breakable_poses :: proc(w:^World,h:Breakable_Handle,out:[]Breakable_Pose) -> int {
+    d,_:=breakable_read(w,h)
+    if d==nil {return 0}
+    s:=&w.breaking
+    mark:=break_mark(s)
+    s.marks[body_slot(d.body)]=mark
+    pose :: proc(w:^World,body:Body_Handle,group:u32,remaining:u32) -> Breakable_Pose {
+        xf:=body_transform(w,body)
+        return {rotation=xf.q,position=xf.p,group=group,linear=body_linear_velocity(w,body),angular=body_angular_velocity(w,body),remaining=remaining}
+    }
+    if len(out)>0 {out[0]=pose(w,d.body,0,max(u32))}
+    count:=1
+    for slot:=d.piece_list;slot>=0;slot=w.pieces[slot].next {
+        piece:=&w.pieces[slot]
+        body:=shape_body(w,piece.shape)
+        if body=={} || s.marks[body_slot(body)]==mark {continue}
+        s.marks[body_slot(body)]=mark
+        if count<len(out) {
+            remaining:=max(u32)
+            if piece.expire!=max(u64) {remaining=u32(min(u64(max(u32)-1),piece.expire>w.tick?piece.expire-w.tick:0))}
+            out[count]=pose(w,body,piece.group,remaining)
+        }
+        count+=1
+    }
+    return count
+}
+
+// Puts each body of the breakable where the pose of its group says, with its velocities, and the pieces
+// of a group that expires that many steps from their end; a body without a pose, or static, stays as it
+// is. hold keeps them there from now on: kinematic and at rest, taking no hits and not expiring, for the
+// next poses to move them, as a replay of a recording of the breakable does; let go, they are dynamic
+// again, with the velocities of these poses. False, with nothing changed, for a value that is not finite.
+breakable_poses_apply :: proc(w:^World,h:Breakable_Handle,poses:[]Breakable_Pose,hold:bool) -> bool {
+    d,_:=breakable_get(w,h)
+    if d==nil {return false}
+    for p in poses {
+        if !finite(p.position) || !finite(p.rotation) || !finite(p.linear,p.angular) {return false}
+    }
+    s:=&w.breaking
+    if hold!=(.Held in d.flags) {
+        mark:=break_mark(s)
+        if hold {d.flags+={.Held}}
+        for slot:=d.piece_list;slot>=0;slot=w.pieces[slot].next {
+            body:=shape_body(w,w.pieces[slot].shape)
+            if body=={} || s.marks[body_slot(body)]==mark {continue}
+            s.marks[body_slot(body)]=mark
+            if hold && body_type(w,body)==.Dynamic {
+                body_set_type(w,body,.Kinematic)
+                body_set_velocity(w,body,{},{})
+            } else if !hold && body_type(w,body)!=break_nature(w,d,body) {
+                body_set_type(w,body,.Dynamic)
+            }
+        }
+        if !hold {d.flags-={.Held}}
+    }
+    mark:=break_mark(s)
+    for slot:=d.piece_list;slot>=0;slot=w.pieces[slot].next {
+        piece:=&w.pieces[slot]
+        body:=shape_body(w,piece.shape)
+        if body=={} {continue}
+        at:=body_slot(body)
+        if s.marks[at]!=mark {
+            s.marks[at],s.keeper[at]=mark,-1
+            for p,k in poses {
+                if p.group==piece.group {s.keeper[at]=i32(k);break}
+            }
+            if k:=s.keeper[at];k>=0 && body_type(w,body)!=.Static {
+                p:=poses[k]
+                body_set_transform(w,body,p.position,p.rotation==0?QUAT_IDENTITY:p.rotation)
+                body_set_velocity(w,body,hold?Vec3{}:p.linear,hold?Vec3{}:p.angular)
+            }
+        }
+        if k:=s.keeper[at];k>=0 && piece.group!=0 && piece.expire!=max(u64) && poses[k].remaining!=max(u32) {
+            piece.expire=w.tick+u64(poses[k].remaining)
+        }
+    }
+    return true
+}
+
+// The poses between two lists of the poses of one breakable, at t from 0 (from) to 1 (to), into `out`: a
+// group in both goes between them, and one in only one of them is where that one says. Returns how many
+// there are.
+breakable_poses_blend :: proc(from,to:[]Breakable_Pose,t:f32,out:[]Breakable_Pose) -> int {
+    t:=t
+    if !(t>0) {t=0} else if t>1 {t=1}
+    count:=0
+    for b in to {
+        p:=b
+        for a in from {
+            if a.group!=b.group {continue}
+            p.position=a.position+(b.position-a.position)*t
+            p.rotation=math.quat_slerp(a.rotation==0?QUAT_IDENTITY:a.rotation,b.rotation==0?QUAT_IDENTITY:b.rotation,t)
+            p.linear,p.angular=a.linear+(b.linear-a.linear)*t,a.angular+(b.angular-a.angular)*t
+            if a.remaining==max(u32) || b.remaining==max(u32) {
+                p.remaining=t<0.5?a.remaining:b.remaining
+            } else {
+                p.remaining=u32(f64(a.remaining)+(f64(b.remaining)-f64(a.remaining))*f64(t)+0.5)
+            }
+            break
+        }
+        if count<len(out) {out[count]=p}
+        count+=1
+    }
+    for a in from {
+        alone:=true
+        for b in to {alone&&=a.group!=b.group}
+        if !alone {continue}
+        if count<len(out) {out[count]=a}
+        count+=1
+    }
+    return count
 }

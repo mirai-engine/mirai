@@ -71,6 +71,8 @@ destruct_step :: proc(
     waiting:=core.take(&requests.waiting)
     replays:=core.take(&requests.replays)
     states_asked:=core.take(&requests.states)
+    poses_asked:=core.take(&requests.poses)
+    pose_values:=core.take(&requests.pose_values)
     // A simulation that replaced the one the cache was made for holds the destructibles as they were there.
     replaced:=physics.simulation_replaced(state,&cache.epoch)
     if replaced {cache_reset(assets,job_system,cache)}
@@ -111,14 +113,14 @@ destruct_step :: proc(
         if st.waiting || !st.failed && !physics.breakable_valid(c.view,st.handle) {reconcile(&c,states.entities[row],false)}
     }
     events_apply(&c,waiting,pending,&requests.waiting)
-    replays_apply(&c,states_asked,replays)
+    replays_apply(&c,states_asked,poses_asked,pose_values,replays)
     for row in 0..<core.count(states) {
         e:=states.entities[row]
         st:=states.values[row]
         shortfall_report(&c,e,st.handle)
         entry:=entry_find(cache,e)
         if entry==nil || entry.prepared==nil || prepared_pending(entry.prepared) || entry.prepared.error!=.None || !physics.breakable_valid(c.view,st.handle) {continue}
-        if revision:=physics.breakable_revision(c.view,st.handle);revision!=st.revision || !entry.mirrored {mirror(&c,e,core.edit_at(states,row),entry,revision)}
+        if revision:=physics.breakable_revision(c.view,st.handle);revision!=st.revision || !entry.mirrored || entry.restated {mirror(&c,e,core.edit_at(states,row),entry,revision)}
     }
 }
 
@@ -399,7 +401,7 @@ mirror :: proc(c:^Ctx,e:core.Entity,st:^Destructible_State,entry:^Entry,revision
         core.push(&c.events.fractured,Fracture{entity=e,kind=entry.event.kind,point=entry.event.point,impulse=entry.event.vector,pieces=detached-st.detached})
     }
     st.revision,st.broken,st.detached=revision,revision!=0,detached
-    entry.mirrored=true
+    entry.mirrored,entry.restated=true,false
 }
 
 // The entity and the mesh of one body of a broken destructible.

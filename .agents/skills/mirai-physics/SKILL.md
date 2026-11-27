@@ -41,8 +41,8 @@ tables and is the only package that imports it. The game and the other plugins, 
   plugin) →
   [engine.md#locomotion](references/engine.md#locomotion); at normal speed in slow motion
   (`core.Own_Pace`) → [engine.md#own-pace](references/engine.md#own-pace)
-- Breakable bodies of the solver (pieces, bonds, clusters, damage, cut, state, copy) and their
-  facade `physics.breakable_*` → [with the world](references/destruction.md#with-the-world),
+- Breakable bodies of the solver (pieces, bonds, clusters, damage, cut, state, poses, copy) and
+  their facade `physics.breakable_*` → [with the world](references/destruction.md#with-the-world),
   [construction](references/destruction.md#construction),
   [damage and fields](references/destruction.md#damage-and-fields),
   [removal](references/destruction.md#removal), [cut](references/destruction.md#cut) and
@@ -59,8 +59,8 @@ tables and is the only package that imports it. The game and the other plugins, 
   [physics.md#contact-rules](references/physics.md#contact-rules)
 - A body in two places and shapes cut by boxes (`Body_Twin`, `Collider_Cuts`, the portals) →
   [physics.md#twins-and-cuts](references/physics.md#twins-and-cuts)
-- `Destructible` in the data world, requests, reflection, networking →
-  [components](references/engine-destruct.md#components),
+- `Destructible` in the data world, requests, recording and playback (time rewind), reflection,
+  networking → [components](references/engine-destruct.md#components),
   [configuration and setup](references/engine-destruct.md#configuration-and-setup),
   [requests and movement](references/engine-destruct.md#requests-and-movement),
   [reflection, queries and events](references/engine-destruct.md#reflection-queries-and-events)

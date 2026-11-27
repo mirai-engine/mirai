@@ -178,19 +178,42 @@ Events:
 State without geometry (`breakable_state_size/write/apply`):
 
 - It includes cuts, group, flags, cluster and remaining life of each piece, and area, strain,
-  strength and parent of bonds and clusters. Debris is written as removed.
-- The receiver creates the same intact source, with the same clusters and their hulls. Applying the
-  state repeats the cuts, rebuilds bodies at rest and restores levels; the sender supplies the poses
-  afterwards.
+  strength and parent of bonds and clusters. Debris is written as removed, since it is of each
+  world, unless `debris` asks for it, as a recording of the same world does.
+- The receiver creates the same source, with the same clusters and their hulls. Applying the state
+  works in place, broken or not: the cuts both share stay, the others are undone and the missing
+  ones repeated; the body of a group both have stays with its pose and velocity, bodies of groups
+  the state lacks go, and a new group starts in the frame of the breakable at rest. The writer
+  supplies the poses afterwards. Only repeating a cut allocates.
+- `breakable_state_version` changes with every change of what it writes except passing time
+  (strain, breakage, cut, removal, expiry, an applied state): a recording writes the state again
+  only when it changes.
 - A failure can leave the destination partially changed and requires destroying it.
+
+Poses and playback (`breakable_poses/poses_apply/poses_blend`):
+
+- `Breakable_Pose` is the pose, velocities and `remaining` steps of one body, named by its
+  `group`. `breakable_poses` lists every body, the one it was created as first.
+- `breakable_poses_apply` places each body by group (a static one stays) and sets the remaining
+  life of a group that expires (`max` leaves it as it is); a body without a pose stays as it is.
+  Hand-made poses start from `breakable_poses`: a zero `remaining` expires the group at once.
+- `hold` keeps it held until a call without it: its dynamic bodies, and those it makes meanwhile,
+  are kinematic at rest, take no hits and do not expire, so the next poses move them. Let go,
+  they are dynamic again with the velocities of the poses; a root made kinematic stays so. The
+  hold travels in copies of the state.
+- `breakable_poses_blend` gives the poses between two lists at `t` by group (slerp, `remaining`
+  interpolated): a recording kept at a lower rate plays back at every step.
+- A playback of a recording applies each state where it changed and the poses of every step,
+  held, and lets go with the last poses. Going back does not allocate; going forward through a
+  cut repeats it.
 
 Copy and memory:
 
 - The hull slot of a cluster is a `Piece` outside the list, named by its cluster record. Hulls are
   geometry of the world, not state: a snapshot is valid while the slot is not reused with other
   geometry.
-- Construction, cutting and applying state allocate. Damage, fields, hierarchy, regrouping and
-  removal use reserved scratch.
+- Construction, cutting and repeating a cut of an applied state allocate. Damage, fields,
+  hierarchy, regrouping, removal, poses and the rest of applying a state use reserved scratch.
 - The [portable cache](../../mirai-plugins/references/physics-cache.md) stores geometry and poses,
   allows reverse playback without resimulating and does not depend on those slots.
 

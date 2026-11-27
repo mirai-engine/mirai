@@ -97,6 +97,20 @@ breaks comes back as events of the step like the impacts.
   network can express it in its local frame.
 - The passive client discards requests and contact damage, except `Remove` of its debris.
 
+Recording and playback (a time rewind of the game):
+
+- The game records, after `destruct_step`, `state_write(view, e, out, debris=true)` each time
+  `state_version` changes and `poses(view, e, out)` at its rate; it keeps the buffers.
+- It plays back with `state_replay` where the state changes and `poses_replay(..., hold=true)` every
+  tick (`poses_blend` between two recorded ticks); a last `poses_replay` without hold lets the
+  bodies go with their velocities. Both apply in `destruct_step` of the tick asked, states first:
+  physics writes the new poses of existing groups in the next tick.
+- A state applies in place: groups that stay keep their entity, `Id`, proxy and mesh; a group that
+  comes back is made where its pose is; the intact state drops the groups and draws the original
+  mesh. A replay applies no fracture event. An empty state makes a broken destructible again in
+  the next tick; a playback that goes back to as created replays the state recorded then.
+- Poses with a value that is not finite are a `destruct.replay_poses` problem and change nothing.
+
 Proxies and movement:
 
 - Root and groups are registered as proxies also offline: they accept `Body_Requests`, manipulation
@@ -111,7 +125,8 @@ Proxies and movement:
 
 ## Reflection, queries and events
 
-- A different physical revision redoes the reflection from the pieces of the breakable. Intact, the
+- A different physical revision, or an applied state, redoes the reflection from the pieces of the
+  breakable. Intact, the
   original mesh is drawn; broken, `Drawn_Elsewhere` is added and a mesh generated per body with the
   material slots of its pieces. Group zero hangs from the root with inverse scale; detached ones are
   world roots. Each removal drops the proxy before destroying its entity and frees its mesh.
@@ -164,7 +179,8 @@ rollback.
 - A destructible without Id cannot pair its events between ends.
 - The journal lives in `Destruct_Net`, one per world like the session.
 - The server offers the state of what is broken to each connection that enters its world
-  (`Entered`: on arrival and after each scene change, a loaded save between them).
+  (`Entered`: on arrival and after each scene change, a loaded save between them). A broken client
+  takes it in place in the tick it arrives, keeping the groups both have.
 - Clients keep `removal_lifetime` to query their dates, internally disable their non-cosmetic
   automatic removal and follow the server's `Remove`.
 - `destruct_net_receive` hands what arrived to the journal; `destruct_net_follow` (on the client)

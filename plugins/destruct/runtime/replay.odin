@@ -32,10 +32,11 @@ event_note :: proc(c:^Ctx,e:core.Entity,event:physics.Break_Event) {
     }})
 }
 
-// The states, then the events, other ends recorded, in the order asked. A
-// destructible whose replay is not done takes no more replays in the tick.
+// The states, the poses, then the events, other ends or other ticks recorded,
+// in the order asked. A destructible whose replay is not done takes no more
+// replays in the tick.
 @(private)
-replays_apply :: proc(c:^Ctx,states:[]State_Replay,replays:[]Replay) {
+replays_apply :: proc(c:^Ctx,states:[]State_Replay,poses:[]Pose_Replay,pose_values:[]Group_Pose,replays:[]Replay) {
     from:=len(c.events.replayed.items) // those of this tick come after
     for asked in states {
         done,failed:bool
@@ -45,6 +46,13 @@ replays_apply :: proc(c:^Ctx,states:[]State_Replay,replays:[]Replay) {
             if done {check=physics.breakable_check(c.view,st.handle)}
         }
         core.push(&c.events.replayed,Replayed{entity=asked.entity,tag=asked.tag,state=true,done=done,failed=failed,check=check})
+    }
+    for asked in poses {
+        st,has:=core.get(c.states,asked.entity)
+        if !has || replay_stopped(c,asked.entity,from) || int(asked.first)+int(asked.count)>len(pose_values) {continue}
+        if !physics.breakable_poses_apply(c.state,st.handle,pose_values[asked.first:][:asked.count],asked.hold) && physics.breakable_valid(c.view,st.handle) {
+            core.report(c.problems,asked.entity,"destruct.replay_poses","poses of this Destructible were not applied: a position, rotation or velocity is not finite; replay poses written by destruct.poses")
+        }
     }
     for asked in replays {
         if replay_stopped(c,asked.entity,from) {continue}
@@ -95,27 +103,29 @@ event_replay :: proc(c:^Ctx,e:core.Entity,st:^Destructible_State,entry:^Entry,re
     return true
 }
 
-// Makes the destructible what the other end said it became. It is made again
-// first, since a state applies to a destructible that is as created; the tick
-// that follows makes it and the state is asked again: not done while that
-// waits. failed: it does not apply here.
+// Makes the destructible what the other end, or another tick, said it became,
+// in place. Empty data makes a broken one again: the tick that follows makes
+// it and the state is asked again, not done while that waits. failed: it does
+// not apply here.
 @(private)
 state_apply :: proc(c:^Ctx,e:core.Entity,st:^Destructible_State,asked:State_Replay) -> (done,failed:bool) {
     remake :: proc(c:^Ctx,e:core.Entity,st:^Destructible_State) {
         physics.breakable_destroy(c.state,st.handle)
         core.add(c.states,e,Destructible_State{})
     }
-    if physics.breakable_revision(c.view,st.handle)!=0 || st.sequence!=0 {
+    if len(asked.data)==0 {
+        if physics.breakable_revision(c.view,st.handle)==0 && st.sequence==0 {return true,false}
         remake(c,e,st)
         return
     }
-    if len(asked.data)>0 && !physics.breakable_state_apply(c.state,st.handle,asked.data) {
+    if !physics.breakable_state_apply(c.state,st.handle,asked.data) {
         // Half applied: whole again, and without this state.
         core.report(c.problems,e,"destruct.replay_state","a state of this Destructible recorded on another end did not apply, so it is made whole again; if it repeats, the two ends fracture different meshes: give both the same assets")
         remake(c,e,st)
         return false,true
     }
-    st.sequence=len(asked.data)>0?1:0
+    st.sequence=1
+    if entry:=entry_find(c.cache,e);entry!=nil {entry.restated=true}
     return true,false
 }
 

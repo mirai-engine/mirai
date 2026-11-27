@@ -321,3 +321,45 @@ a_scene_that_replaces_the_world_forgets_its_logs_and_the_server_sends_what_is_br
     testing.expect_value(t,core.at(&c.states,core.row_of(&c.states,again)).sequence,u32(1))
     testing.expect_value(t,physics.breakable_check(core.ref(&c.physics),core.at(&c.states,core.row_of(&c.states,again)).handle),physics.breakable_check(core.ref(&a.physics),core.at(&a.states,core.row_of(&a.states,server)).handle))
 }
+
+// A broken client whose pieces stopped matching takes the state of the
+// server in place, in the tick it arrives: the group both have keeps its
+// entity, and with it its Id and its binding on the network.
+@(test)
+a_broken_client_that_differs_takes_the_state_of_the_server_in_place :: proc(t:^testing.T) {
+    a,b:End
+    defer end_destroy(&a)
+    defer end_destroy(&b)
+    server,client,ok:=end_pair(t,&a,&b,"differs")
+    if !ok {return}
+    rewinds:multiplayer.Net_Rewinds
+    defer delete(rewinds.queue.items)
+    destruct_net_receive(end_received(&a,&b),core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root),&b.problems)
+    end_tick(&b)
+    kept:core.Entity
+    for row in 0..<core.count(&b.groups) {
+        if group:=b.groups.values[row];group.owner==client && group.group!=0 {kept=b.groups.entities[row]}
+    }
+    if !testing.expect(t,kept!=core.NONE,"the client broke alike") {return}
+    id:=core.id_of(&b.ids,kept)
+    // The client cuts what the server did not.
+    handle:=core.at(&b.states,core.row_of(&b.states,client)).handle
+    _,cut,_:=physics.break_apply(&b.physics,{breakable=handle,piece=-1,region={point={-0.51,0,0}},vector={0,1,0},kind=.Slice})
+    end_tick(&b)
+    server_handle:=core.at(&a.states,core.row_of(&a.states,server)).handle
+    if !testing.expect(t,cut && physics.breakable_check(core.ref(&b.physics),handle)!=physics.breakable_check(core.ref(&a.physics),server_handle)) {return}
+    // The server gives it its state, as to a connection that enters its world.
+    outbox_forget(&a)
+    core.push(&a.connections.events,multiplayer.Connection_Event{kind=.Entered,connection=multiplayer.Connection(7)})
+    end_tick(&a)
+    clear(&a.connections.events.items)
+    destruct_net_receive(end_received(&a,&b),core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root),&b.problems)
+    end_tick(&b)
+    replayed:=false
+    for item in b.events.replayed.items {
+        if item.state {replayed=true;testing.expect(t,item.done,"the state applies in the tick it arrives")}
+    }
+    testing.expect(t,replayed)
+    testing.expect_value(t,physics.breakable_check(core.ref(&b.physics),core.at(&b.states,core.row_of(&b.states,client)).handle),physics.breakable_check(core.ref(&a.physics),server_handle))
+    testing.expect(t,core.alive(&b.entities,kept) && core.id_of(&b.ids,kept)==id,"the group both have keeps its entity")
+}

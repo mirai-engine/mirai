@@ -23,6 +23,7 @@ Piece_Info :: phys.Piece_Info
 Piece_Flags :: phys.Piece_Flags
 Piece_Flag :: phys.Piece_Flag
 Destruct_Cluster_Info :: phys.Cluster_Info
+Group_Pose :: phys.Breakable_Pose
 
 // The mesh must be closed. Its pieces replace the Collider of the entity, of
 // any kind, and take its surface and collision (none: COLLIDER_DEFAULT); they
@@ -117,7 +118,7 @@ Replay :: struct {
     tag:u64,
 }
 
-// The state another end had of a destructible (physics.breakable_state_write);
+// The state another end, or another tick, had of a destructible (state_write);
 // empty: as created. data is read in the tick it is asked.
 State_Replay :: struct {
     entity:core.Entity,
@@ -125,22 +126,45 @@ State_Replay :: struct {
     tag:u64,
 }
 
-// What damage and slice ask for, and the replays of what other ends
-// recorded; this library takes them after the step of the tick.
+// Poses of the bodies of a destructible: [first,first+count) of
+// Destruct_Requests.pose_values.
+Pose_Replay :: struct {
+    entity:core.Entity,
+    first,count:u32,
+    hold:bool,
+}
+
+// What damage and slice ask for, and the replays of what other ends or other
+// ticks recorded; this library takes them after the step of the tick.
 @(storage,queue)
 Destruct_Requests :: struct {
     queue:core.Queue(Destruct_Request),
     waiting:core.Queue(Destruct_Request),
     replays:core.Queue(Replay),
     states:core.Queue(State_Replay),
+    poses:core.Queue(Pose_Replay),
+    pose_values:core.Queue(Group_Pose),
 }
 
 replay :: proc(requests:^Destruct_Requests,e:core.Entity,record:Fracture_Record,check:u32=0,tag:u64=0) {
     core.push(&requests.replays,Replay{entity=e,record=record,check=check,tag=tag})
 }
 
+// Makes a destructible what a state written of it, or of its equal on another
+// end, says, in place: groups it keeps stay where they are, and Destructible_Group
+// entities with them. Empty data makes it again as created, in the next tick.
 state_replay :: proc(requests:^Destruct_Requests,e:core.Entity,data:[]u8,tag:u64=0) {
     core.push(&requests.states,State_Replay{entity=e,data=data,tag=tag})
+}
+
+// Puts the bodies of a destructible where poses (written by poses, blended by
+// poses_blend) say, by group, after the states asked in the tick: what plays a
+// recording of it back. hold keeps them there, kinematic and at rest, taking no
+// hits and not expiring, for the poses of the next ticks to move; a replay
+// without hold lets them go with the velocities of its poses.
+poses_replay :: proc(requests:^Destruct_Requests,e:core.Entity,poses:[]Group_Pose,hold:=false) {
+    core.push(&requests.poses,Pose_Replay{entity=e,first=u32(len(requests.pose_values.items)),count=u32(len(poses)),hold=hold})
+    for pose in poses {core.push(&requests.pose_values,pose)}
 }
 
 // Damages a destructible around a world point: every connection within the
