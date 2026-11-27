@@ -27,7 +27,7 @@ import "mirai:project"
 // chunks and bytes says how far it is.
 
 KAI_TEXT :: 256 // bytes of a text the editor keeps of the agent
-KAI_READ_EVERY :: 250*time.Millisecond // between two reads of what the agent moved: a pull moves it at every batch
+KAI_READ_EVERY :: 15*time.Second // between background re-reads when the agent moves; local writes and Refresh read immediately
 KAI_REACH_WAIT :: 1500*time.Millisecond // an invite waits for the router this long while it has not answered
 
 // What the Kai tab shows: the working copy and the log, or the team.
@@ -44,8 +44,9 @@ Kai_Line :: struct {name,rest:string}
 
 // What a view shows of an org, its texts made when it is read.
 Kai_Org_Lines :: struct {
-    title:string, // the org's name, in capitals
-    role:string,  // "You are admin."
+    title:string,  // the org's name, in capitals
+    role:string,   // "You are admin."
+    server:string, // "Server synced · host:port" when attached, "" otherwise
     members:[]Kai_Line,
     repos:[]Kai_Line,
 }
@@ -56,6 +57,7 @@ Kai_Team_View :: struct {
     machine:string,        // "name (device)" of this machine
     reach:string,          // how other networks reach this machine, in a few words
     online:bool,           // they reach it at the router's address
+    default_server:string, // central server host:port available for 1-click attach, "" when disabled
     peer_lines:[]Kai_Line,
     publish:string,        // the Changes view's line over Publish to main
     orgs:[]ka.Org_View,
@@ -96,10 +98,10 @@ Kai_Fields :: struct {
 Kai_Clone_Stage :: enum u8 {None,Waiting,Done,Failed}
 
 // What the agent does on a thread of its own, so the frames go on: a join,
-// which reaches another machine and waits for its record, or a web sign-in,
-// which reaches a server. Its texts are copies, the password zeroed once it
-// ends.
-Kai_Task_Kind :: enum u8 {Join,Web_Login}
+// which reaches another machine and waits for its record, a web sign-in, or
+// attaching an org to a central server. Its texts are copies, the password
+// zeroed once it ends.
+Kai_Task_Kind :: enum u8 {Join,Web_Login,Attach}
 
 Kai_Task :: struct {
     kind:Kai_Task_Kind,
@@ -107,6 +109,7 @@ Kai_Task :: struct {
     thread:^thread.Thread,
     ended:bool,                   // atomic: its thread returned; what follows it wrote before
     failed:bool,
+    silent:bool,                  // auto-attach: do not toast if offline
     agent:^vcs.Agent,
     text:[1024]u8,                // the invite, or the server's host:port
     text_length:int,
@@ -114,7 +117,7 @@ Kai_Task :: struct {
     name_length:int,
     password:[256]u8,
     password_length:int,
-    org:vcs.Org_Id,               // the join's
+    org:vcs.Org_Id,               // the join's or attach's
     why:[KAI_TEXT]u8,
     why_length:int,
 }
@@ -150,11 +153,13 @@ Kai_Team :: struct {
     fields:Kai_Fields,
     clone:Kai_Clone,
     tasks:[Kai_Task_Kind]Kai_Task,
-    invite_org:vcs.Org_Id, // whose invite was offered last
-    invite_asked:bool,     // the Team view asked for the next invite: it goes to the clipboard
-    invite_copied:bool,    // the invite offered last is on the clipboard
-    invite_local:bool,     // it carries no address another network reaches
-    publish_org:int,       // of view.orgs, where a first publish goes
+    invite_org:vcs.Org_Id,   // whose invite was offered last
+    invite_asked:bool,       // the Team view asked for the next invite: it goes to the clipboard
+    invite_copied:bool,      // the invite offered last was copied to the clipboard
+    invite_copied_at:time.Tick, // when it was copied, to show the green check briefly
+    invite_local:bool,       // it carries no address another network reaches
+    invite_via_server:bool,  // it targets the org's central server (works while admin is off)
+    publish_org:int,         // of view.orgs, where a first publish goes
     scroll:[2]f32,
     width:f32,
 }
@@ -216,9 +221,21 @@ kai_agent_start :: proc(s:^Session) -> string {
     return ""
 }
 
-// Between frames: what the agent changed is read again, at most every
-// KAI_READ_EVERY, and a pull that waits writes its files once the agent says
-// its repository came whole.
+// The central server host:port to attach new orgs to; "" when disabled.
+kai_default_server :: proc(s:^Session,allocator:=context.temp_allocator) -> string {
+    if s.kai!=nil {
+        if s.kai.server!="" {
+            copied,e:=strings.clone(s.kai.server,allocator)
+            return e==nil?copied:""
+        }
+        if s.kai.mesh_loopback {return ""}
+    }
+    return vcs.default_server(allocator)
+}
+
+// Between frames: what the agent changed is read again at most every
+// KAI_READ_EVERY (15 s). Active clones check whole directly without rebuilding
+// the views until the pull completes.
 kai_team_poll :: proc(s:^Session) {
     if s.kai==nil {return}
     t:=s.kai.team
@@ -239,6 +256,23 @@ kai_team_poll :: proc(s:^Session) {
                 notify(s,fmt.tprintf("Kai: %s",why))
             }
         case .Web_Login: notify(s,x.stage==.Done?"Kai: the web sign-in is set":fmt.tprintf("Kai: %s",why))
+        case .Attach:
+            if x.stage==.Done {
+                kai_team_wrote(s)
+                if !x.silent {notify(s,"Kai: org synced to server")}
+            } else if !x.silent {
+                notify(s,fmt.tprintf("Kai: %s",why))
+            }
+        }
+    }
+    if c:=&t.clone;c.stage==.Waiting {
+        if pull,ok:=vcs.agent_pull_of(&t.agent,c.org,c.repo);ok && pull.whole {
+            kai_clone_step(s)
+            t.generation,t.read_at=vcs.agent_generation(&t.agent),time.tick_now()
+            kai_team_read(s)
+            kai_read(s)
+            if p:=s.projects;p!=nil && p.shown {projects_rows_read(s)}
+            return
         }
     }
     generation:=vcs.agent_generation(&t.agent)
@@ -254,14 +288,20 @@ kai_team_poll :: proc(s:^Session) {
 }
 
 // Starts a task of the agent: "" or why it does not.
-kai_task_start :: proc(s:^Session,kind:Kai_Task_Kind,text:string,name:string="",password:string="") -> string {
+kai_task_start :: proc(s:^Session,kind:Kai_Task_Kind,text:string,name:string="",password:string="",org:vcs.Org_Id={},silent:=false) -> string {
     t:=s.kai.team
     x:=&t.tasks[kind]
-    if x.stage==.Waiting {return kind==.Join?"A join runs: wait for it":"A web sign-in runs: wait for it"}
+    if x.stage==.Waiting {
+        switch kind {
+        case .Join: return "A join runs: wait for it"
+        case .Web_Login: return "A web sign-in runs: wait for it"
+        case .Attach: return "Syncing an org to the server already: wait for it"
+        }
+    }
     if len(text)>len(x.text) || len(name)>len(x.name) || len(password)>len(x.password) {return "That is longer than Kai takes"}
     if message:=kai_agent_start(s);message!="" {return message}
     kai_task_end(x)
-    x^={kind=kind,stage=.Waiting,agent=&t.agent}
+    x^={kind=kind,stage=.Waiting,silent=silent,agent=&t.agent,org=org}
     x.text_length=copy(x.text[:],text)
     x.name_length=copy(x.name[:],name)
     x.password_length=copy(x.password[:],password)
@@ -273,6 +313,7 @@ kai_task_start :: proc(s:^Session,kind:Kai_Task_Kind,text:string,name:string="",
         switch x.kind {
         case .Join: x.org,e=vcs.agent_join(x.agent,string(x.text[:x.text_length]))
         case .Web_Login: e=vcs.agent_web_login(x.agent,string(x.text[:x.text_length]),string(x.name[:x.name_length]),string(x.password[:x.password_length]))
+        case .Attach: e=vcs.agent_server_attach(x.agent,x.org,string(x.text[:x.text_length]))
         }
         crypto.zero_explicit(&x.password,size_of(x.password))
         x.failed=e!=.None
@@ -285,6 +326,22 @@ kai_task_start :: proc(s:^Session,kind:Kai_Task_Kind,text:string,name:string="",
         return "Kai could not start a thread"
     }
     return ""
+}
+
+// Explicit Refresh: wakes the agent to sync and immediately re-reads the team,
+// workspace, and project rows.
+kai_team_refresh :: proc(s:^Session) {
+    if s.kai!=nil {
+        kai_team_open(s)
+        if t:=s.kai.team;t!=nil {
+            if t.running {vcs.agent_sync_now(&t.agent)}
+            t.generation=t.running?vcs.agent_generation(&t.agent):0
+            t.read_at=time.tick_now()
+            kai_team_read(s)
+        }
+        kai_read(s)
+    }
+    if p:=s.projects;p!=nil && p.shown {projects_rows_read(s)}
 }
 
 // Waits for a task's thread, which the agent's stop or its own bounds end.
@@ -326,11 +383,13 @@ kai_team_read :: proc(s:^Session) {
     }
     v.orgs,v.repositories=orgs[:],repositories[:]
     v.machine=fmt.aprintf("%s (%s)",t.team.name,t.team.device,allocator=a)
+    v.default_server=kai_default_server(s,a)
     v.lines=make([]Kai_Org_Lines,len(orgs),a)
     for &o,i in orgs {
         x:=&v.lines[i]
         x.title=strings.to_upper(o.name,a)
         x.role=fmt.aprintf("You are %s.",o.role,allocator=a)
+        if o.server!="" {x.server=fmt.aprintf("Server synced · %s",o.server,allocator=a)}
         x.members=make([]Kai_Line,len(o.members),a)
         for m,k in o.members {
             role:=m.role=="node"?"server":m.role
@@ -453,8 +512,12 @@ kai_clone_cancel :: proc(s:^Session) {
     c^={}
 }
 
-// How far the pull is: chunks and bytes the agent took for its repository.
+// How far the pull is: chunks and bytes the agent took for its repository,
+// read directly from the agent without rebuilding the team view.
 kai_clone_progress :: proc(t:^Kai_Team) -> (chunks:int,bytes:i64) {
+    if t.running {
+        if p,ok:=vcs.agent_pull_of(&t.agent,t.clone.org,t.clone.repo);ok {return p.chunks,p.bytes}
+    }
     for p in t.view.pulls {
         if p.org==t.clone.org && p.repo==t.clone.repo {return p.chunks,p.bytes}
     }

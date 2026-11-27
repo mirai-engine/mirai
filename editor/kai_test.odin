@@ -497,10 +497,14 @@ editor_kai_publishes_to_main_and_a_launcher_pulls_it :: proc(t:^testing.T) {
 }
 
 // The Team view draws what was read, and reads again only when the agent
-// moved: a frame that changes nothing allocates nothing; its buttons ask for
-// kai.* methods, which run between frames.
+// moved (at most every KAI_READ_EVERY = 15s unless refreshed/written): a frame
+// that changes nothing allocates nothing; in-project Team shows only this
+// project's org (NEW ORG / JOIN AN ORG live in the Launcher only); invites use
+// a compact clipboard icon button; BOOKMARKS offers New branch with no move
+// arrow; LOG offers Checkout when an older commit expands, with no '+' icon.
 @(test)
 editor_kai_team_view_reads_only_when_the_agent_moves :: proc(t:^testing.T) {
+    testing.expect_value(t,KAI_READ_EVERY,15*time.Second)
     k:=new(Kai_Fixture);defer free(k)
     if !kai_fixture_init(t,k,"kai-team-panel") {return}
     defer kai_fixture_destroy(k)
@@ -534,10 +538,40 @@ editor_kai_team_view_reads_only_when_the_agent_moves :: proc(t:^testing.T) {
     generation:=team.generation
     kai_poll(s)
     testing.expect_value(t,team.generation,generation)
+
+    // Before the project is in an org: in-project Team hides NEW ORG, JOIN AN ORG and unrelated orgs.
+    kai_panel_still(t,s)
+    _,has_new_org:=ui.widget_rect(&ctx,ui.id(&ctx,"kai_org_new",0))
+    _,has_join:=ui.widget_rect(&ctx,ui.id(&ctx,"kai_join",0))
+    ui.id_push(&ctx,ui.id(&ctx,"org",0))
+    unlinked_invite_id:=ui.id(&ctx,"kai_invite",0)
+    ui.id_pop(&ctx)
+    _,has_unlinked_invite:=ui.widget_rect(&ctx,unlinked_invite_id)
+    testing.expect(t,!has_new_org && !has_join && !has_unlinked_invite,"in-project Team hides NEW ORG, JOIN AN ORG and unlinked orgs")
+    kai_panel_stable(t,s,"Team unlinked")
+
+    // Launcher Team view (launcher=true) DOES show NEW ORG, JOIN AN ORG and all orgs.
+    ui.frame_begin(&ctx,{size={900,900},pointer_absent=true})
+    if ui.box(&ctx,{width=ui.fixed(500),height=ui.fixed(860),direction=.Column,gap=4}) {kai_team_build(s,true)}
+    launcher_frame:=ui.frame_end(&ctx)
+    testing.expect(t,!launcher_frame.overflow && ctx.stats.layout_errors==0,"launcher Team lays out")
+    _,launcher_new_org:=ui.widget_rect(&ctx,ui.id(&ctx,"kai_org_new",0))
+    _,launcher_join:=ui.widget_rect(&ctx,ui.id(&ctx,"kai_join",0))
+    testing.expect(t,launcher_new_org && launcher_join,"launcher Team shows NEW ORG and JOIN AN ORG")
+
+    // Link/publish the project into "studio": in-project Team now shows "studio" (still no NEW ORG / JOIN AN ORG).
+    kai_write(t,s,fmt.tprintf("%s/a.txt",k.root),transmute([]u8)string("one\n"))
+    pub:=Api_Kai_Publish_Params{description="first",org="studio",visibility="org"}
+    call,_:=kai_call(s,api_kai_publish,&pub,Api_Kai_Published)
+    if !kai_ok(t,call,"publish") {return}
+    kai_panel_still(t,s)
+    _,has_new_org=ui.widget_rect(&ctx,ui.id(&ctx,"kai_org_new",0))
+    _,has_join=ui.widget_rect(&ctx,ui.id(&ctx,"kai_join",0))
+    testing.expect(t,!has_new_org && !has_join,"linked in-project Team still hides NEW ORG and JOIN AN ORG")
     kai_panel_stable(t,s,"Team")
+
     // An admin invites writers and readers, never a server; the invite shows
-    // in a read-only field with Copy on its row, and one no other network
-    // reaches says so.
+    // in a read-only field with a compact clipboard icon button beside it.
     ui.id_push(&ctx,ui.id(&ctx,"org",0))
     make_invite,server,invite_text,invite_copy:=ui.id(&ctx,"kai_invite",0),ui.id(&ctx,"kai_invite_role",2),ui.id(&ctx,"kai_invite_text"),ui.id(&ctx,"kai_invite_copy")
     ui.id_pop(&ctx)
@@ -547,13 +581,13 @@ editor_kai_team_view_reads_only_when_the_agent_moves :: proc(t:^testing.T) {
     method,params=kai_panel_asked(s)
     testing.expectf(t,method=="kai.invite" && team.invite_asked,"Make invite asks kai.invite: %s %s",method,params)
     x:=Api_Kai_Invite_Params{org="studio",role="writer"}
-    call,_:=kai_call(s,api_kai_invite,&x,Api_Kai_Invite)
+    call,_=kai_call(s,api_kai_invite,&x,Api_Kai_Invite)
     if !kai_ok(t,call,"invite") {return}
     testing.expect(t,!team.invite_asked && team.invite_local && team.invite_length>0 && !team.invite_copied,"a loopback agent's invite reaches no other network")
     kai_panel_still(t,s);kai_panel_still(t,s)
     field,has_field:=ui.widget_rect(&ctx,invite_text)
     copied,has_copy:=ui.widget_rect(&ctx,invite_copy)
-    testing.expectf(t,has_field && has_copy && abs(field.y-copied.y)<1 && field.x+field.w<=copied.x && copied.x+copied.w<=KAI_TAB+0.5,"the invite and Copy share a row inside the tab: %v %v",field,copied)
+    testing.expectf(t,has_field && has_copy && abs(field.y-copied.y)<1 && abs(copied.w-copied.h)<1 && field.x+field.w<=copied.x && copied.x+copied.w<=KAI_TAB+0.5,"the invite and compact clipboard icon share a row inside the tab: %v %v",field,copied)
     invite:=strings.clone(string(team.invite[:team.invite_length]),context.temp_allocator)
     if !kai_panel_click(t,s,invite_text) {return}
     typing:=ui.Input{size={900,900},pointer_absent=true,keys_pressed={.Backspace},keys_repeated={.Backspace}}
@@ -562,8 +596,42 @@ editor_kai_team_view_reads_only_when_the_agent_moves :: proc(t:^testing.T) {
     kai_panel_still(t,s,{size={900,900},pointer_absent=true,keys_pressed={.Enter}})
     testing.expect_value(t,string(team.invite[:team.invite_length]),invite)
     kai_panel_stable(t,s,"Team with an invite")
+
+    // Changes tab: Up to date button disabled when clean + @- == main, no move arrow on shared bookmarks,
+    // no '+' on LOG rows, Checkout appears when an older commit expands, and New branch works in BOOKMARKS.
     s.kai.state.tab=.Changes
+    kai_panel_still(t,s)
     kai_panel_stable(t,s,"Changes")
+    api_state(s).commands.asked_count=0
+    kai_panel_click(t,s,ui.id(&ctx,"kai_publish",0))
+    testing.expect_value(t,api_state(s).commands.asked_count,0)
+    _,has_shared_row:=ui.widget_rect(&ctx,kai_row_id(&ctx,{{"shared",0}},"row"))
+    _,has_shared_move:=ui.widget_rect(&ctx,kai_row_id(&ctx,{{"shared",0}},"move"))
+    testing.expect(t,has_shared_row && !has_shared_move,"shared bookmark has no move arrow")
+    _,has_log_plus:=ui.widget_rect(&ctx,kai_row_id(&ctx,{{"change",1}},"new"))
+    testing.expect(t,!has_log_plus,"log rows have no '+' button")
+    if !kai_panel_click(t,s,kai_row_id(&ctx,{{"change",1}},"row")) {return}
+    kai_panel_still(t,s)
+    checkout_id:=kai_row_id(&ctx,{{"change",1}},"checkout")
+    _,has_checkout:=ui.widget_rect(&ctx,checkout_id)
+    testing.expect(t,has_checkout,"expanded older log row shows Checkout")
+    kai_panel_stable(t,s,"Changes expanded log")
+    target_rev:=s.kai.state.view.rows[1].revision
+    w:=kai_workspace(s)
+    before_working:=vcs.repo_working(&w.repo)
+    if !kai_panel_click(t,s,checkout_id) {return}
+    after_working:=vcs.repo_working(&w.repo)
+    wc,_:=vcs.change_get(w.repo.s,after_working,context.temp_allocator)
+    testing.expect(t,after_working!=before_working && len(wc.parents)==1 && wc.parents[0]==target_rev,"Checkout starts a working copy on the older commit")
+    if !kai_panel_click(t,s,ui.id(&ctx,"kai_branch_new")) {return}
+    testing.expect(t,s.kai.state.branch_adding,"New branch opens inline branch field")
+    s.kai.state.branch_name_length=copy(s.kai.state.branch_name[:],"exp")
+    kai_panel_still(t,s)
+    if !kai_panel_click(t,s,ui.id(&ctx,"kai_branch_create")) {return}
+    has_exp:=false
+    for b in s.kai.state.view.bookmarks {has_exp||=strings.has_prefix(b,"exp ")}
+    testing.expect(t,!s.kai.state.branch_adding && has_exp,"New branch creates a bookmark on the current change")
+    kai_panel_stable(t,s,"Changes after branch")
 }
 
 // The team methods refuse what does not fit and say why.

@@ -3,16 +3,20 @@ package editor
 import "core:crypto"
 import "core:fmt"
 import "core:strings"
+import "core:time"
 import ka "mirai:cook/kai"
 import vcs "mirai:kai"
 import "mirai:platform"
 import "mirai:std/serial"
 import "mirai:ui"
 
-// The Team view of the Kai tab, which the launcher's Team shows
-// too, and the Publish to main of the Changes view. They draw what
-// kai_team_read left in the team's arena; a button asks for its kai.* method,
-// which runs between frames as any call does.
+// The Team view of the Kai tab (which shows only this project's org), the
+// launcher's Team view (which manages all orgs, joins and web sign-in), and
+// the Publish to main of the Changes view. They draw what kai_team_read left
+// in the team's arena; a button asks for its kai.* method, which runs between
+// frames as any call does.
+
+KAI_COPIED_SHOW :: 2500*time.Millisecond
 
 // Asks for a kai.* method with params, between frames.
 @(private)
@@ -104,14 +108,19 @@ kai_publish_build :: proc(s:^Session) {
     v:=&t.view
     description:=kai_typed(st.description[:],st.description_length)
     if v.org>=0 {
+        main_target:vcs.Revision
+        for b in v.shared {
+            if b.name==ka.BOOKMARK_DEFAULT {main_target=b.target;break}
+        }
+        up_to_date:=len(st.view.files)==0 && description=="" && st.view.description=="" && st.view.parent_revision!={} && main_target==st.view.parent_revision
         kai_line(ctx,v.publish,"text_faint")
-        if kai_buttons(s,"kai_publish",{"Publish to main"},accent=0)==0 {
+        if kai_buttons(s,"kai_publish",{up_to_date?"Up to date":"Publish to main"},accent=up_to_date?-1:0,disabled=up_to_date)==0 {
             kai_ask(s,"kai.publish",`{{"description":%s}}`,kai_quote(description))
         }
         return
     }
     if len(v.orgs)==0 {
-        kai_line(ctx,"Make an org or join one in Team to publish this project to your other machines and your team.")
+        kai_line(ctx,"Create or join an org in Projects -> Team to publish this project to your other machines and your team.")
         return
     }
     f:=&t.fields
@@ -131,8 +140,7 @@ kai_publish_build :: proc(s:^Session) {
     }
 }
 
-// The shared bookmarks in BOOKMARKS: a click starts a change on one; the
-// arrow moves it to the working copy's parent for the whole org.
+// The shared bookmarks in BOOKMARKS: a click starts a change on one.
 @(private)
 kai_shared_build :: proc(s:^Session) {
     ctx:=s.gui.ctx
@@ -146,18 +154,16 @@ kai_shared_build :: proc(s:^Session) {
         if ui.box(ctx,{id=row,width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=6,align_y=.Center,padding={KAI_ROW_PAD,0,KAI_ROW_PAD,0},fill=on?ui.tone(ctx,"chip"):{},radius=ui.metric(ctx,"radius_control")}) {
             ui.icon(ctx,ui.icon_user(u8(User_Icon.Users)),ui.tone(ctx,"text_faint"),12)
             kai_row_names(ctx,b.name,b.here?"shared":"on its way",ui.tone(ctx,"text"))
-            if ui.icon_button(ctx,ui.id(ctx,"move"),ui.icon_user(u8(User_Icon.Up)),ui.metric(ctx,"row")-4,tip="Move it to the working copy's parent for the whole org").clicked {
-                kai_ask(s,"kai.bookmarks",`{{"move":%s,"change":"@-"}}`,kai_quote(b.name))
-            }
         }
         if it.clicked && b.here {kai_ask(s,"kai.new",`{{"parents":[%s]}}`,kai_quote(b.name))}
         ui.id_pop(ctx)
     }
 }
 
-// The Team view: this machine, joining an org, each org with its members,
-// repositories and invites, a new org and the web sign-in of a server.
-kai_team_build :: proc(s:^Session) {
+// The Team view. In the launcher (launcher=true): this machine, joining an org,
+// all orgs, creating a new org, and web sign-in. Inside a project's Kai tab
+// (launcher=false): this machine and only this project's org.
+kai_team_build :: proc(s:^Session,launcher:=false) {
     ctx:=s.gui.ctx
     t:=s.kai.team
     if t==nil || !t.opened {
@@ -181,6 +187,15 @@ kai_team_build :: proc(s:^Session) {
     if !t.running && t.why_length>0 {kai_line(ctx,string(t.why[:t.why_length]),"danger")}
     for p in v.peer_lines {kai_row_names(ctx,p.name,p.rest,ui.tone(ctx,"text"))}
 
+    if !launcher {
+        if v.org>=0 && v.org<len(v.orgs) {
+            kai_org_build(s,v.org,false)
+        } else {
+            kai_line(ctx,"This project is not in an org yet. Publish it in Changes, or create/join an org in Projects -> Team.")
+        }
+        return
+    }
+
     kai_head(ctx,"JOIN AN ORG",-1)
     kai_field(ctx,"kai_invite_in",f.invite[:],&f.invite_length,"Paste an invite")
     invite:=kai_typed(f.invite[:],f.invite_length)
@@ -188,16 +203,7 @@ kai_team_build :: proc(s:^Session) {
     if kai_buttons(s,"kai_join",{"Join"},accent=0,disabled=invite=="" || joining.stage==.Waiting)==0 {kai_ask(s,"kai.join",`{{"invite":%s}}`,kai_quote(invite))}
     kai_task_line(ctx,joining,"Joining…")
 
-    for &o,i in v.orgs {
-        ui.id_push(ctx,ui.id(ctx,"org",i))
-        x:=&v.lines[i]
-        kai_head(ctx,x.title,len(o.members))
-        kai_line(ctx,x.role,"text_faint")
-        for m in x.members {kai_row_names(ctx,m.name,m.rest,ui.tone(ctx,"text"))}
-        for r in x.repos {kai_row_names(ctx,r.name,r.rest,ui.tone(ctx,"text_muted"))}
-        if o.role=="admin" {kai_invite_build(s,&o)}
-        ui.id_pop(ctx)
-    }
+    for _,i in v.orgs {kai_org_build(s,i,true)}
 
     kai_head(ctx,"NEW ORG",-1)
     kai_field(ctx,"kai_org_name",f.org[:],&f.org_length,"Org name")
@@ -221,13 +227,56 @@ kai_team_build :: proc(s:^Session) {
     }
 }
 
-// An admin's invite: who it is for, a public address only when the router
-// forwards none, and the one-time invite it makes, to select or copy.
+// One org block: its members, server sync status / 1-click attach, optional
+// repo list (in launcher), and INVITE controls for admins.
+@(private)
+kai_org_build :: proc(s:^Session,i:int,show_repos:bool) {
+    ctx:=s.gui.ctx
+    t:=s.kai.team
+    v:=&t.view
+    o:=&v.orgs[i]
+    x:=&v.lines[i]
+    ui.id_push(ctx,ui.id(ctx,"org",i))
+    defer ui.id_pop(ctx)
+    kai_head(ctx,x.title,len(o.members))
+    kai_line(ctx,x.role,"text_faint")
+    if x.server!="" {
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=6,align_y=.Center,padding={KAI_ROW_PAD,0,KAI_ROW_PAD,0}}) {
+            ui.icon(ctx,.Check,ui.tone(ctx,"success"),12)
+            size:=ui.metric(ctx,"font_small")
+            ui.text(ctx,x.server,{size=size,color=ui.tone(ctx,"text_muted"),align_y=.Center,ellipsis=true},ui.GROW,ui.fixed(size+6))
+        }
+    } else if o.role=="admin" && v.default_server!="" {
+        attaching:=&t.tasks[.Attach]
+        waiting:=attaching.stage==.Waiting && attaching.org==o.id
+        if kai_buttons(s,"kai_sync_server",{"Sync to server"},disabled=attaching.stage==.Waiting)==0 {
+            kai_ask(s,"kai.org",`{{"attach":%s}}`,kai_quote(org_hex(o.id)))
+        }
+        if waiting {
+            kai_line(ctx,"Syncing to server…","text_faint")
+        } else if attaching.stage==.Failed && !attaching.silent && attaching.org==o.id {
+            kai_line(ctx,string(attaching.why[:attaching.why_length]),"danger")
+        }
+    }
+    for m in x.members {kai_row_names(ctx,m.name,m.rest,ui.tone(ctx,"text"))}
+    if show_repos {
+        for r in x.repos {kai_row_names(ctx,r.name,r.rest,ui.tone(ctx,"text_muted"))}
+    }
+    if o.role=="admin" {kai_invite_build(s,o)}
+}
+
+// An admin's invite: separated under INVITE so the role switcher is clearly
+// the invite's role, with a compact clipboard icon button beside the read-only
+// invite field that turns into a green check when copied.
 @(private)
 kai_invite_build :: proc(s:^Session,o:^ka.Org_View) {
     ctx:=s.gui.ctx
     t:=s.kai.team
     f:=&t.fields
+    ui.spacer(ctx,0,4)
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"divider")}) {}
+    ui.spacer(ctx,0,2)
+    kai_head(ctx,"INVITE",-1)
     labels:=[]string{"Writer","Reader"}
     roles:=[]vcs.Role{.Writer,.Reader}
     active:=0
@@ -238,7 +287,7 @@ kai_invite_build :: proc(s:^Session,o:^ka.Org_View) {
         ui.label(ctx,"For another machine of mine",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
     }
     at:=""
-    if !t.view.online {
+    if !t.view.online && o.server=="" {
         kai_field(ctx,"kai_invite_at",f.at[:],&f.at_length,"Public address, host:port (optional)")
         at=kai_typed(f.at[:],f.at_length)
     }
@@ -253,13 +302,17 @@ kai_invite_build :: proc(s:^Session,o:^ka.Org_View) {
     // The invite is one word of some 200 letters: a read-only field cuts it at
     // the panel's edge, and selects and copies it whole.
     control:=ui.metric(ctx,"control")
+    copied:=t.invite_copied && time.tick_since(t.invite_copied_at)<KAI_COPIED_SHOW
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,align_y=.Center}) {
         ui.text_field(ctx,ui.id(ctx,"kai_invite_text"),t.invite[:],&t.invite_length,{read_only=true,height=control})
-        size:=ui.metric(ctx,"font")
-        l:=ui.Layout{width=ui.fixed(ui.text_width(&ctx.font,"Copied",size)+2*KAI_BUTTON_SIDE),height=ui.fixed(control)}
-        if ui.button(ctx,ui.id(ctx,"kai_invite_copy"),{label=t.invite_copied?"Copied":"Copy",variant="accent",width=-1,center=true,layout=&l}).clicked {kai_invite_copy(s)}
+        if ui.icon_button(ctx,ui.id(ctx,"kai_invite_copy"),copied?.Check:ui.icon_user(u8(User_Icon.Paste)),control,"field",copied?"Copied":"Copy invite",copied?ui.tone(ctx,"success"):{}).clicked {
+            kai_invite_copy(s)
+        }
     }
-    if t.invite_local {
+    if t.invite_via_server {
+        #assert(vcs.INVITE_HOURS==72)
+        kai_line(ctx,"Valid for 3 days — works even while Mirai is closed.","text_faint")
+    } else if t.invite_local {
         kai_line(ctx,"Local network only — add a public host:port above to invite over the internet.","danger")
     } else {
         #assert(vcs.INVITE_HOURS==72)
@@ -272,6 +325,7 @@ kai_invite_copy :: proc(s:^Session) -> bool {
     t:=s.kai.team
     if t==nil || t.invite_length==0 || s.app==nil || s.app.platform==nil {return false}
     t.invite_copied=platform.clipboard_set(s.app.platform,string(t.invite[:t.invite_length]))
+    if t.invite_copied {t.invite_copied_at=time.tick_now()}
     return t.invite_copied
 }
 

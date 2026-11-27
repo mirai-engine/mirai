@@ -73,11 +73,14 @@ Projects_Plugin :: struct {
 Projects_Row :: struct {
     path:[project.RECENT_PATH]u8,
     name:[64]u8,
-    missing:bool,   // the folder or its project.mirai is gone
-    kai:[64]u8,     // what its workspace is on: a bookmark or the working change
-    opened:[32]u8,  // when an editor last opened it, as the list says it
-    recent_index:int, // index in p.recent.projects, or -1 when discovered on disk
-    thumbnail:u64,  // the key of the image its tile shows in the atlas of previews; 0: its letter
+    missing:bool,       // the folder or its project.mirai is gone
+    kai:[64]u8,         // what its workspace is on: a bookmark or the working change
+    linked:bool,        // its Kai workspace is linked to an org repository
+    needs_publish:bool, // unpublished working changes or parent differs from shared main
+    can_publish:bool,   // this machine has write permission in its linked org
+    opened:[32]u8,      // when an editor last opened it, as the list says it
+    recent_index:int,   // index in p.recent.projects, or -1 when discovered on disk
+    thumbnail:u64,      // the key of the image its tile shows in the atlas of previews; 0: its letter
     thumbnail_slot:int,
 }
 
@@ -162,6 +165,7 @@ projects_rows_read :: proc(s:^Session) {
     p:=s.projects
     p.selected=0
     p.row_count=0
+    if s.kai!=nil && s.kai.team==nil && s.store.root!="" {kai_team_open(s)}
     region,has_region:=timezone.region_load("local",context.temp_allocator)
     now:=time.now()
     images:=s.app!=nil && s.thumbnails!=nil && s.app.assets!=nil && s.app.assets.renderer!=nil
@@ -253,7 +257,13 @@ projects_row_fill :: proc(s:^Session,folder:string,opened:i64,recent_index:int,n
         }
     }
     base.text_set(row.name[:],name)
-    if !row.missing {base.text_set(row.kai[:],ka.working_text(&s.store,folder))}
+    if !row.missing {
+        team:^vcs.Team
+        if s.kai!=nil && s.kai.team!=nil && s.kai.team.opened {team=&s.kai.team.team}
+        sync:=ka.project_sync_state(&s.store,team,folder)
+        base.text_set(row.kai[:],sync.kai)
+        row.linked,row.needs_publish,row.can_publish=sync.linked,sync.needs_publish,sync.can_publish
+    }
     base.text_set(row.opened[:],projects_when(opened,now,region))
     return
 }
@@ -886,9 +896,12 @@ projects_content :: proc(s:^Session,popup:bool) {
             if p.team {kai_team_open(s)}
         }
         ui.spacer(ctx)
+        if ui.icon_button(ctx,ui.id(ctx,"projects_refresh"),.Refresh,30,"field","Refresh projects and sync",disabled=busy).clicked {
+            kai_team_refresh(s)
+        }
         search:=ui.id(ctx,"projects_search")
         named_add(g,search)
-        if ui.box(ctx,{width=ui.fixed(180),height=ui.fixed(30)}) {
+        if ui.box(ctx,{width=ui.fixed(160),height=ui.fixed(30)}) {
             ui.text_field(ctx,search,p.search[:],&p.search_length,{placeholder="Search",icon=ui.icon_user(u8(User_Icon.Search)),live=true,height=30,size=ui.metric(ctx,"font")})
         }
         if list && ui.button(ctx,ui.id(ctx,"projects_open"),{label="Open",variant="accent",width=72,height=30,center=true,disabled=busy || projects_chosen(p)<0}).clicked {open=true}
@@ -998,6 +1011,18 @@ projects_row :: proc(s:^Session,index:int,row:^Projects_Row,folder:string,busy,o
                 if ui.box(ctx,{width=ui.FIT,height=ui.fixed(22),gap=5,padding={8,0,8,0},align_y=.Center,fill=ui.tone(ctx,"card"),radius=11}) {
                     ui.icon(ctx,ui.icon_user(u8(User_Icon.Branch)),ui.tone(ctx,"text_muted"),12)
                     ui.label(ctx,on,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
+                }
+                if row.linked {
+                    if row.needs_publish && row.can_publish {
+                        if ui.button(ctx,ui.id(ctx,"project_publish",index),{label="Publish",variant="field",height=24,size=ui.metric(ctx,"font_small"),disabled=busy}).clicked {
+                            kai_launcher_publish(s,folder)
+                        }
+                    } else if !row.needs_publish {
+                        if ui.box(ctx,{width=ui.FIT,height=ui.fixed(22),gap=4,padding={8,0,8,0},align_y=.Center,fill=ui.tone(ctx,"card"),radius=11}) {
+                            ui.icon(ctx,.Check,ui.tone(ctx,"success"),11)
+                            ui.label(ctx,"Synced",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
+                        }
+                    }
                 }
             }
             if row.missing && ui.button(ctx,ui.id(ctx,"project_remove",index),{label="Remove",variant="ghost",height=24,size=ui.metric(ctx,"font_small"),disabled=busy}).clicked {remove=true}

@@ -36,12 +36,14 @@ a sync; `mirai:net` gives only the
   message of at most `FRAME_MAX`, its `Msg` kind first. A length past its bound, a frame that does
   not open or a message that does not parse ends the connection.
 - Messages: `Hello` (names, listening port and the heads this end holds), `Tell` (heads that
-  moved: an org record, a repository's `Repo_Refs` or a derived data set), `Want` (up to
-  `WANT_MAX` chunk addresses of an org), `Chunks` (the chunks asked, in order, as the store keeps
-  them, up to `FRAME_FILL`), `Lack`, `Ddc_Ask`, `Join` and `Welcome` ([invites](org.md#invites)),
-  `Web_Login` (a connection's first and only message, [accounts](server.md#web-accounts)) and
-  `Bye` with why. A peer that keeps more than `REQUESTS_BYTES_MAX` of wants and asks waiting, or
-  tells of more than `TOLD_MAX` heads, ends its connection.
+  moved: an org record, a verified offline admission, a repository's `Repo_Refs` or a derived data
+  set), `Want` (up to `WANT_MAX` chunk addresses of an org), `Chunks` (the chunks asked, in order,
+  as the store keeps them, up to `FRAME_FILL`), `Lack`, `Ddc_Ask`, `Join` (with optional signed
+  `Invite_Claim`) and `Welcome` (org head and optional `Admission` address,
+  [invites](org.md#invites)), first-message control RPCs (`Web_Login`, `Server_Info`,
+  `Org_Register`, `Invite_Grant`, `Invite_Revoke`) and `Bye` with why. A peer that keeps more than
+  `REQUESTS_BYTES_MAX` of wants and asks waiting, or tells of more than `TOLD_MAX` heads, ends its
+  connection.
 - Of two connections between the same keys, both ends keep the one whose dialing end has the
   lower key (`peer_unique`).
 
@@ -67,8 +69,11 @@ a sync; `mirai:net` gives only the
 - A pull is whole only when every chunk of every object it reaches is here (`object_whole`, with
   `whole` in the walk of `kai/reach.odin`), never when a root alone is: a pull cut midway never
   reads as complete (`a_closure_is_whole_only_when_every_chunk_is_here`).
-- A head this process wrote reaches the peers at once (`agent_changed`); one another process of
-  the machine wrote, within `LOOK_SECONDS`. Nothing else polls.
+- A head this process wrote reaches the peers at once (`agent_changed`), which also wakes dials
+  for newly discovered members; one another process of the machine wrote reaches them within
+  `LOOK_SECONDS`. `agent_sync_now` clears dial throttling and forces an immediate sync pass.
+  `agent_join` and `agent_admit` save the peer's dialed or listening address (`team_peer_seen`)
+  after membership holds so peers reconnect across restarts without beacons. Nothing else polls.
 
 ## Who reads what
 
@@ -93,16 +98,17 @@ a sync; `mirai:net` gives only the
   deleted. `agent_reach` says Local, Connecting or Online; an invite made while the router has not
   answered waits for it up to 1.5 s (`agent_reach_wait`), and the views move when it does.
 - Without a router that maps and without a server, a machine on another network is reached only
-  at a host:port someone forwarded (`--at` of an invite). A server with a public address is the
-  usual way.
+  at a host:port someone forwarded (`--at` of an invite). A central server (`DEFAULT_SERVER`,
+  overridden or disabled with `MIRAI_KAI_SERVER=""`) is the usual way.
 
 ## Pulls
 
 - Measured on loopback, dev build: 113 MB in 1000 files pulled in 0.627 s, about 180 MB/s
   (`a_pull_over_loopback_runs_at_tcp_speed` with `KAI_BENCH_MB=113`), where the UDP mesh it
   replaced moved about 1.5 MB/s.
-- `agent_pulls` gives per repository the chunks and bytes that arrived, those left and whether it
-  is whole: what `mirai kai pull`, the launcher and `kai.peers` show.
+- `agent_pulls` and zero-alloc `agent_pull_of` give per repository the chunks and bytes that
+  arrived, those left and whether it is whole: what `mirai kai pull`, the launcher and `kai.peers`
+  show.
 
 ## Derived data
 

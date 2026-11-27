@@ -11,6 +11,7 @@ import "mirai:asset"
 import img "mirai:cook/image"
 import "mirai:cook/install"
 import ka "mirai:cook/kai"
+import vcs "mirai:kai"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -313,8 +314,63 @@ the_launcher_keeps_its_tabs_below_the_bar_that_drags_the_window :: proc(t:^testi
         ui.frame_end(&ctx)
     }
     bar:=ui.metric(&ctx,"bar_height")
-    for name in ([]string{"projects_tab_recent","projects_tab_all","projects_team","projects_search","projects_open"}) {
+    for name in ([]string{"projects_tab_recent","projects_tab_all","projects_team","projects_refresh","projects_search","projects_open"}) {
         rect,found:=ui.widget_rect(&ctx,ui.id(&ctx,name))
         testing.expectf(t,found && rect.y>=bar,"%s at %v is not below the bar of %v",name,rect,bar)
     }
+}
+
+// Linked Kai workspaces show Publish when ahead of shared main, transition to
+// Synced when published directly from the Launcher, and pick up later changes
+// on explicit Refresh.
+@(test)
+projects_list_refreshes_and_publishes_linked_workspaces :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"projects-publish")
+    if folder=="" {return}
+    root:=project.path_absolute(folder,context.temp_allocator)
+    proj:=project.path(root,"game",allocator=context.temp_allocator)
+    testing.expect(t,base.make_directory_all(proj)==nil)
+    m:=project.manifest_default("Game")
+    testing.expect_value(t,project.manifest_write(project.path(proj,project.PROJECT_FILE,allocator=context.temp_allocator),&m).code,project.Error_Code.None)
+
+    opened,se:=store.open(project.path(root,"store",allocator=context.temp_allocator))
+    if !testing.expect_value(t,se,store.Error.None) {return}
+    defer store.close(&opened)
+
+    p:=new(Projects);defer free(p)
+    p.shown=true
+    project.recent_add(&p.recent,proj,100)
+    k:Kai
+    k.mesh_loopback=true
+    s:=Session{projects=p,store=opened,kai=&k}
+    defer kai_team_close(&s)
+    kai_team_open(&s)
+    if !testing.expect(t,s.kai.team!=nil && s.kai.team.opened) {return}
+    team:=&s.kai.team.team
+    testing.expect_value(t,vcs.team_profile_set(team,"ana","mac"),vcs.Error.None)
+    org,oe:=vcs.team_org_create(team,"studio")
+    if !testing.expect_value(t,oe,vcs.Error.None) {return}
+
+    kp:ka.Project
+    if !testing.expect_value(t,ka.project_create(&kp,proj,&s.store),vcs.Error.None) {return}
+    _,je:=ka.project_join(&kp,team,org,false)
+    ka.project_close(&kp)
+    if !testing.expect_value(t,je,vcs.Error.None) {return}
+
+    projects_rows_read(&s)
+    if !testing.expect_value(t,p.row_count,1) {return}
+    testing.expect(t,p.rows[0].linked && p.rows[0].needs_publish && p.rows[0].can_publish,"linked unpublished workspace offers Publish")
+
+    kai_launcher_publish(&s,proj)
+    testing.expect(t,p.rows[0].linked && !p.rows[0].needs_publish,"after direct publish the workspace shows Synced")
+
+    // Edit and snapshot the workspace externally; explicit Refresh picks up Publish again.
+    testing.expect(t,os.write_entire_file(project.path(proj,"notes.txt",allocator=context.temp_allocator),transmute([]u8)string("updated\n"))==nil)
+    if !testing.expect_value(t,ka.project_open(&kp,proj,&s.store),vcs.Error.None) {return}
+    _,snap_err:=ka.snapshot(&kp.workspace)
+    ka.project_close(&kp)
+    testing.expect_value(t,snap_err,vcs.Error.None)
+
+    kai_team_refresh(&s)
+    testing.expect(t,p.rows[0].linked && p.rows[0].needs_publish && p.rows[0].can_publish,"Refresh reflects new unpublished changes")
 }

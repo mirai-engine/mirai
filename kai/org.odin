@@ -1,5 +1,6 @@
 package kai
 
+import "core:crypto/hash"
 import "core:slice"
 import "core:strings"
 import "core:unicode/utf8"
@@ -21,10 +22,14 @@ import "mirai:store"
 
 ORG_NAMESPACE :: "kai-org"    // name: an org's hex; names its newest record
 REPO_PREFIX :: "kai-repo-"    // + an org's hex; name: a repository's hex; names its Repo_Refs
+GRANT_PREFIX :: "kai-grant-"  // + an org's hex; name: first 16 bytes of secret_hash hex
+ADMIT_PREFIX :: "kai-admit-"  // + an org's hex; name: secret_hash hex
 NAME_MAX :: 64                // bytes of the name of an org, a repository, a person or a device
 MEMBERS_MAX :: 4096
 ORG_REPOS_MAX :: 4096
 REPO_BOOKMARKS_MAX :: 1024
+GRANTS_MAX :: 256
+ADMISSIONS_MAX :: 1024
 
 Org_Id :: distinct [16]u8
 
@@ -49,10 +54,11 @@ Org_Repo :: struct {
 
 Org :: struct {
     id:Org_Id,
-    version:u64,     // 1 for the first record, one more each time
-    prev:store.Hash, // the record before; zero for the first
+    version:u64,      // 1 for the first record, one more each time
+    prev:store.Hash,  // the record before; zero for the first
     signer:Key,
-    time:i64,        // ns
+    time:i64,         // ns
+    revoke_epoch:u64, // bumped when an admin revokes pending invites; invalidates older grants
     name:string,
     members:[]Member,  // sorted by key, each once
     repos:[]Org_Repo,  // sorted by id, each once
@@ -67,6 +73,7 @@ Org_Head :: struct #packed {
     prev:store.Hash,
     signer:Key,
     time:i64,
+    revoke_epoch:u64,
     members:u16,
     repos:u16,
 } // + name, members × (Key, Role, name, device, address), repos × (Repo_Id, public u8, name), Signature; texts are a length byte and their bytes
@@ -117,7 +124,7 @@ org_encode :: proc(o:^Org,identity:^Identity,allocator:=context.allocator) -> (b
         if i>0 && !repo_less(o.repos[i-1].id,r.id) {return nil,.Invalid_Argument}
     }
     w:=writer_make(allocator)
-    write_value(&w,Org_Head{magic=KAI_MAGIC,version=o.version,id=o.id,prev=o.prev,signer=o.signer,time=o.time,members=u16(len(o.members)),repos=u16(len(o.repos))})
+    write_value(&w,Org_Head{magic=KAI_MAGIC,version=o.version,id=o.id,prev=o.prev,signer=o.signer,time=o.time,revoke_epoch=o.revoke_epoch,members=u16(len(o.members)),repos=u16(len(o.repos))})
     write_name(&w,o.name)
     for m in o.members {
         write_value(&w,m.key)
@@ -145,7 +152,7 @@ org_decode :: proc(bytes:[]u8,allocator:=context.allocator) -> (o:Org,error:Erro
     head:=read_value(&r,Org_Head)
     if r.short || head.magic!=KAI_MAGIC || head.version==0 || head.members>MEMBERS_MAX || head.repos>ORG_REPOS_MAX {return {},.Corrupt}
     if (head.version==1)!=(head.prev=={}) {return {},.Corrupt}
-    o.id,o.version,o.prev,o.signer,o.time=head.id,head.version,head.prev,head.signer,head.time
+    o.id,o.version,o.prev,o.signer,o.time,o.revoke_epoch=head.id,head.version,head.prev,head.signer,head.time,head.revoke_epoch
     o.name=tail_string(&r)
     members,me:=make([]Member,head.members,allocator)
     repos,re:=make([]Org_Repo,head.repos,allocator)
@@ -215,6 +222,14 @@ org_repo :: proc(o:^Org,id:Repo_Id) -> int {
     return -1
 }
 
+// The org's attached server (.Node with an address), if any.
+org_server :: proc(o:^Org) -> (key:Key,address:string,ok:bool) {
+    for m in o.members {
+        if m.role==.Node && m.address!="" {return m.key,m.address,true}
+    }
+    return {},"",false
+}
+
 // Whether next follows held: the next version of the same org, signed by an
 // admin of held, or by a writer of held when only the repositories changed.
 // A first record (held nil) is signed by an admin it lists.
@@ -226,10 +241,10 @@ org_signs :: proc(held,next:^Org) -> bool {
     if next.id!=held.id || next.version!=held.version+1 {return false}
     role,ok:=org_role(held,next.signer)
     if !ok || role<.Writer {return false}
-    if role==.Admin {return true}
+    if role==.Admin {return next.revoke_epoch>=held.revoke_epoch}
     // A writer adds repositories, and changes nothing else: not the members,
-    // not the org's name, not a repository held (its name, or whether it is public).
-    if next.name!=held.name || len(next.members)!=len(held.members) {return false}
+    // not the org's name, not revoke_epoch, not a repository held (its name, or whether it is public).
+    if next.name!=held.name || next.revoke_epoch!=held.revoke_epoch || len(next.members)!=len(held.members) {return false}
     for m,i in next.members {
         h:=held.members[i]
         if m.key!=h.key || m.role!=h.role || m.name!=h.name || m.device!=h.device || m.address!=h.address {return false}
@@ -253,6 +268,15 @@ org_head :: proc(s:^store.Store,id:Org_Id,allocator:=context.allocator) -> (o:Or
     if e!=.None {return {},{},store_error(e)}
     o,error=org_get(s,a,allocator)
     return o,a,error
+}
+
+// The newest record held of org with verified offline admissions merged into
+// members; Missing when the org is not held.
+org_effective_head :: proc(s:^store.Store,id:Org_Id,allocator:=context.allocator) -> (o:Org,address:store.Hash,error:Error) {
+    o,address,error=org_head(s,id,allocator)
+    if error!=.None {return}
+    o,error=org_effective(s,&o,allocator)
+    return
 }
 
 // The ids of the orgs s holds, sorted.
@@ -288,6 +312,8 @@ org_write :: proc(s:^store.Store,o:^Org,identity:^Identity,time:i64) -> (address
     address=object_put(s,.Org,bytes) or_return
     name:[32]u8
     if e:=store.ref_set(s,ORG_NAMESPACE,org_ref_name(o.id,&name),address);e!=.None {return {},store_error(e)}
+    admissions_prune(s,&next)
+    grants_prune(s,&next)
     return address,.None
 }
 
@@ -352,6 +378,8 @@ org_accept :: proc(s:^store.Store,id:Org_Id,address:store.Hash) -> (changed:bool
     if he==.None && (newest.version<held.version || newest.version==held.version && !hash_less(address,held_address)) {return false,{},.None}
     name:[32]u8
     if e:=store.ref_set(s,ORG_NAMESPACE,org_ref_name(id,&name),address);e!=.None {return false,{},store_error(e)}
+    admissions_prune(s,&newest)
+    grants_prune(s,&newest)
     return true,{},.None
 }
 
@@ -504,6 +532,350 @@ repo_refs_accept :: proc(s:^store.Store,org:^Org,address:store.Hash) -> (changed
     }
     if e:=store.ref_set(s,namespace,repo_ref_name(r.repo,&name),address);e!=.None {return false,store_error(e)}
     return true,.None
+}
+
+// --- Offline 1-use invites and verified admissions ---
+
+// An admin-signed 1-use voucher held by an org's server so a device can join
+// while the admin is offline. The server sees only secret_hash until claimed.
+Invite_Grant :: struct {
+    org:Org_Id,
+    secret_hash:[32]u8,
+    role:Role,
+    revoke_epoch:u64,
+    expires:i64, // ns
+    signer:Key,
+    name:string, // optional fixed person name ("For another machine of mine")
+    signature:Signature,
+}
+
+@(private)
+Invite_Grant_Head :: struct #packed {
+    magic:u32,
+    org:Org_Id,
+    secret_hash:[32]u8,
+    role:Role,
+    reserved:[7]u8,
+    revoke_epoch:u64,
+    expires:i64,
+    signer:Key,
+} // + name, Signature
+
+// A joining device's self-signed claim proving knowledge of the 1-use secret
+// and binding its device key, names and public address.
+Invite_Claim :: struct {
+    org:Org_Id,
+    secret:[32]u8,
+    key:Key,
+    name:string,
+    device:string,
+    public:string,
+    signature:Signature,
+}
+
+@(private)
+Invite_Claim_Head :: struct #packed {
+    magic:u32,
+    org:Org_Id,
+    secret:[32]u8,
+    key:Key,
+} // + name, device, public, Signature
+
+// A verified offline admission: an admin's Invite_Grant paired with the
+// invitee's Invite_Claim whose secret hashes to grant.secret_hash.
+Admission :: struct {
+    grant:Invite_Grant,
+    claim:Invite_Claim,
+}
+
+@(private)
+Admission_Head :: struct #packed {
+    magic:u32,
+    grant_len:u16,
+    claim_len:u16,
+} // + grant_bytes, claim_bytes
+
+secret_digest :: proc(secret:[32]u8) -> (out:[32]u8) {
+    s:=secret
+    hash.hash_bytes_to_buffer(.SHA256,s[:],out[:])
+    return
+}
+
+grant_namespace :: proc(org:Org_Id,buffer:^[len(GRANT_PREFIX)+32]u8) -> string {
+    copy(buffer[:],GRANT_PREFIX)
+    o:=org
+    hex_text(o[:],buffer[len(GRANT_PREFIX):])
+    return string(buffer[:])
+}
+
+admit_namespace :: proc(org:Org_Id,buffer:^[len(ADMIT_PREFIX)+32]u8) -> string {
+    copy(buffer[:],ADMIT_PREFIX)
+    o:=org
+    hex_text(o[:],buffer[len(ADMIT_PREFIX):])
+    return string(buffer[:])
+}
+
+@(private)
+grant_ref_name :: proc(secret_hash:[32]u8,buffer:^[32]u8) -> string {
+    sh:=secret_hash
+    return hex_text(sh[:16],buffer[:])
+}
+
+@(private)
+admit_ref_name :: proc(secret_hash:[32]u8,buffer:^[64]u8) -> string {
+    sh:=secret_hash
+    return hex_text(sh[:],buffer[:])
+}
+
+invite_grant_encode :: proc(g:^Invite_Grant,identity:^Identity,allocator:=context.allocator) -> (bytes:[]u8,error:Error) {
+    if identity.key!=g.signer || g.org=={} || g.secret_hash=={} || g.role>max(Role) {return nil,.Invalid_Argument}
+    if g.name!="" && !name_valid(g.name) {return nil,.Invalid_Argument}
+    w:=writer_make(allocator)
+    write_value(&w,Invite_Grant_Head{
+        magic=KAI_MAGIC,org=g.org,secret_hash=g.secret_hash,role=g.role,
+        revoke_epoch=g.revoke_epoch,expires=g.expires,signer=g.signer,
+    })
+    write_name(&w,g.name)
+    if w.failed {return nil,.Out_Of_Memory}
+    g.signature=sign(identity,w.data[:])
+    write_bytes(&w,g.signature[:])
+    if w.failed {return nil,.Out_Of_Memory}
+    return w.data[:],.None
+}
+
+invite_grant_decode :: proc(bytes:[]u8) -> (g:Invite_Grant,error:Error) {
+    r:=Reader{data=bytes}
+    head:=read_value(&r,Invite_Grant_Head)
+    if r.short || head.magic!=KAI_MAGIC || head.org=={} || head.secret_hash=={} || head.role>max(Role) || !zero(head.reserved[:]) {return {},.Corrupt}
+    g.org,g.secret_hash,g.role,g.revoke_epoch,g.expires,g.signer=head.org,head.secret_hash,head.role,head.revoke_epoch,head.expires,head.signer
+    g.name=tail_string(&r)
+    g.signature=read_value(&r,Signature)
+    if r.short || r.at!=len(bytes) || (g.name!="" && !name_valid(g.name)) {return {},.Corrupt}
+    if !signature_valid(g.signer,bytes[:len(bytes)-size_of(Signature)],g.signature) {return {},.Corrupt}
+    return g,.None
+}
+
+invite_claim_encode :: proc(c:^Invite_Claim,identity:^Identity,allocator:=context.allocator) -> (bytes:[]u8,error:Error) {
+    if identity.key!=c.key || c.org=={} || c.secret=={} || !name_valid(c.name) || !name_valid(c.device) || len(c.public)>ADDRESS_MAX {return nil,.Invalid_Argument}
+    w:=writer_make(allocator)
+    write_value(&w,Invite_Claim_Head{magic=KAI_MAGIC,org=c.org,secret=c.secret,key=c.key})
+    write_name(&w,c.name)
+    write_name(&w,c.device)
+    write_name(&w,c.public)
+    if w.failed {return nil,.Out_Of_Memory}
+    c.signature=sign(identity,w.data[:])
+    write_bytes(&w,c.signature[:])
+    if w.failed {return nil,.Out_Of_Memory}
+    return w.data[:],.None
+}
+
+invite_claim_decode :: proc(bytes:[]u8) -> (c:Invite_Claim,error:Error) {
+    r:=Reader{data=bytes}
+    head:=read_value(&r,Invite_Claim_Head)
+    if r.short || head.magic!=KAI_MAGIC || head.org=={} || head.secret=={} {return {},.Corrupt}
+    c.org,c.secret,c.key=head.org,head.secret,head.key
+    c.name=tail_string(&r)
+    c.device=tail_string(&r)
+    c.public=tail_string(&r)
+    c.signature=read_value(&r,Signature)
+    if r.short || r.at!=len(bytes) || !name_valid(c.name) || !name_valid(c.device) {return {},.Corrupt}
+    if !signature_valid(c.key,bytes[:len(bytes)-size_of(Signature)],c.signature) {return {},.Corrupt}
+    return c,.None
+}
+
+admission_encode :: proc(grant_bytes,claim_bytes:[]u8,allocator:=context.allocator) -> (bytes:[]u8,error:Error) {
+    if len(grant_bytes)>int(max(u16)) || len(claim_bytes)>int(max(u16)) {return nil,.Too_Large}
+    g:=invite_grant_decode(grant_bytes) or_return
+    c:=invite_claim_decode(claim_bytes) or_return
+    if g.org!=c.org || secret_digest(c.secret)!=g.secret_hash {return nil,.Unauthorized}
+    w:=writer_make(allocator)
+    write_value(&w,Admission_Head{magic=KAI_MAGIC,grant_len=u16(len(grant_bytes)),claim_len=u16(len(claim_bytes))})
+    write_bytes(&w,grant_bytes)
+    write_bytes(&w,claim_bytes)
+    if w.failed {return nil,.Out_Of_Memory}
+    return w.data[:],.None
+}
+
+admission_decode :: proc(bytes:[]u8) -> (ad:Admission,error:Error) {
+    r:=Reader{data=bytes}
+    head:=read_value(&r,Admission_Head)
+    if r.short || head.magic!=KAI_MAGIC {return {},.Corrupt}
+    gb:=read_bytes(&r,int(head.grant_len))
+    cb:=read_bytes(&r,int(head.claim_len))
+    if r.short || r.at!=len(bytes) {return {},.Corrupt}
+    ad.grant=invite_grant_decode(gb) or_return
+    ad.claim=invite_claim_decode(cb) or_return
+    if ad.grant.org!=ad.claim.org || secret_digest(ad.claim.secret)!=ad.grant.secret_hash {return {},.Corrupt}
+    return ad,.None
+}
+
+admission_get :: proc(s:^store.Store,address:store.Hash,allocator:=context.allocator) -> (ad:Admission,error:Error) {
+    bytes:=object_get(s,address,.Admission,allocator) or_return
+    ad,error=admission_decode(bytes)
+    if error!=.None {delete(bytes,allocator)}
+    return
+}
+
+// Whether ad holds against org's signed record: matching org and secret hash,
+// grant not revoked by revoke_epoch, and signed by a current admin of org.
+admission_valid :: proc(o:^Org,ad:^Admission) -> bool {
+    if ad.grant.org!=o.id || ad.claim.org!=o.id {return false}
+    if ad.grant.revoke_epoch<o.revoke_epoch {return false}
+    if secret_digest(ad.claim.secret)!=ad.grant.secret_hash {return false}
+    role,ok:=org_role(o,ad.grant.signer)
+    return ok && role==.Admin
+}
+
+// Accepts a verified Admission object at address for org under ADMIT_PREFIX.
+// Refuses a second distinct claim for an already-accepted 1-use grant.
+admission_accept :: proc(s:^store.Store,o:^Org,address:store.Hash) -> (changed:bool,error:Error) {
+    ad:=admission_get(s,address,context.temp_allocator) or_return
+    if !admission_valid(o,&ad) {return false,.Unauthorized}
+    if org_member(o,ad.claim.key)>=0 {return false,.None}
+    ns:[len(ADMIT_PREFIX)+32]u8
+    name:[64]u8
+    namespace:=admit_namespace(o.id,&ns)
+    ref_name:=admit_ref_name(ad.grant.secret_hash,&name)
+    if held,he:=store.ref_get(s,namespace,ref_name);he==.None {
+        if held==address {return false,.None}
+        if prev,pe:=admission_get(s,held,context.temp_allocator);pe==.None && admission_valid(o,&prev) {return false,.Unauthorized}
+    } else if he!=.Missing {
+        return false,store_error(he)
+    }
+    refs,le:=store.ref_list(s,namespace,context.temp_allocator)
+    if le==.None && len(refs)>=ADMISSIONS_MAX {return false,.Too_Large}
+    if se:=store.ref_set(s,namespace,ref_name,address);se!=.None {return false,store_error(se)}
+    return true,.None
+}
+
+// The org record with any verified offline admissions merged into members.
+// Returns o^ untouched when there are no pending admissions.
+org_effective :: proc(s:^store.Store,o:^Org,allocator:=context.allocator) -> (eff:Org,error:Error) {
+    eff=o^
+    ns:[len(ADMIT_PREFIX)+32]u8
+    refs,re:=store.ref_list(s,admit_namespace(o.id,&ns),context.temp_allocator)
+    if re!=.None || len(refs)==0 {return eff,.None}
+    extra:=make([dynamic]Member,context.temp_allocator)
+    for ref in refs {
+        ad,ae:=admission_get(s,ref.hash,allocator)
+        if ae!=.None || !admission_valid(o,&ad) {continue}
+        if org_member(o,ad.claim.key)>=0 {continue}
+        dup:=false
+        for m in extra {if m.key==ad.claim.key {dup=true;break}}
+        if dup {continue}
+        append(&extra,Member{
+            key=ad.claim.key,
+            role=ad.grant.role,
+            name=ad.grant.name!=""?ad.grant.name:ad.claim.name,
+            device=ad.claim.device,
+            address=ad.claim.public,
+        })
+    }
+    if len(extra)==0 {return eff,.None}
+    merged,me:=make([]Member,len(o.members)+len(extra),allocator)
+    if me!=nil {return {},.Out_Of_Memory}
+    copy(merged,o.members)
+    copy(merged[len(o.members):],extra[:])
+    slice.sort_by(merged,proc(a,b:Member) -> bool {return key_less(a.key,b.key)})
+    eff.members=merged
+    return eff,.None
+}
+
+// Stores a pending admin-signed 1-use grant on a server, bounded by GRANTS_MAX.
+grant_put :: proc(s:^store.Store,o:^Org,grant_bytes:[]u8,now:i64) -> Error {
+    g:=invite_grant_decode(grant_bytes) or_return
+    if g.org!=o.id {return .Invalid_Argument}
+    if role,ok:=org_role(o,g.signer);!ok || role!=.Admin {return .Unauthorized}
+    if g.revoke_epoch<o.revoke_epoch || g.expires<=now {return .Expired}
+    ns:[len(GRANT_PREFIX)+32]u8
+    namespace:=grant_namespace(o.id,&ns)
+    refs,le:=store.ref_list(s,namespace,context.temp_allocator)
+    live:=0
+    if le==.None {
+        for ref in refs {
+            b,ge:=object_get(s,ref.hash,.Invite_Grant,context.temp_allocator)
+            if ge!=.None {
+                store.ref_remove(s,namespace,ref.name)
+                continue
+            }
+            old,de:=invite_grant_decode(b)
+            if de!=.None || old.expires<=now || old.revoke_epoch<o.revoke_epoch {
+                store.ref_remove(s,namespace,ref.name)
+                continue
+            }
+            live+=1
+        }
+    }
+    if live>=GRANTS_MAX {return .Too_Large}
+    address:=object_put(s,.Invite_Grant,grant_bytes) or_return
+    name:[32]u8
+    if se:=store.ref_set(s,namespace,grant_ref_name(g.secret_hash,&name),address);se!=.None {return store_error(se)}
+    return .None
+}
+
+// Consumes the pending 1-use grant matching secret: removes and commits its
+// ref BEFORE returning its bytes so a grant never admits twice.
+grant_take :: proc(s:^store.Store,o:^Org,secret:[32]u8,now:i64,allocator:=context.temp_allocator) -> (grant_bytes:[]u8,error:Error) {
+    sh:=secret_digest(secret)
+    ns:[len(GRANT_PREFIX)+32]u8
+    name:[32]u8
+    namespace:=grant_namespace(o.id,&ns)
+    ref_name:=grant_ref_name(sh,&name)
+    addr,ge:=store.ref_get(s,namespace,ref_name)
+    if ge!=.None {return nil,.Expired}
+    bytes,oe:=object_get(s,addr,.Invite_Grant,allocator)
+    if oe!=.None {return nil,.Expired}
+    g,de:=invite_grant_decode(bytes)
+    valid:=de==.None && g.org==o.id && g.secret_hash==sh && g.expires>=now && g.revoke_epoch>=o.revoke_epoch
+    if valid {
+        role,ok:=org_role(o,g.signer)
+        valid=ok && role==.Admin
+    }
+    if re:=store.ref_remove(s,namespace,ref_name);re!=.None {return nil,store_error(re)}
+    if ce:=store.commit(s);ce!=.None {return nil,store_error(ce)}
+    if !valid {return nil,.Expired}
+    return bytes,.None
+}
+
+// Removes pending grants of org from epochs before epoch.
+grants_revoke :: proc(s:^store.Store,org:Org_Id,epoch:u64) -> (cleared:int,error:Error) {
+    ns:[len(GRANT_PREFIX)+32]u8
+    namespace:=grant_namespace(org,&ns)
+    refs,e:=store.ref_list(s,namespace,context.temp_allocator)
+    if e!=.None {return 0,e==.Missing?.None:store_error(e)}
+    for ref in refs {
+        b,ge:=object_get(s,ref.hash,.Invite_Grant,context.temp_allocator)
+        if ge!=.None {
+            store.ref_remove(s,namespace,ref.name)
+            cleared+=1
+            continue
+        }
+        g,de:=invite_grant_decode(b)
+        if de!=.None || g.revoke_epoch<epoch {
+            if re:=store.ref_remove(s,namespace,ref.name);re!=.None {return cleared,store_error(re)}
+            cleared+=1
+        }
+    }
+    return cleared,.None
+}
+
+@(private)
+grants_prune :: proc(s:^store.Store,o:^Org) {
+    grants_revoke(s,o.id,o.revoke_epoch)
+}
+
+@(private)
+admissions_prune :: proc(s:^store.Store,o:^Org) {
+    ns:[len(ADMIT_PREFIX)+32]u8
+    namespace:=admit_namespace(o.id,&ns)
+    refs,e:=store.ref_list(s,namespace,context.temp_allocator)
+    if e!=.None {return}
+    for ref in refs {
+        ad,ae:=admission_get(s,ref.hash,context.temp_allocator)
+        if ae!=.None || !admission_valid(o,&ad) || org_member(o,ad.claim.key)>=0 {
+            store.ref_remove(s,namespace,ref.name)
+        }
+    }
 }
 
 @(private)

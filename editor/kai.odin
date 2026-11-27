@@ -93,6 +93,7 @@ Kai_View :: struct {
     change:string,        // of the working copy
     title:string,         // what the tab heads with: "@ " and the change
     description:string,
+    parent_revision:vcs.Revision, // @- when the working change has a single parent
     files:[]Kai_File,     // what the working copy changed from its parents
     rows:[]Kai_Row,       // the log, newest first
     picked:[]Kai_File,    // what the change picked in the log did
@@ -118,6 +119,9 @@ Kai_State :: struct {
     toggled:[dynamic]string, // paths whose check is the other one, in the heap
     description:[KAI_DESCRIPTION_BYTES]u8,
     description_length:int,
+    branch_adding:bool,
+    branch_name:[64]u8,
+    branch_name_length:int,
     scroll:[2]f32,
     width:f32,             // of the tab this frame: what its rows of buttons lay out in
     picked:vcs.Revision,   // the change of the log whose files show
@@ -133,6 +137,7 @@ Kai :: struct {
     error:vcs.Error,  // why it is not open
     key:vcs.Key,      // this editor's identity in every session and change
     mesh_loopback:bool, // the agent the editor starts listens on 127.0.0.1 alone, with no beacon: tests
+    server:string,      // optional central server host:port override (tests)
 }
 
 // The workspace of the project; nil when it has none open.
@@ -566,6 +571,7 @@ kai_read :: proc(s:^Session) {
         v.change=ka.change_text(c.id,a)
         v.title=strings.concatenate({"@ ",v.change},a)
         v.description=c.description
+        if len(c.parents)==1 {v.parent_revision=c.parents[0]}
     }
     diffs:=make([dynamic]vcs.Diff,context.temp_allocator)
     ka.diff(w,working,&diffs,a)

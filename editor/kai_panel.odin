@@ -45,7 +45,7 @@ kai_panel_build :: proc(s:^Session,width,room:f32) {
     t:=s.kai.team
     if st.tab==.Team {
         if t==nil {return}
-        if ui.scroll_area(ctx,ui.id(ctx,"kai_team_scroll"),&t.scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=4}) {kai_team_build(s)}
+        if ui.scroll_area(ctx,ui.id(ctx,"kai_team_scroll"),&t.scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=4}) {kai_team_build(s,false)}
         return
     }
     if st.detail.open {
@@ -86,27 +86,51 @@ kai_panel_build :: proc(s:^Session,width,room:f32) {
             ui.id_pop(ctx)
         }
         shared:=t!=nil && t.view.org>=0
-        if len(v.bookmarks)>0 || shared {
-            kai_head(ctx,"BOOKMARKS",len(v.bookmarks)+(shared?len(t.view.shared):0))
-            for b in v.bookmarks {
-                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=8,align_y=.Center,padding={KAI_ROW_PAD,0,KAI_ROW_PAD,0}}) {
-                    ui.label(ctx,b,ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),0,fade=true)
+        mark_count:=len(v.bookmarks)+(shared?len(t.view.shared):0)
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(KAI_HEAD),gap=6,align_y=.Center,padding={0,0,KAI_ROW_PAD,0}}) {
+            ui.label(ctx,"BOOKMARKS",ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_caption"))
+            if mark_count>0 {
+                text:[16]u8
+                ui.label(ctx,fmt.bprintf(text[:],"%d",mark_count),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
+            }
+            ui.spacer(ctx)
+            if ui.button(ctx,ui.id(ctx,"kai_branch_new"),{label="New branch",variant="ghost",height=KAI_HEAD-2,size=ui.metric(ctx,"font_small"),tip="Create a bookmark on the current change"}).clicked {
+                st.branch_adding=!st.branch_adding
+                if !st.branch_adding {st.branch_name_length=0}
+            }
+        }
+        if st.branch_adding {
+            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,align_y=.Center,padding={KAI_ROW_PAD,2,KAI_ROW_PAD,4}}) {
+                ui.text_field(ctx,ui.id(ctx,"kai_branch_name"),st.branch_name[:],&st.branch_name_length,{placeholder="Branch name",live=true})
+                name:=strings.trim_space(string(st.branch_name[:st.branch_name_length]))
+                if ui.button(ctx,ui.id(ctx,"kai_branch_create"),{label="Create",variant="accent",height=ui.metric(ctx,"control")-2,size=ui.metric(ctx,"font_small"),disabled=name==""}).clicked {
+                    if message:=kai_bookmark(s,name,vcs.repo_working(&w.repo));message!="" {
+                        notify(s,message)
+                    } else {
+                        st.branch_name_length=0
+                        st.branch_adding=false
+                    }
                 }
             }
-            kai_shared_build(s)
         }
+        for b in v.bookmarks {
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=8,align_y=.Center,padding={KAI_ROW_PAD,0,KAI_ROW_PAD,0}}) {
+                ui.label(ctx,b,ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),0,fade=true)
+            }
+        }
+        if shared {kai_shared_build(s)}
         kai_head(ctx,"LOG",len(v.rows))
         for &row,i in v.rows {
             ui.id_push(ctx,ui.id(ctx,"change",i))
-            kai_log_row(s,&row)
+            reloaded:=kai_log_row(s,&row)
             ui.id_pop(ctx)
+            if reloaded {break}
         }
     }
 }
 
-// A title and its count; with check, a checkbox before it: changed when clicked.
+// A head of a list, with its count (count<0 shows none); with check, a checkbox before it.
 @(private)
-// A head of a list, with its count; count<0 shows none.
 kai_head :: proc(ctx:^ui.Context,title:string,count:int,check:^bool=nil) -> (changed:bool) {
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(KAI_HEAD),gap=check!=nil?8:4,align_y=.Center,padding={check!=nil?KAI_ROW_PAD:0,0,KAI_ROW_PAD,0}}) {
         if check!=nil {changed=ui.checkbox(ctx,ui.id(ctx,"kai_check_all"),check)}
@@ -198,10 +222,11 @@ kai_fields_build :: proc(s:^Session) {
     }
 }
 
-// A change of the log: its id, description and bookmarks; a click shows the
-// files it changed, and its button starts a new change on it.
+// A change of the log: its id, description and bookmarks; a click unfolds
+// Checkout (for older commits) and the files it changed. Returns true when
+// st.arena was rebuilt so the caller stops iterating v.rows.
 @(private)
-kai_log_row :: proc(s:^Session,row:^Kai_Row) {
+kai_log_row :: proc(s:^Session,row:^Kai_Row) -> bool {
     ctx:=s.gui.ctx
     st:=s.kai.state
     id:=ui.id(ctx,"row")
@@ -214,18 +239,23 @@ kai_log_row :: proc(s:^Session,row:^Kai_Row) {
         text:=row.description!="" ? row.description : "(no description)"
         if cut:=strings.index_byte(text,'\n');cut>=0 {text=text[:cut]}
         kai_row_names(ctx,text,row.bookmarks,row.conflicts>0?ui.tone(ctx,"danger"):ui.tone(ctx,"text"))
-        if !row.working && ui.icon_button(ctx,ui.id(ctx,"new"),.Plus,ui.metric(ctx,"row")-4,tip="Start a change on it").clicked {
-            parents:=[1]vcs.Revision{row.revision}
-            if message:=kai_new(s,parents[:],"");message!="" {notify(s,message)}
-            return
-        }
     }
     if it.clicked {
         st.picked=picked?{}:row.revision
         kai_read(s)
-        return
+        return true
     }
-    if !picked {return}
+    if !picked {return false}
+    if !row.working {
+        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={KAI_ROW_PAD+12,2,KAI_ROW_PAD,4}}) {
+            if ui.button(ctx,ui.id(ctx,"checkout"),{label="Checkout",variant="field",height=ui.metric(ctx,"control")-4,size=ui.metric(ctx,"font_small"),tip="Check out this change as a new working copy"}).clicked {
+                parents:=[1]vcs.Revision{row.revision}
+                st.picked={}
+                if message:=kai_new(s,parents[:],"");message!="" {notify(s,message)}
+                return true
+            }
+        }
+    }
     for &file,k in st.view.picked {
         ui.id_push(ctx,ui.id(ctx,"file",k))
         if kai_file_open_row(ctx,&file) {
@@ -233,6 +263,7 @@ kai_log_row :: proc(s:^Session,row:^Kai_Row) {
         }
         ui.id_pop(ctx)
     }
+    return false
 }
 
 // A file a change changed, indented under it: its name, folder and mark; true when it is clicked.

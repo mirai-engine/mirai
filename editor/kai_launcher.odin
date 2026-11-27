@@ -3,9 +3,10 @@ package editor
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import ka "mirai:cook/kai"
+import vcs "mirai:kai"
 import "mirai:platform"
 import "mirai:project"
-import ka "mirai:cook/kai"
 import "mirai:std/base"
 import "mirai:ui"
 
@@ -36,7 +37,24 @@ projects_team_build :: proc(s:^Session,width:f32) {
             if !platform.dialog_show(s.app.platform,{kind=.Open_Folder,tag=DIALOG_PROJECT_LOCATION}) {notify(s,"A file dialog is already open")}
         }
     }
-    if ui.scroll_area(ctx,ui.id(ctx,"projects_team_view"),&p.scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=2}) {kai_team_build(s)}
+    if ui.scroll_area(ctx,ui.id(ctx,"projects_team_view"),&p.scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=2}) {kai_team_build(s,true)}
+}
+
+// Publishes a local org-linked project to main directly from the Launcher.
+kai_launcher_publish :: proc(s:^Session,folder:string) {
+    t,message:=kai_team_of(s)
+    if t==nil {
+        notify(s,message)
+        return
+    }
+    change,e:=ka.project_publish_folder(&s.store,t,folder,kai_types(s))
+    if e!=.None {
+        notify(s,fmt.tprintf("Kai: %s",t.why!=""?t.why:vcs.error_text(e)))
+        return
+    }
+    kai_team_wrote(s)
+    if p:=s.projects;p!=nil && p.shown {projects_rows_read(s)}
+    notify(s,fmt.tprintf("Published %s to %s",change[:min(len(change),8)],ka.BOOKMARK_DEFAULT))
 }
 
 // The repositories of the orgs this machine has not pulled, under the

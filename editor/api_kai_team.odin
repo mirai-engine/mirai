@@ -1,5 +1,6 @@
 package editor
 
+import "core:fmt"
 import "core:strings"
 import ka "mirai:cook/kai"
 import "mirai:editor/api"
@@ -30,6 +31,7 @@ Api_Kai_Repository :: struct {
 }
 Api_Kai_Org :: struct {
     id,name,role:string,
+    server:string `mirai:"optional,label=Attached central server host:port, empty when none"`,
     version:int,
     members:[]Api_Kai_Member,
     repositories:[]Api_Kai_Repository,
@@ -41,6 +43,8 @@ Api_Kai_Orgs :: struct {
 }
 Api_Kai_Org_Params :: struct {
     new:string `mirai:"optional,label=Makes an org of this name with this machine its admin"`,
+    attach:string `mirai:"optional,label=Attaches an existing org (by name or id prefix) to a Kai server"`,
+    server:string `mirai:"optional,label=With new or attach: host:port of the Kai server (defaults to MIRAI_KAI_SERVER / default server)"`,
     org:string `mirai:"optional,label=With member: the org, by its name or a prefix of its id"`,
     member:string `mirai:"optional,label=A member of org, by its device name or a prefix of its key"`,
     role:string `mirai:"optional,label=With member: reader, writer, admin or node"`,
@@ -170,7 +174,7 @@ api_kai_orgs_fill :: proc(s:^Session,call:^api.Call,t:^vcs.Team) {
     for id in ids {
         v:ka.Org_View
         if ka.org_view(t,id,&v,call.allocator)!=.None {continue}
-        o:=Api_Kai_Org{id=strings.clone(org_hex(id),call.allocator),name=v.name,role=v.role,version=int(v.version)}
+        o:=Api_Kai_Org{id=strings.clone(org_hex(id),call.allocator),name=v.name,role=v.role,server=v.server,version=int(v.version)}
         o.members=make([]Api_Kai_Member,len(v.members),call.allocator)
         for m,i in v.members {
             key:=m.key
@@ -206,15 +210,36 @@ api_kai_org :: proc(s:^Session,call:^api.Call) {
     if t==nil {return}
     switch {
     case p.new!="":
-        if p.member!="" {
-            api.call_fail(call,api.INVALID_PARAMS,"new and member are given together: give one per call")
+        if p.member!="" || p.attach!="" {
+            api.call_fail(call,api.INVALID_PARAMS,"new, attach and member are given separately: give one per call")
             return
         }
-        if _,e:=vcs.team_org_create(t,strings.trim_space(p.new));e!=.None {
+        id,e:=vcs.team_org_create(t,strings.trim_space(p.new))
+        if e!=.None {
             api_kai_why(call,t,e)
             return
         }
         kai_team_wrote(s)
+        srv:=strings.trim_space(p.server)
+        if srv=="" {srv=kai_default_server(s)}
+        if srv!="" {kai_task_start(s,.Attach,srv,org=id,silent=true)}
+    case p.attach!="":
+        if p.member!="" {
+            api.call_fail(call,api.INVALID_PARAMS,"attach and member are given together: give one per call")
+            return
+        }
+        org,ok:=api_kai_org_find(s,call,t,p.attach)
+        if !ok {return}
+        srv:=strings.trim_space(p.server)
+        if srv=="" {srv=kai_default_server(s)}
+        if srv=="" {
+            api.call_fail(call,api.INVALID_PARAMS,"no Kai server is configured: pass server host:port or set MIRAI_KAI_SERVER")
+            return
+        }
+        if message:=kai_task_start(s,.Attach,srv,org=org,silent=false);message!="" {
+            api.call_fail(call,api.SERVER_ERROR,message)
+            return
+        }
     case p.member!="":
         org,ok:=api_kai_org_find(s,call,t,p.org)
         if !ok {return}
@@ -270,11 +295,19 @@ api_kai_invite :: proc(s:^Session,call:^api.Call) {
     asked:=k.invite_asked
     k.invite_asked=false
     if p.revoke {
-        if _,e:=vcs.team_invites_clear(t,org);e!=.None {
+        e:vcs.Error
+        if k.running {
+            _,e=vcs.agent_invites_revoke(&k.agent,org)
+            if e!=.None && t.why=="" {t.why=k.agent.team.why}
+        } else {
+            _,e=vcs.team_invites_clear(t,org)
+        }
+        if e!=.None {
             api_kai_why(call,t,e)
             return
         }
         if k.invite_org==org {k.invite_length=0}
+        kai_team_wrote(s)
         api.call_result(call,Api_Kai_Invite)
         return
     }
@@ -293,20 +326,35 @@ api_kai_invite :: proc(s:^Session,call:^api.Call) {
     addresses:=make([dynamic]string,call.allocator)
     at:=strings.trim_space(p.at)
     reach:vcs.Reach
+    via_server:=false
+    text:string
+    e:vcs.Error
     if at!="" {
         append(&addresses,strings.clone(at,call.allocator))
+        append(&addresses,..vcs.agent_addresses(&k.agent,call.allocator))
+        text,e=vcs.team_invite(t,org,role,p.mine?t.name:"",addresses[:],call.allocator)
     } else {
-        // Asked as the agent starts, the invite waits for the router's address.
-        reach=vcs.agent_reach_wait(&k.agent,KAI_REACH_WAIT)
+        _,srv_addr,has_server:=vcs.team_org_server(t,org)
+        if !has_server {
+            // Asked as the agent starts, a direct invite waits for the router's address.
+            reach=vcs.agent_reach_wait(&k.agent,KAI_REACH_WAIT)
+        }
+        append(&addresses,..vcs.agent_addresses(&k.agent,call.allocator))
+        text,via_server,e=vcs.agent_invite(&k.agent,org,role,p.mine?t.name:"",addresses[:],call.allocator)
+        if e!=.None && t.why=="" {t.why=k.agent.team.why}
+        if via_server {
+            clear(&addresses)
+            append(&addresses,strings.clone(srv_addr,call.allocator))
+        } else if has_server && e==.None {
+            reach,_=vcs.agent_reach(&k.agent,context.temp_allocator)
+        }
     }
-    append(&addresses,..vcs.agent_addresses(&k.agent,call.allocator))
-    text,e:=vcs.team_invite(t,org,role,p.mine?t.name:"",addresses[:],call.allocator)
     if e!=.None {
         api_kai_why(call,t,e)
         return
     }
     k.invite_length=copy(k.invite[:],text)
-    k.invite_org,k.invite_local,k.invite_copied=org,at=="" && reach!=.Online,false
+    k.invite_org,k.invite_local,k.invite_via_server,k.invite_copied=org,!via_server && at=="" && reach!=.Online,via_server,false
     if asked && kai_invite_copy(s) {notify(s,"Invite copied to clipboard")}
     r:=api.call_result(call,Api_Kai_Invite)
     r.invite,r.addresses=text,addresses[:]
@@ -416,14 +464,19 @@ api_kai_publish :: proc(s:^Session,call:^api.Call) {
     r.change=api_kai_text(&st.project.workspace,revision,call)
     r.bookmark=strings.clone(bookmark,call.allocator)
     l,_:=vcs.team_link_of(t,st.project.workspace.repo.id)
+    warned:=false
     if o,_,oe:=vcs.team_org(t,l.org);oe==.None {
         if i:=vcs.org_repo(&o,l.repo);i>=0 && o.repos[i].public {
             secrets:=ka.secret_paths(&st.project,revision)
             r.secrets=make([]string,len(secrets),call.allocator)
             for x,k in secrets {r.secrets[k]=strings.clone(x,call.allocator)}
-            if len(secrets)>0 {notify(s,strings.concatenate({"Kai: this public repository shows files named like secrets: ",strings.join(secrets,", ",context.temp_allocator)},context.temp_allocator))}
+            if len(secrets)>0 {
+                warned=true
+                notify(s,strings.concatenate({"Kai: this public repository shows files named like secrets: ",strings.join(secrets,", ",context.temp_allocator)},context.temp_allocator))
+            }
         }
     }
+    if !warned {notify(s,fmt.tprintf("Published %s to %s",r.change[:min(len(r.change),8)],bookmark))}
 }
 
 @(private)
