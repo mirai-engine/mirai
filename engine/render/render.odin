@@ -1237,7 +1237,9 @@ camera_carried :: proc(frame:core.Frame_Time,offsets:^core.Table(Draw_Offset,$A)
     if _,_,offset:=offset_of_entity(offsets,parents,worlds,e);offset {return}
     camera,placed:=core.get(worlds,at)
     if !placed {return}
-    shown:=drawn_transform(camera,frame)
+    // view_of_camera renders from camera.transform (already interpolated by Camera_Follow in late);
+    // calling drawn_transform here double-interpolated camera-carried viewmodels at >60 FPS.
+    shown:=camera.transform
     carried=shown
     carried.position={}
     for i:=n-1;i>=0;i-=1 {

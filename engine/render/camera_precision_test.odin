@@ -79,3 +79,24 @@ rotate64 :: proc "contextless" (q:mm.Quat,v:[3]f64) -> [3]f64 {
     w:=f64(real(q))
     return v+2*w*linalg.cross(u,v)+2*linalg.cross(u,linalg.cross(u,v))
 }
+
+@(test)
+camera_carried_uses_live_camera_transform :: proc(t:^testing.T) {
+    w:Render_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    cam_ent,child:=core.create(&w.entities),core.create(&w.entities)
+    prev:=mm.Transform{position={0,1.6,0},rotation=1,scale={1,1,1}}
+    live:=mm.Transform{position={0.08,1.6,0},rotation=mm.quat_axis_angle({0,1,0},0.15),scale={1,1,1}}
+    core.add(&w.cameras,cam_ent,Camera{})
+    core.add(&w.worlds,cam_ent,core.World_Transform{transform=live,previous=prev})
+    core.add(&w.locals,cam_ent,core.from_math(live))
+    core.add(&w.parents,child,core.Parent{entity=cam_ent})
+    core.add(&w.locals,child,core.Transform{position={0,0,-0.4},rotation=1,scale={1,1,1}})
+    test_world_settle(&w)
+    anchor,carried,ok:=camera_carried({alpha=0.5},core.read(&w.offsets),core.read(&w.parents),core.read(&w.worlds),core.read(&w.locals),core.read(&w.cameras),child)
+    testing.expect(t,ok)
+    testing.expect_value(t,anchor,live.position)
+    expected:=mm.transform_compose({rotation=live.rotation,scale={1,1,1}},{position={0,0,-0.4},rotation=1,scale={1,1,1}})
+    testing.expect(t,linalg.length(carried.position-expected.position)<1e-5)
+}
