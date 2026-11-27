@@ -49,7 +49,7 @@ Object_Kind :: enum u8 {
 // meta_check refuses any other, so changing a kind's format is one line here.
 VERSIONS :: [Object_Kind]u16{
     .None=0,.Folder=1,.Conflict=2,.Change=2,.View=1,.Operation=3,.Stat_Index=1,
-    .DDC_Set=3,.DDC_Output=3,.Org=3,.Repo_Refs=1,.Note=1,.Invite=1,
+    .DDC_Set=3,.DDC_Output=3,.Org=2,.Repo_Refs=1,.Note=1,.Invite=1,
     .Invite_Grant=1,.Admission=1,
 }
 
