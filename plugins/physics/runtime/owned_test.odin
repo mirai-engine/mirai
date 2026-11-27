@@ -26,6 +26,13 @@ a_library_makes_and_ends_bodies_of_its_own :: proc(t:^testing.T) {
     for _ in 0..<120 {physics_test_step(&f)}
     testing.expect(t,abs(physics_test_pose(&f,box).position.y-0.5)<0.02,"the box rests on it")
 
+    // Its box is of the bodies made for it, apart from that of a body of its own, which it lacks.
+    _,own:=body_bounds(core.ref(&f.state),ground)
+    testing.expect(t,!own,"an entity without a body has no body bounds")
+    made_box,has_made:=owned_bounds(core.ref(&f.state),ground)
+    testing.expect(t,has_made && abs(made_box.min.y+1)<1e-3 && abs(made_box.max.y)<1e-3 && abs(made_box.max.x-5)<1e-3,"the bounds of the bodies made for it")
+    _,none:=owned_bounds(core.ref(&f.state),box)
+    testing.expect(t,!none,"an entity with a body of its own has none made for it")
     hit,found:=raycast(core.ref(&f.state),{3,5,3},{0,-1,0},10)
     testing.expect(t,found && hit.entity==ground && hit.body==body && hit.shape==shape)
     // The box as if it were 20 m up, where nothing is now: only a ray asked at that pose hits it.

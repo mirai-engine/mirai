@@ -101,11 +101,16 @@ twin_body :: proc(state:^Physics_State,e:core.Entity) -> sim.Body_Handle {
     return {}
 }
 
-// The box of the shapes of the body of the entity, without the copies of its twin; for an entity
-// without a body of its own, that of the bodies a library made for it (owned_body_create).
+// The box of the shapes of the body of the entity, without the copies of its twin.
 body_bounds :: proc(physics:core.Ref(Physics_State),e:core.Entity) -> (bounds:mm.Aabb,ok:bool) {
     if physics.ptr==nil || !physics.ready {return}
-    if link_find(physics.ptr,e)!=nil {return sim.body_bounds(&physics.world,body_of(physics,e))}
+    return sim.body_bounds(&physics.world,body_of(physics,e))
+}
+
+// The box of the bodies a library made for an entity without a body of its own
+// (owned_body_create): a character's capsule, for one.
+owned_bounds :: proc(physics:core.Ref(Physics_State),e:core.Entity) -> (bounds:mm.Aabb,ok:bool) {
+    if physics.ptr==nil || !physics.ready {return}
     for o in physics.ptr.owned {
         if o.body=={} || sim.body_user_data(&physics.world,o.body)!=u64(e) {continue}
         box,has:=sim.body_bounds(&physics.world,o.body)

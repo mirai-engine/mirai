@@ -1102,10 +1102,11 @@ cue_emit :: proc(t:^Tick,cue:audio.Cue,channel:core.Birth_Channel,entity:core.En
 }
 
 // Where a hitbox at pose meets a target it overlaps: the point of the box of the target's body
-// nearest the hitbox's centre, turned as the hitbox. Nil without a body, where the target's own
-// place stands in.
+// nearest the hitbox's centre, turned as the hitbox: its own body, or those a library made for it
+// (a character's capsule). Nil without a body, where the target's own place stands in.
 hit_point :: proc(w:^Ability_World,h:^Ability_Hitbox,pose:mm.Transform,target:core.Entity) -> Maybe(mm.Transform) {
     bounds,ok:=phys.body_bounds(w.physics,target)
+    if !ok {bounds,ok=phys.owned_bounds(w.physics,target)}
     if !ok {return nil}
     center,rotation:=hitbox_world(h,pose)
     return mm.Transform{position=linalg.clamp(center,bounds.min,bounds.max),rotation=rotation,scale=1}
