@@ -86,6 +86,7 @@ Paint :: struct {
     draw:Draw_Node,          // of Draw: what Context.draw_user is handed, but its rect
     prompt:Prompt,
     fill_mode:Progress_Fill, // of a Progress
+    arc:[2]f32,              // of a Radial Progress: Progress.arc
     fit:Image_Fit,           // of an Image, keeping image_size
     image_size:[2]f32,       // of the part of the image shown, in texels; zero: unknown, it stretches
     decoration:Text_Decorations, // of a text
@@ -345,16 +346,18 @@ image_fit :: proc "contextless" (r:Rect,uv:Rect,size:[2]f32,fit:Image_Fit) -> (p
     return
 }
 
-// A Progress that fills clockwise from the top: a ring of its stroke width, or
-// a disc without one, over a track of the same shape.
+// A Progress that fills its arc from where it starts: a ring of its stroke
+// width, or a disc without one, over a track of the same shape. Its corners
+// round the ends of a ring.
 @(private)
 progress_radial :: proc(ctx:^Context,r:Rect,value:f32,p:^Paint) {
     center:=[2]f32{r.x+r.w*0.5,r.y+r.h*0.5}
     radius:=min(r.w,r.h)*0.5
     width:=p.stroke_width
-    if width>0 {
-        draw_ring(ctx,center,radius-width*0.5,width,p.fill2)
-    } else {draw_circle(ctx,center,radius,p.fill2)}
-    if width>0 {draw_arc(ctx,center,radius-width*0.5,width,value,p.fill)} else {draw_arc(ctx,center,radius,0,value,p.fill)}
+    start,sweep:=p.arc[0],p.arc[1] if p.arc[1]!=0 else 1
+    round:=p.radius>0 || p.corners!={}
+    middle:=radius-width*0.5 if width>0 else radius
+    draw_arc(ctx,center,middle,width,start,sweep,p.fill2,round)
+    draw_arc(ctx,center,middle,width,start,sweep*value,p.fill,round)
     if p.stroke[3]>0 {draw_ring(ctx,center,radius,1,p.stroke)}
 }

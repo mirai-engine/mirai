@@ -1,5 +1,6 @@
 package ui
 
+import "core:fmt"
 import "core:testing"
 
 @(test)
@@ -104,23 +105,34 @@ composition_backdrop_blurs_the_parent_and_preserves_pixels_outside_its_mask :: p
 }
 
 @(test)
-an_arc_is_one_analytic_shape_cut_from_the_top_clockwise :: proc(t:^testing.T) {
-    ctx:Context
-    testing.expect(t,test_context_init(&ctx,{no_font=true}))
-    defer context_destroy(&ctx)
-    frame_begin(&ctx,test_input())
-    draw_arc(&ctx,{32,32},20,8,0.25,{255,200,0,255})
-    frame:=frame_end(&ctx)
-    testing.expect_value(t,len(frame.shapes),1)
-    testing.expect_value(t,len(frame.vertices),6)
-    image:=test_raster(&ctx,frame,64,64,1,{0,0,0,255})
-    defer test_image_destroy(&image)
-    // A quarter: the ring from the top to the right, nothing past it.
-    testing.expect(t,test_pixel(&image,46,18).r>200,"inside the quarter")
-    testing.expect_value(t,test_pixel(&image,46,46).r,u8(0))
-    testing.expect_value(t,test_pixel(&image,18,18).r,u8(0))
-    testing.expect_value(t,test_pixel(&image,32,32).r,u8(0))
-    edge:=test_pixel(&image,52,32)
-    testing.expect(t,edge.r>0 && edge.r<255,"the cut at the quarter keeps fractional coverage")
-    test_image_dump(&image,"analytic-arc")
+an_arc_is_one_analytic_shape_cut_where_it_starts_and_as_far_as_it_sweeps :: proc(t:^testing.T) {
+    // A ring 8 wide around (32,32), 20 to its middle; the pixels are on that middle.
+    Case :: struct {name:string,start,sweep:f32,round:bool,inside,outside:[2][2]int}
+    cases:=[?]Case{
+        {"a quarter from the top clockwise",0,0.25,false,{{46,18},{50,26}},{{46,46},{18,18}}},
+        {"a quarter from the top counterclockwise",0,-0.25,false,{{18,18},{14,26}},{{46,18},{46,46}}},
+        {"a gauge of three quarters open at the bottom",-0.375,0.75,false,{{32,12},{51,32}},{{32,51},{40,50}}},
+        {"a start past a whole turn wraps",1.25,0.25,false,{{46,46},{50,38}},{{46,18},{18,46}}},
+        {"round ends reach past the start",0,0.25,true,{{29,12},{46,18}},{{18,18},{46,46}}},
+        {"square ends stop at the start",0,0.25,false,{{46,18},{50,26}},{{29,12},{18,46}}},
+    }
+    for c,i in cases {
+        ctx:Context
+        testing.expect(t,test_context_init(&ctx,{no_font=true}))
+        defer context_destroy(&ctx)
+        frame_begin(&ctx,test_input())
+        draw_arc(&ctx,{32,32},20,8,c.start,c.sweep,{255,200,0,255},c.round)
+        frame:=frame_end(&ctx)
+        testing.expectf(t,len(frame.shapes)==1 && len(frame.vertices)==6,"%s: one shape on one quad",c.name)
+        image:=test_raster(&ctx,frame,64,64,1,{0,0,0,255})
+        defer test_image_destroy(&image)
+        for p in c.inside {testing.expectf(t,test_pixel(&image,p.x,p.y).r>200,"%s: %v is inside, %v",c.name,p,test_pixel(&image,p.x,p.y))}
+        for p in c.outside {testing.expectf(t,test_pixel(&image,p.x,p.y).r==0,"%s: %v is outside, %v",c.name,p,test_pixel(&image,p.x,p.y))}
+        testing.expectf(t,test_pixel(&image,32,32).r==0,"%s: the hole of the ring is empty",c.name)
+        if i==0 {
+            edge:=test_pixel(&image,52,32)
+            testing.expect(t,edge.r>0 && edge.r<255,"the cut at the quarter keeps fractional coverage")
+        }
+        test_image_dump(&image,fmt.tprintf("analytic-arc-%d",i))
+    }
 }

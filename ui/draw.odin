@@ -452,18 +452,23 @@ draw_ring :: proc(ctx:^Context,center:[2]f32,radius,width:f32,color:Color) {
     shape_emit(ctx,shape,ctx.draw.pixel)
 }
 
-// The part sweep (0 to 1) of a ring of a width, or of a disc without one,
-// from the top clockwise: an analytic shape, smooth at any size.
-draw_arc :: proc(ctx:^Context,center:[2]f32,radius,width,sweep:f32,color:Color) {
-    if radius<=0 || sweep<=0 || color[3]==0 {return}
-    if sweep>=1 {
+// The part of a ring of a width, or of a disc without one, that starts start
+// turns clockwise from the top and covers sweep of a turn (negative:
+// counterclockwise): an analytic shape, smooth at any size. round: the ends of
+// a ring are half circles.
+draw_arc :: proc(ctx:^Context,center:[2]f32,radius,width,start,sweep:f32,color:Color,round:=false) {
+    if radius<=0 || sweep==0 || color[3]==0 || !tree_finite(start,sweep) {return}
+    if abs(sweep)>=1 {
         if width>0 {draw_ring(ctx,center,radius,width,color)} else {draw_circle(ctx,center,radius,color)}
         return
     }
     c:=[4]f32{f32(color[0]),f32(color[1]),f32(color[2]),f32(color[3])}/255
     outer:=radius+width*0.5 if width>0 else radius
-    shape:=Shape{bounds={center.x-outer,center.y-outer,outer*2,outer*2},params={0,1,sweep,0}}
-    if width>0 {shape.stroke,shape.params.x=c,min(width,outer)} else {shape.fill=c}
+    shape:=Shape{bounds={center.x-outer,center.y-outer,outer*2,outer*2},radii={start-math.floor(start),0,0,0},params={0,1,sweep,0}}
+    if width>0 {
+        shape.stroke,shape.params.x=c,min(width,outer)
+        if round {shape.radii.y=1}
+    } else {shape.fill=c}
     shape_emit(ctx,shape,ctx.draw.pixel)
 }
 

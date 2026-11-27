@@ -43,6 +43,32 @@ ui_analytic_shapes_have_rounded_coverage_strokes_gradients_and_gaussian_shadows 
     testing.expect_value(t,at(invalid,96,24,20),[4]u8{255,255,255,255})
 }
 
+// Arcs of rings: a quarter from the top with round ends, and a gauge of three quarters that
+// starts at the bottom left, open at the bottom.
+@(test)
+ui_arcs_start_where_they_say_and_round_their_ends :: proc(t:^testing.T) {
+    f:Overlay_Fixture
+    if !overlay_fixture(t,&f,128,64) {return}
+    defer overlay_fixture_destroy(t,&f)
+    white:=quad(0,0,128,64,{1,1,1,1})
+    shapes:=[]Ui_Shape{
+        {bounds={8,8,48,48},radii={0,1,0,0},stroke={1,0,0,1},params={8,1,0.25,0}},
+        {bounds={72,8,48,48},radii={0.625,0,0,0},stroke={0,0,1,1},params={8,1,0.75,0}},
+    }
+    quarter,gauge:=shape_quad(7,7,50,50,0),shape_quad(71,7,50,50,1)
+    vertices:[12]Ui_Vertex
+    copy(vertices[:6],quarter[:]);copy(vertices[6:],gauge[:])
+    pixels:=captured(t,&f,{camera=EMPTY_CAMERA,ui={{vertices=white[:]},{vertices=vertices[:],shapes=shapes}}})
+    defer delete(pixels)
+    testing.expect(t,near_color(at(pixels,128,46,18),{255,0,0,255},3),fmt.tprintf("inside the quarter: %v",at(pixels,128,46,18)))
+    testing.expect(t,near_color(at(pixels,128,29,12),{255,0,0,255},3),fmt.tprintf("its round end reaches past the top: %v",at(pixels,128,29,12)))
+    testing.expect_value(t,at(pixels,128,18,46),[4]u8{255,255,255,255})
+    testing.expect_value(t,at(pixels,128,32,32),[4]u8{255,255,255,255})
+    testing.expect(t,near_color(at(pixels,128,96,12),{0,0,255,255},3),fmt.tprintf("the gauge passes the top: %v",at(pixels,128,96,12)))
+    testing.expect(t,near_color(at(pixels,128,116,32),{0,0,255,255},3),fmt.tprintf("and the right: %v",at(pixels,128,116,32)))
+    testing.expect_value(t,at(pixels,128,96,52),[4]u8{255,255,255,255})
+}
+
 @(test)
 ui_isolated_layers_apply_opacity_once_and_clip_all_children_to_rounded_bounds :: proc(t:^testing.T) {
     f:Overlay_Fixture

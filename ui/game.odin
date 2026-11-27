@@ -84,6 +84,10 @@ Progress :: struct {
     corners:[4]f32,      // of each corner instead of radius when any is set
     fill_mode:Progress_Fill,
     stroke_width:f32,    // of a Radial: the width of its ring; 0: a disc
+    // Of a Radial: the turn it starts at, clockwise from the top, and how much of
+    // a turn it covers (negative: counterclockwise; 0: all). Its radius or corners
+    // round the ends of its ring.
+    arc:[2]f32,
     quad,quad_track:Quad, // images for the bar and its track, tinted by fill and track
     border:[4]f32,
     border_uv:[4]f32,
@@ -94,7 +98,7 @@ Progress :: struct {
 progress :: proc(ctx:^Context,p:Progress) {
     white:=Color{255,255,255,255}
     paint:=Paint{kind=.Progress,value=p.value,fill=p.fill,fill2=p.track,stroke=p.stroke,radius=p.radius,corners=p.corners,quad=p.quad,quad2=p.quad_track,border=p.border,border_uv=p.border_uv,
-        fill_mode=p.fill_mode,stroke_width=p.stroke_width,program=p.program,program_values=p.program_values}
+        fill_mode=p.fill_mode,arc=p.arc,stroke_width=p.stroke_width,program=p.program,program_values=p.program_values}
     if p.quad.kind!=.Solid && p.fill=={} {paint.fill=white}
     if p.quad_track.kind!=.Solid && p.track=={} {paint.fill2=white}
     widget_add(ctx,p.id,{.Passive})
