@@ -48,6 +48,7 @@ struct Stage_Input {
     [[vk::location(11)]] nointerpolation float2 in_random_radius : TEXCOORD11;
     [[vk::location(13)]] float3 in_normal : TEXCOORD13;
     [[vk::location(14)]] float4 in_vertex_color : TEXCOORD14;
+    [[vk::location(15)]] nointerpolation float in_share : TEXCOORD15; // of what is drawn, what the particle covers (particle_sprite.vert)
 };
 struct Stage_Output {
     [[vk::location(0)]] float4 out_color : SV_Target0;
@@ -126,6 +127,7 @@ Stage_Output main(Stage_Input input, float4 pixel_position : SV_Position) {
         if (!depth_empty(scene)) alpha *= saturate((depth_distance(scene) - depth) / soft);
         alpha *= saturate((depth - frame.camera_position.w) / soft);
     }
+    alpha *= input.in_share;
     if (alpha <= 1e-4) discard;
     if (multiply) {
         // What is behind times its color, by how much of the pixel it covers.

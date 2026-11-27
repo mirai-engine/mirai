@@ -32,6 +32,7 @@ struct Stage_Output {
     [[vk::location(11)]] nointerpolation float2 out_random_radius : TEXCOORD11;
     [[vk::location(13)]] float3 out_normal : TEXCOORD13; // of a mesh; 0: the quad faces the eye
     [[vk::location(14)]] float4 out_vertex_color : TEXCOORD14; // of a mesh; white
+    [[vk::location(15)]] nointerpolation float out_share : TEXCOORD15; // of what it draws, what the particle covers
 };
 
 float2 flipbook_uv(uint2 tiles, float2 corner, float frame_index) {
@@ -57,6 +58,7 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
     float half_size;
     float3 light;
     float life;
+    float share = 1.0;
     if (ribbon) {
         // The segment of the instance: the last whose quads start at or before it.
         uint alive = particle_states[params.emitter].alive;
@@ -174,15 +176,16 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
             up = float3(0.0, 0.0, -1.0);
         }
         // A side thinner than two pixels is drawn two pixels wide, so that it
-        // always covers the centre of one, with the light of what it covers of
-        // them: a hairline streak or spark is seen every frame at its
-        // brightness instead of falling between pixel centres. An additive
-        // sprite dims its color, one that covers dims its alpha.
+        // always covers the centre of one, showing the middle of its texture
+        // across it (a hairline is its centre line), and what it draws counts
+        // by the share of it the particle covers: a hairline streak or spark is
+        // seen every frame with the light it has instead of falling between
+        // pixel centres.
         float pixel = 2.0 * abs(view_clip(center).w) / max(abs(frame.proj[1][1]) * frame.resolution.y, 1.0);
         float2 drawn = max(abs(extent), float2(pixel));
-        float coverage = (abs(extent.x) / drawn.x) * (abs(extent.y) / drawn.y);
-        if ((particle_emitters[params.emitter].range.w & PARTICLE_FLAG_ADDITIVE) != 0u) look.color *= coverage;
-        else if ((particle_emitters[params.emitter].range.w & FLAG_MULTIPLY) == 0u) look.color.a *= coverage;
+        share = (abs(extent.x) / drawn.x) * (abs(extent.y) / drawn.y);
+        if (abs(extent.x) < pixel) uv.x = 0.5;
+        if (abs(extent.y) < pixel) uv.y = 0.5;
         extent = drawn * sign(extent + 1e-30);
         float3 r = right * co + up * s;
         float3 u = up * co - right * s;
@@ -204,5 +207,6 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
     output.out_random_radius = float2(look.random, half_size);
     output.out_normal = float3(0.0);
     output.out_vertex_color = float4(1.0);
+    output.out_share = share;
     return output;
 }

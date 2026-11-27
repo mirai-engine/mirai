@@ -24,6 +24,7 @@ struct Stage_Output {
     [[vk::location(11)]] nointerpolation float2 out_random_radius : TEXCOORD11;
     [[vk::location(13)]] float3 out_normal : TEXCOORD13;
     [[vk::location(14)]] float4 out_vertex_color : TEXCOORD14;
+    [[vk::location(15)]] nointerpolation float out_share : TEXCOORD15;
 };
 
 [shader("vertex")]
@@ -59,6 +60,7 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
     // program tints by both, as the G-buffer does; a program reads each.
     output.out_color = look.color;
     output.out_vertex_color = v.color;
+    output.out_share = 1.0;
     // Lit, the light around it, and the sun the fragment shades by its normal where it reaches it.
     bool lit = (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_LIT) != 0u;
     output.out_light = lit ? float4(particle_light(p), float((p.flags >> SUN_SHIFT) & 1u)) : float4(emission_render_units(float3(1.0), (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_RELATIVE) != 0u), 0.0);
