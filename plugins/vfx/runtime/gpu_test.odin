@@ -2429,6 +2429,40 @@ particle_sprites_that_multiply_darken_what_is_behind :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// A sprite far thinner than a pixel is drawn two pixels thick with the light
+// of what it covers, so the hairline shows along its length.
+@(test)
+particle_sprites_thinner_than_a_pixel_show_as_a_line :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 96, 64, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	gpu.scene_set_environment(r, {}, {sky = {0.02, 0.02, 0.02}})
+	line := test_emitter(1, {0, 0, 0})
+	line.info.lifetime, line.info.size, line.info.soft, line.info.intensity = {10, 10}, {2, 2}, 0, 200
+	line.info.scale = {1, 0.005, 1}
+	emitters := [1]Emitter_Desc{line}
+	frames_of_one(t, f, emitters[:], 6, FRONT)
+	pixels, w, _, ok := gpu.renderer_capture(r)
+	testing.expect(t, ok, r.error)
+	if !ok {return}
+	defer delete(pixels)
+	brightest :: proc(pixels: []u8, w: int, at: [2]int) -> int {
+		best := 0
+		for dy in -1 ..= 1 {best = max(best, int(pixel(pixels, w, {at.x, at.y + dy})[0]))}
+		return best
+	}
+	sky := int(pixel(pixels, w, project(r, FRONT, {0, 0.6, 0}))[0])
+	for x in ([]f32{-0.3, 0, 0.3}) {
+		on := brightest(pixels, w, project(r, FRONT, {x, 0, 0}))
+		testing.expectf(t, on > sky + 40, "the line shows at x=%v: %v over the sky %v", x, on, sky)
+	}
+	expect_clean(t, f.device)
+}
+
 // A trail that stops and starts again lays two ribbons: nothing between where
 // the first ended and where the second began.
 @(test)

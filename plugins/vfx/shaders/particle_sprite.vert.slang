@@ -173,6 +173,17 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
             right = float3(1.0, 0.0, 0.0);
             up = float3(0.0, 0.0, -1.0);
         }
+        // A side thinner than two pixels is drawn two pixels wide, so that it
+        // always covers the centre of one, with the light of what it covers of
+        // them: a hairline streak or spark is seen every frame at its
+        // brightness instead of falling between pixel centres. An additive
+        // sprite dims its color, one that covers dims its alpha.
+        float pixel = 2.0 * abs(view_clip(center).w) / max(abs(frame.proj[1][1]) * frame.resolution.y, 1.0);
+        float2 drawn = max(abs(extent), float2(pixel));
+        float coverage = (abs(extent.x) / drawn.x) * (abs(extent.y) / drawn.y);
+        if ((particle_emitters[params.emitter].range.w & PARTICLE_FLAG_ADDITIVE) != 0u) look.color *= coverage;
+        else if ((particle_emitters[params.emitter].range.w & FLAG_MULTIPLY) == 0u) look.color.a *= coverage;
+        extent = drawn * sign(extent + 1e-30);
         float3 r = right * co + up * s;
         float3 u = up * co - right * s;
         world = center + r * c.x * extent.x + u * c.y * extent.y;
