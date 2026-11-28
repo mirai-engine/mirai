@@ -560,13 +560,28 @@ void sphere_highlights(Shading s, float3 center, float radius, out Highlight bas
     }
 }
 
+// What a stylized point takes of a light from `light` (unit) over what Lambert
+// does, whose cosine is part of the irradiance: it rises across the cosine
+// from 0 to its softness, and past it the point is lit whole. A softness of 1
+// is Lambert's; toward 0, a hard edge.
+float stylized_terminator(Shading s, float3 light) {
+    float cosine = dot(s.normal, light);
+    if (!(cosine > 0.0)) return 0.0;
+    return saturate(cosine / max(s.softness, 1e-3)) / cosine;
+}
+
 // The diffuse and the specular radiance a point sends towards its viewer
 // per unit of Lambert-normalized irradiance from `light` (unit, towards the
 // center of the light): its specular lobes take theirs from where their
-// highlights are. The fuzz, a wide lobe, is part of the diffuse one.
+// highlights are. The fuzz, a wide lobe, is part of the diffuse one. A
+// stylized point has its diffuse lobe alone, across its terminator.
 void shading_lobes(Shading s, float3 light, Highlight base, Highlight coat, out float3 diffuse, out float3 specular) {
     diffuse = s.diffuse;
     specular = float3(0.0);
+    if ((s.layers & MATERIAL_LAYER_STYLIZED) != 0u) {
+        diffuse *= stylized_terminator(s, light);
+        return;
+    }
     if (s.glossy) {
         diffuse *= base_diffuse_share(s);
         float3 h = normalize(base.towards + s.view);
@@ -592,16 +607,6 @@ void shading_lobes(Shading s, float3 light, Highlight base, Highlight coat, out 
     }
 }
 
-// What a stylized point takes of a light from `light` (unit) over what Lambert
-// does, whose cosine is part of the irradiance: it rises across the cosine
-// from 0 to its softness, and past it the point is lit whole. A softness of 1
-// is Lambert's; toward 0, a hard edge.
-float stylized_terminator(Shading s, float3 light) {
-    float cosine = dot(s.normal, light);
-    if (!(cosine > 0.0)) return 0.0;
-    return saturate(cosine / max(s.softness, 1e-3)) / cosine;
-}
-
 // Radiance leaving towards s.view per unit of Lambert-normalized irradiance
 // from a sphere of light of `radius` whose center lies `distance` along the
 // unit `light` (the cosine is part of the irradiance); a radius of zero is a
@@ -611,7 +616,6 @@ float stylized_terminator(Shading s, float3 light) {
 float3 shading_response(Shading s, float3 light, float distance = 0.0, float radius = 0.0) {
     if (s.medium) return float3(media_phase(dot(-s.view, light), s.anisotropy));
     if (!s.glossy && s.layers == 0u) return s.diffuse;
-    if ((s.layers & MATERIAL_LAYER_STYLIZED) != 0u) return s.diffuse * stylized_terminator(s, light);
     Highlight base = highlight_at(light), coat = highlight_at(light);
     if (radius > 0.0 && distance > 0.0) sphere_highlights(s, light * distance, radius, base, coat);
     float3 diffuse, specular;

@@ -948,8 +948,10 @@ Material_Layers material_layers(Material m, Mirai_Surface_Context ctx) {
 // The specular reflectance of a sample (OpenPBR): the dielectric F0 of its
 // IOR, specular color and factor, and the base color of a metal. Under a
 // coat the base meets the coat instead of the air, so its IOR is relative to
-// the coat where the coat covers it, and the coat roughens it.
+// the coat where the coat covers it, and the coat roughens it. A stylized
+// point has no specular lobe and reflects its base color whole: it is no metal.
 void material_specular(inout Material_Sample s, float3 color, float ior, float factor) {
+    if ((s.layers.bits & MATERIAL_LAYER_STYLIZED) != 0u) s.metallic = 0.0;
     float eta = ior;
     if (s.layers.coat > 0.0) {
         eta = lerp(ior, ior / max(s.layers.coat_ior, 1.0), saturate(s.layers.coat));

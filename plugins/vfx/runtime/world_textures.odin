@@ -67,7 +67,9 @@ world_textures_make :: proc(sync:^Particle_Sync,renderer:^erender.Renderer) {
             erender.texture_remove(renderer,texture^)
             texture^=0
         }
-        if texture^==0 {
+        // A texture made again of zeros can take the slot it freed, and so its index.
+        made:=texture^==0
+        if made {
             ok:bool
             if texture^,ok=erender.texture_add_dynamic(renderer,entry.cells.x,entry.cells.z,.RGBA16F,false,"vfx world texture");!ok {
                 entry.has_texture=false
@@ -75,7 +77,7 @@ world_textures_make :: proc(sync:^Particle_Sync,renderer:^erender.Renderer) {
             }
         }
         index:=erender.texture_index(texture^)
-        entry.texture_dirty||=entry.texture_index!=index
+        entry.texture_dirty||=made || entry.texture_index!=index
         entry.texture_index=index
     }
 }

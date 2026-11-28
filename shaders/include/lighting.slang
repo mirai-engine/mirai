@@ -243,7 +243,7 @@ void light_lobes_of(Light light, Shading s, float3 irradiance, float3 direction,
     diffuse = float3(0.0);
     specular = float3(0.0);
     if (!(luminance(irradiance) > 0.0)) return;
-    if (s.medium || (!s.glossy && s.layers == 0u)) {
+    if (s.medium || (s.layers & MATERIAL_LAYER_STYLIZED) != 0u || (!s.glossy && s.layers == 0u)) {
         diffuse = irradiance * shading_response(s, direction);
         return;
     }

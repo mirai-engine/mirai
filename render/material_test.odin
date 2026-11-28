@@ -2606,7 +2606,8 @@ material_subsurface_costs_nothing_while_none_is_in_sight :: proc(t: ^testing.T) 
 // shadow of the board, which the maps of the sun cast, it takes what Lambert
 // takes of the sky by its shade, channel by channel; a Surface program that
 // gives the same look draws the same. The unlit ground shows its emission
-// alike in both.
+// alike in both. A local light reaches it across its terminator as the sun
+// does, and its metallic, which it has no lobe for, leaves its base color whole.
 @(test)
 material_stylized_takes_the_sun_whole_and_the_sky_by_its_shade :: proc(t: ^testing.T) {
 	f: Fixture
@@ -2624,7 +2625,9 @@ material_stylized_takes_the_sun_whole_and_the_sky_by_its_shade :: proc(t: ^testi
 		painted.program_id = program.id
 		painted.custom_params = program_defaults(program)
 	}
-	materials_set(r, {lambert, stylized, unlit, painted})
+	stylized_metal, painted_metal := stylized, painted
+	stylized_metal.metallic, painted_metal.metallic = 1, 1
+	materials_set(r, {lambert, stylized, unlit, painted, stylized_metal, painted_metal})
 	quad := ground_quad(r)
 	toward := linalg.normalize(Vec3{1, 2, 0})
 	sun := Sun_Desc{direction = toward, color = {1, 1, 1}, illuminance = math.PI, enabled = true, indirect = 1, scattering = 1}
@@ -2648,6 +2651,8 @@ material_stylized_takes_the_sun_whole_and_the_sky_by_its_shade :: proc(t: ^testi
 	stylized_dark, stylized_lit := seen(t, &f, quad, board, 2, sun, {shadowed, lit})
 	unlit_dark, unlit_lit := seen(t, &f, quad, board, 3, sun, {shadowed, lit})
 	painted_dark, painted_lit := seen(t, &f, quad, board, 4, sun, {shadowed, lit})
+	stylized_metal_dark, stylized_metal_lit := seen(t, &f, quad, board, 5, sun, {shadowed, lit})
+	painted_metal_dark, painted_metal_lit := seen(t, &f, quad, board, 6, sun, {shadowed, lit})
 	testing.expect(t, r.targets.layers != 0, "the stylized ground is drawn with its layers")
 	sunlit := lambert_lit.y - lambert_dark.y
 	testing.expectf(t, near(sunlit, 0.8 * cosine, 0.03), "Lambert takes the cosine of the sun: %v, %v expected", sunlit, 0.8 * cosine)
@@ -2663,6 +2668,28 @@ material_stylized_takes_the_sun_whole_and_the_sky_by_its_shade :: proc(t: ^testi
 	for c in 0 ..< 3 {
 		testing.expectf(t, near(unlit_dark[c], 0.3, 0.02) && near(unlit_lit[c], 0.3, 0.02), "the unlit ground shows its emission alone, channel %d: %v and %v", c, unlit_dark, unlit_lit)
 	}
+	for c in 0 ..< 3 {
+		testing.expectf(t, near(stylized_metal_dark[c], stylized_dark[c], 0.02) && near(stylized_metal_lit[c], stylized_lit[c], 0.02), "a metallic stylized ground keeps its base color, channel %d: %v and %v against %v and %v", c, stylized_metal_dark, stylized_metal_lit, stylized_dark, stylized_lit)
+		testing.expectf(t, near(painted_metal_dark[c], stylized_dark[c], 0.02) && near(painted_metal_lit[c], stylized_lit[c], 0.02), "a metallic program ground keeps its base color, channel %d: %v and %v against %v and %v", c, painted_metal_dark, painted_metal_lit, stylized_dark, stylized_lit)
+	}
+	// A point light 0.6 m over the origin meets the ground at x 0.6 at a cosine
+	// of 0.707, past the terminator: the stylized ground takes it whole.
+	lamp := Light_Desc{position = {0, 0.6, 0}, color = {1, 1, 1}, intensity = 4 * math.PI, range = 30, indirect = 1, scattering = 1}
+	lamped :: proc(t: ^testing.T, f: ^Fixture, quad: Mesh_Handle, material: Material_Handle, lamp: Light_Desc) -> Vec3 {
+		scene_given(f.renderer, {{object_id = 1, mesh = quad, transform = scale_matrix(12), material = material, tint = {1, 1, 1}}}, {lamp}, {}, {})
+		frames(t, f, OVERHEAD, 4)
+		for renderer_pipelines_pending(f.renderer) > 0 {
+			renderer_pipelines_wait(f.renderer)
+			frames(t, f, OVERHEAD, 4)
+		}
+		return target_at(t, f, f.renderer.targets.display, OVERHEAD, {0.6, 0, 0})
+	}
+	lambert_lamp := lamped(t, &f, quad, 1, lamp)
+	stylized_lamp := lamped(t, &f, quad, 2, lamp)
+	painted_lamp := lamped(t, &f, quad, 4, lamp)
+	testing.expectf(t, lambert_lamp.y > 0.01, "the lamp lights the Lambert ground: %v", lambert_lamp)
+	testing.expectf(t, near(stylized_lamp.y, lambert_lamp.y * math.SQRT_TWO, 0.05), "the stylized ground takes the lamp whole: %v against Lambert %v", stylized_lamp, lambert_lamp)
+	testing.expectf(t, near(painted_lamp.y, stylized_lamp.y, 0.02), "a program that gives the same look takes the lamp the same: %v against %v", painted_lamp, stylized_lamp)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 

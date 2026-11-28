@@ -1892,6 +1892,33 @@ particle_world_textures_reach_the_materials :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// A grid whose cells change size gets its texture of the world made again of
+// zeros, and copies its layer into it again even when the new texture takes
+// the slot, and so the index, of the one it replaced.
+@(test)
+particle_world_texture_made_again_is_written_again :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f, 32, 32, test_settings()) {return}
+	defer gpu_fixture_destroy(f)
+	grid := test_grid(f, "resized", {4, 1, 4}, 0.5, 1, {0, 0, 0})
+	entry := &f.sync.grids.entries[grid]
+	entry.has_texture, entry.texture_name = true, world_texture_name("resized")
+	f.sync.world_textures[0], f.sync.world_texture_count = entry.name, 1
+	world_textures_make(&f.sync, f.app.renderer)
+	testing.expect(t, entry.texture_dirty, "a new texture is written")
+	before := entry.texture_index
+	entry.texture_dirty = false
+	world_textures_make(&f.sync, f.app.renderer)
+	testing.expect(t, !entry.texture_dirty, "a texture of the same size is not written again")
+	entry.cells = {8, 1, 8}
+	world_textures_make(&f.sync, f.app.renderer)
+	testing.expect_value(t, erender.texture_size(f.app.renderer, f.sync.world_texture_handles[0]), [2]u32{8, 8})
+	testing.expect_value(t, entry.texture_index, before)
+	testing.expect(t, entry.texture_dirty, "the texture made again in the same slot is written again")
+	expect_clean(t, f.device)
+}
+
 // Particles that collide with the traced scene land on the floor they fall
 // to: with all the friction they stop where they land, and without any they
 // slide on along it.
