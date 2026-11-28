@@ -122,3 +122,29 @@ a_camera_draws_only_a_field_of_view_inside_its_range :: proc(t:^testing.T) {
         testing.expectf(t,camera_fov_valid(c.fov)==(c.fov==c.drawn || c.fov==0),"%v: valid is %v",c.fov,camera_fov_valid(c.fov))
     }
 }
+
+// A Viewmodel.fov the schema refuses is drawn at that of VIEWMODEL_DEFAULT,
+// as a Camera draws one at its default, so the place of its muzzle in the
+// world stays finite and on the ray of its pixel; 0 draws it as the world is.
+@(test)
+a_viewmodel_draws_only_a_field_of_view_inside_its_range :: proc(t:^testing.T) {
+    view:=core.VIEW_DEFAULT
+    view.fov=90*mm.RAD_PER_DEG
+    muzzle:=[3]f32{0.1,-0.05,-0.5}
+    cases:=[]struct{fov,drawn:f32}{
+        {1,1},
+        {CAMERA_FOV_MAX,CAMERA_FOV_MAX},
+        {0,0},
+        {55,VIEWMODEL_DEFAULT.fov},
+        {3.1,VIEWMODEL_DEFAULT.fov},
+        {-0.5,VIEWMODEL_DEFAULT.fov},
+        {math.nan_f32(),VIEWMODEL_DEFAULT.fov},
+        {math.inf_f32(1),VIEWMODEL_DEFAULT.fov},
+    }
+    for c in cases {
+        testing.expectf(t,viewmodel_fov({fov=c.fov})==c.drawn,"%v: drawn at %v",c.fov,viewmodel_fov({fov=c.fov}))
+        placed:=viewmodel_world_place(view,{fov=c.fov},muzzle)
+        want:=viewmodel_world_place(view,{fov=c.drawn},muzzle)
+        testing.expectf(t,placed==want && !math.is_nan(placed.x) && !math.is_inf(placed.x) && !math.is_nan(placed.y) && !math.is_inf(placed.y),"%v: its muzzle is placed at %v",c.fov,placed)
+    }
+}

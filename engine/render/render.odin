@@ -208,8 +208,9 @@ VIEWMODEL_DEFAULT :: Viewmodel{fov=55*mm.RAD_PER_DEG}
 // place, the World_Transform of a part of it, as the muzzle of a weapon: what
 // is drawn there in the world (a flash, a trace) is seen on the viewmodel.
 viewmodel_world_place :: proc(view:core.View,viewmodel:Viewmodel,place:[3]f32) -> [3]f32 {
-    if view.projection!=.Perspective || viewmodel.fov<=0 || view.fov<=0 {return place}
-    across:=math.tan(view.fov*0.5)/math.tan(min(viewmodel.fov,math.PI*0.99)*0.5)
+    fov:=viewmodel_fov(viewmodel)
+    if view.projection!=.Perspective || fov<=0 || view.fov<=0 {return place}
+    across:=math.tan(view.fov*0.5)/math.tan(fov*0.5)
     eye:=mm.quat_rotate(mm.quat_inverse(view.rotation),place-view.position)
     return view.position+mm.quat_rotate(view.rotation,[3]f32{eye.x*across,eye.y*across,eye.z})
 }
@@ -232,6 +233,12 @@ CAMERA_FOV_MAX :: 3.054326
 // Whether fov is the vertical field of view of a perspective Camera: from 0
 // (its default) to CAMERA_FOV_MAX radians.
 camera_fov_valid :: proc "contextless" (fov:f32) -> bool {return fov>=0 && fov<=CAMERA_FOV_MAX}
+
+// The vertical field of view a Viewmodel is drawn with, radians: its fov from
+// 0 (drawn as the world is) to CAMERA_FOV_MAX; one the schema refuses
+// (degrees given as radians, below 0, NaN) is drawn at that of
+// VIEWMODEL_DEFAULT, as a Camera draws one at its default.
+viewmodel_fov :: proc "contextless" (v:Viewmodel) -> f32 {return camera_fov_valid(v.fov)?v.fov:VIEWMODEL_DEFAULT.fov}
 
 Exposure_Mode :: enum u8 {Auto,Manual}
 
@@ -1001,7 +1008,7 @@ viewmodels_settle :: proc(r:^gpu.Renderer,t:Sync_Tables,viewmodels:^core.Table(V
     fovs:[gpu.OWNER_SLOTS]f32
     for row in 0..<(core.count(viewmodels) if viewmodels!=nil else 0) {
         slot:=body_owner(t,core.entity_at(viewmodels,row))
-        if slot!=0 && int(slot)<=len(fovs) {fovs[slot-1]=core.at(viewmodels,row).fov}
+        if slot!=0 && int(slot)<=len(fovs) {fovs[slot-1]=viewmodel_fov(core.at(viewmodels,row))}
     }
     gpu.scene_set_viewmodels(r,fovs)
 }
