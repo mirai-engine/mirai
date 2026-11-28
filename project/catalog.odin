@@ -7,12 +7,12 @@ import "mirai:std/base"
 import "mirai:std/serial"
 
 // The catalog of plugins: a repository with a file for each plugin others
-// made, CATALOG_PLUGINS/<name>.json, with the commit someone reviewed. A
-// plugin is added to it with a pull request that touches only its own file,
-// so two of them never conflict; cook/install keeps a checkout of it on the
-// machine and installs the plugins it lists at that commit. Beside the file,
-// <name>.png is the icon the editor shows the plugin with before it is
-// installed.
+// made, CATALOG_PLUGINS/<name>.json, naming its repository URL. A plugin is
+// added to it with a pull request that touches only its own file, so two of
+// them never conflict; cook/install keeps a checkout of it on the machine and
+// installs or updates each plugin directly from its own repository, pinning
+// the resulting commit in the project's manifest. Beside the file, <name>.png
+// is the icon the editor shows the plugin with before it is installed.
 
 CATALOG_URL :: "https://github.com/mirai-engine/mirai-plugins.git"
 CATALOG_PLUGINS :: "plugins"
@@ -22,7 +22,6 @@ MAX_CATALOG :: 256
 Catalog_File :: struct {
     description:[256]u8 `mirai:"text"`,
     url:Url `mirai:"text"`,
-    commit:Commit `mirai:"text"`, // the one reviewed: what an install from the catalog checks out
 }
 
 Catalog_Entry :: struct {
@@ -43,7 +42,7 @@ catalog_entry_parse :: proc(name,text:string,entry:^Catalog_Entry) -> (result:Er
         base.text_set(error.subject[:],name)
         return error
     }
-    if base.text_len(entry.url[:])==0 || !commit_valid(base.text_get(entry.commit[:])) {return error_about(.Source_Invalid,name)}
+    if base.text_len(entry.url[:])==0 {return error_about(.Source_Invalid,name)}
     return
 }
 

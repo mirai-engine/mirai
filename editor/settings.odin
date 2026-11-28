@@ -45,9 +45,6 @@ Settings_Plugins :: struct {
     origin:[SETTINGS_PLUGINS]project.Origin,
     from_git:[SETTINGS_PLUGINS]bool,    // of the project, a checkout its project.mirai names a source for (plugins_git.odin), or a companion in one
     companion:[SETTINGS_PLUGINS]bool,   // comes and goes with the plugin whose companions folder has it
-    source_commit:[SETTINGS_PLUGINS]project.Commit, // from git: the commit of its checkout
-    source_catalog:[SETTINGS_PLUGINS]bool,          // from git: installed from the catalog
-    catalog_update:[SETTINGS_PLUGINS]bool,          // from the catalog: it lists a commit the checkout does not have yet
     count:int,
 }
 
@@ -67,7 +64,6 @@ settings_plugins_load :: proc(s:^Session) {
         list.origin[list.count]=plugin.origin
         if source:=project.source_find(&p.manifest,base.text_get(plugin.manifest.name[:]));source!=nil && plugin.origin==.Project {
             list.from_git[list.count]=true
-            list.source_commit[list.count],list.source_catalog[list.count]=source.commit,source.catalog
         }
         // <root>/plugins/<plugin>/plugins/<name>
         if parts:=strings.split(strings.trim_prefix(plugin.folder,p.root),"/",context.temp_allocator);plugin.origin==.Project && len(parts)==5 {
@@ -86,7 +82,6 @@ settings_plugins_load :: proc(s:^Session) {
         }
         list.count+=1
     }
-    plugins_git_catalog_updates(s)
 }
 
 // The settings of the edited World and of the application, as the file names them.

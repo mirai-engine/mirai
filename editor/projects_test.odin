@@ -679,19 +679,40 @@ the_launcher_offers_update_recovery_and_a_row_menu :: proc(t:^testing.T) {
     testing.expect(t,read_error==nil && string(text)=="from main\n","Update wrote main's files")
     testing.expect(t,!p.rows[0].behind_main && !p.rows[0].needs_publish,"the row is synced after Update")
 
-    // An opening that failed with changed pins offers both retries.
+    // An opening that failed with changed pins or a git plugin error offers the matching retries.
     p.error_length=copy(p.error[:],"The build failed: packages")
     base.text_set(p.failed_opening[:],second)
     p.error_packages_dirty=true
+    base.text_set(p.error_plugin[:],"unreal")
     for _ in 0..<2 {frame(t,&ctx,s,{size=size,pointer_absent=true})}
+    _,has_plugin:=ui.widget_rect(&ctx,ui.id(&ctx,"projects_error_plugin"))
     _,has_pins:=ui.widget_rect(&ctx,ui.id(&ctx,"projects_error_packages"))
     _,has_clean:=ui.widget_rect(&ctx,ui.id(&ctx,"projects_error_clean"))
-    testing.expect(t,has_pins && has_clean,"the banner offers Restore package pins & retry and Clean cache & retry")
+    testing.expect(t,has_plugin && has_pins && has_clean,"the banner offers Update plugin & retry, Restore package pins & retry and Clean cache & retry")
     p.error_packages_dirty=false
+    p.error_plugin={}
     frame(t,&ctx,s,{size=size,pointer_absent=true})
+    _,has_plugin=ui.widget_rect(&ctx,ui.id(&ctx,"projects_error_plugin"))
     _,has_pins=ui.widget_rect(&ctx,ui.id(&ctx,"projects_error_packages"))
-    testing.expect(t,!has_pins,"no pins changed: no restore")
+    testing.expect(t,!has_plugin && !has_pins,"no plugin or pins error: neither button shows")
     p.error_length,p.failed_opening[0]=0,0
+
+    // Extracting a git plugin from a compiler error matches only declared git sources.
+    with_source:=project.manifest_default("Game")
+    base.text_set(with_source.sources[0].name[:],"unreal")
+    base.text_set(with_source.sources[0].url[:],"https://github.com/tomaszbk/mirai-unreal.git")
+    base.text_set(with_source.sources[0].commit[:],"0123456789abcdef0123456789abcdef01234567")
+    testing.expect_value(t,project.manifest_write(project.path(second,project.PROJECT_FILE,allocator=context.temp_allocator),&with_source).code,project.Error_Code.None)
+    Plugin_Case :: struct {text,want:string}
+    for c in ([]Plugin_Case{
+        {"C:/proj//plugins/unreal/plugins/unreal_vfx/editor/cooked_bridge.odin(165:9) Unknown field 'shadows'","unreal"},
+        {"C:\\proj\\plugins\\unreal\\editor\\unreal.odin(12:1) Syntax error","unreal"},
+        {"C:/proj/plugins/local_only/runtime/a.odin(1:1) Error",""},
+        {"C:/proj/game/game.odin(1:1) Error",""},
+    }) {
+        testing.expect_value(t,projects_error_plugin(second,c.text),c.want)
+    }
+    testing.expect_value(t,project.manifest_write(project.path(second,project.PROJECT_FILE,allocator=context.temp_allocator),&m).code,project.Error_Code.None)
 
     // A right click opens the row's menu.
     frame(t,&ctx,s,{size=size,pointer_absent=true})

@@ -18,8 +18,9 @@ import "mirai:std/subprocess"
 // once a build compiles it and the editor or the game loads it.
 //
 // The catalog (project.Catalog) is a repository too: the machine keeps a
-// checkout of it beside the files of the engine, and an install from it
-// checks out the commit it lists, the one that was reviewed.
+// checkout of it beside the files of the engine. Installing by catalog name
+// resolves its repository address there; installs and updates fetch directly
+// from the plugin's own repository.
 
 Result :: struct {
     ok:bool,
@@ -30,9 +31,8 @@ Result :: struct {
 
 // Clones url, checks it is a plugin this project can take and makes it one
 // of the project, active, at ref (a commit, tag or branch; empty: the default
-// branch of the repository). catalog: it comes from the catalog, at the
-// commit the catalog lists, and updates only to what the catalog lists.
-add :: proc(root,engine_root,url,ref:string,allocator:=context.allocator,catalog:=false) -> (result:Result) {
+// branch of the repository).
+add :: proc(root,engine_root,url,ref:string,allocator:=context.allocator) -> (result:Result) {
     url:=strings.trim_space(url)
     if url=="" {return fail(allocator,"Give the address of the repository of the plugin")}
     // A folder of this machine is written with forward slashes, as git takes it everywhere.
@@ -70,7 +70,6 @@ add :: proc(root,engine_root,url,ref:string,allocator:=context.allocator,catalog
     source.name=plugin.name
     base.text_set(source.url[:],url)
     base.text_set(source.commit[:],commit)
-    source.catalog=catalog
     if !plugin.automatic && !named_add(&manifest,plugin.name) {return fail(allocator,"A project names at most %d plugins",project.MAX_PLUGINS)}
     if error:=os.make_directory_all(project.path(root,"plugins",allocator=context.temp_allocator));error!=nil && error!=.Exist {return fail(allocator,"The plugins folder of the project could not be made")}
     if error:=os.rename(staging,folder);error!=nil {return fail(allocator,"%s could not be moved to %s: %v",staging,folder,error)}
@@ -85,20 +84,19 @@ add :: proc(root,engine_root,url,ref:string,allocator:=context.allocator,catalog
     return
 }
 
-// Installs the plugin the catalog lists by name, at the commit it lists, as
-// the checkout of the catalog on this machine has it.
-add_from_catalog :: proc(root,engine_root,name:string,allocator:=context.allocator) -> Result {
+// Installs the plugin the catalog lists by name, at ref (empty: the default
+// branch of its repository), as the checkout of the catalog on this machine
+// has it.
+add_from_catalog :: proc(root,engine_root,name:string,ref:="",allocator:=context.allocator) -> Result {
     catalog:=new(project.Catalog,context.temp_allocator)
     if message:=catalog_load(engine_root,catalog);message!="" {return fail(allocator,"%s",message)}
     entry:=project.catalog_find(catalog,name)
     if entry==nil {return fail(allocator,"The catalog has no %s; `mirai plugin catalog` lists the ones it has",name)}
-    return add(root,engine_root,base.text_get(entry.url[:]),base.text_get(entry.commit[:]),allocator,catalog=true)
+    return add(root,engine_root,base.text_get(entry.url[:]),ref,allocator)
 }
 
-// Moves a plugin from git to ref: a commit, tag or branch. Empty: for one of
-// the catalog, the commit the catalog lists, never one older than the
-// checkout's and never without the catalog; for another, the default branch
-// of its repository. The message has the commits it brings.
+// Moves a plugin from git to ref: a commit, tag or branch. Empty: the default
+// branch of its repository. The message has the commits it brings.
 update :: proc(root,engine_root,name,ref:string,allocator:=context.allocator) -> (result:Result) {
     manifest_path:=project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator)
     manifest,read_error:=project.manifest_read(manifest_path)
@@ -112,16 +110,6 @@ update :: proc(root,engine_root,name,ref:string,allocator:=context.allocator) ->
     }
     url:=base.text_get(source.url[:])
     target:=strings.trim_space(ref)
-    reviewed:=false // the target is the commit of the catalog, not one asked for
-    if target=="" && source.catalog {
-        catalog:=new(project.Catalog,context.temp_allocator)
-        if message:=catalog_load(engine_root,catalog);message!="" {return fail(allocator,"%s comes from the catalog, which could not be read: %s",name,message)}
-        entry:=project.catalog_find(catalog,name)
-        if entry==nil {return fail(allocator,"The catalog no longer lists %s",name)}
-        if base.text_get(entry.url[:])!=url {return fail(allocator,"The catalog lists %s at another address now: %s",name,base.text_get(entry.url[:]))}
-        target=strings.clone(base.text_get(entry.commit[:]),context.temp_allocator)
-        reviewed=true
-    }
     if _,failure:=git(folder,"fetch","--quiet","--tags","origin");failure!="" {return fail(allocator,"%s could not be fetched: %s",url,failure)}
     // A branch as the remote has it now, before a local one of the same name.
     if target=="" {target="HEAD"}
@@ -136,13 +124,6 @@ update :: proc(root,engine_root,name,ref:string,allocator:=context.allocator) ->
     if commit==old {
         result.ok=true
         result.message=fmt.aprintf("%s is already at %s",name,commit[:12],allocator=allocator)
-        return
-    }
-    // The catalog never takes a plugin back: one checked out past its commit, by a ref asked for, stays.
-    if _,behind:=git(folder,"merge-base","--is-ancestor",commit,old);reviewed && behind=="" {
-        base.text_set(result.commit[:],old)
-        result.ok=true
-        result.message=fmt.aprintf("%s stays at %s: the catalog lists %s, which is older",name,old[:12],commit[:12],allocator=allocator)
         return
     }
     log,_:=git(folder,"log","--oneline","--no-decorate",fmt.tprintf("%s..%s",old,commit))
@@ -163,15 +144,6 @@ update :: proc(root,engine_root,name,ref:string,allocator:=context.allocator) ->
     result.ok=true
     result.message=fmt.aprintf("%s %s..%s\n%s\n%s",name,old[:12],commit[:12],log,stat,allocator=allocator)
     return
-}
-
-// Whether the checkout of the plugin name has commit in its history: it is
-// at it or past it. False too when there is no checkout.
-has_commit :: proc(root,name,commit:string) -> bool {
-    folder:=project.path(root,"plugins",name,allocator=context.temp_allocator)
-    if !os.is_dir(folder) {return false}
-    _,failure:=git(folder,"merge-base","--is-ancestor",commit,"HEAD")
-    return failure==""
 }
 
 // Takes a plugin from git out of the project and deletes its checkout,

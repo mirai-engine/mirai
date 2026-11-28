@@ -65,7 +65,6 @@ Source :: struct {
     name:Name `mirai:"text"`,
     url:Url `mirai:"text"`,
     commit:Commit `mirai:"text"`,
-    catalog:bool, // installed from the catalog: it updates only to the commit the catalog lists
 }
 
 Manifest :: struct {

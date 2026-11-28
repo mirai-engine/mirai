@@ -105,16 +105,17 @@ project world. Layout, manifests and build:
    ([git plugins](references/plugins.md#git-plugins-and-catalog)). It ships its data and its
    licenses inside.
 2. `mirai plugin check <folder>` validates it as the installation will, and
-   `mirai plugin add <url> --ref <commit>` in a test project installs it; then
-   `mirai build editor` of that project builds it.
+   `mirai plugin add <url>` in a test project installs it; then `mirai build editor` of that
+   project builds it.
 3. A PR to <https://github.com/mirai-engine/mirai-plugins> adds only `plugins/<name>.json` with
-   the description, the URL and the reviewed commit (the catalog README has the format) and, if
-   it has an icon, `plugins/<name>.png`, the same one that the `icon` of its manifest names. CI
-   runs `uv run scripts/validate.py`: the file, the fields, that the repository at that commit is
-   the plugin of that name with its license file, and that no name, not even a companion's, is
+   the description and the repository URL (the catalog README has the format) and, if it has an
+   icon, `plugins/<name>.png`, the same one that the `icon` of its manifest names. CI runs
+   `uv run scripts/validate.py`: the file, the fields, that the repository's default branch is the
+   plugin of that name with its license file, and that no name, not even a companion's, is
    repeated in the catalog. The license lives only in the plugin repository.
-4. A new version is another PR that changes only `commit`: projects that installed it from the
-   catalog update to that commit and to none that was not reviewed.
+4. New versions need no PR to the catalog: pushing to the plugin's own repository makes them
+   available to every project on `mirai plugin update` or Update in Project Settings, while each
+   project keeps its pinned commit in `project.mirai`.
 
 ## Invariants
 

@@ -151,6 +151,7 @@ Projects :: struct {
     error_copied:f64,   // ui.Context.time its banner last copied it (error_banner)
     failed_opening:[project.RECENT_PATH]u8, // the project whose opening failed, which the banner retries
     error_packages_dirty:bool, // its Kai working copy changed packages.mirai or packages/*.mirai
+    error_plugin:project.Name, // a plugin from git whose file the failure named, to update and retry
     menu:[project.RECENT_PATH]u8,     // the folder of the row whose right-click menu is open
     removing:[project.RECENT_PATH]u8, // the folder Remove local copy asks to confirm; empty: none
     removing_kai:bool,         // it is a Kai workspace, snapshotted before the question
@@ -598,7 +599,7 @@ projects_open :: proc(s:^Session,folder:string,steps:[]install.Step={}) -> strin
     }
     if !os.is_file(project.path(absolute,project.PROJECT_FILE,allocator=context.temp_allocator)) {return fmt.tprintf("%s is not a project: it has no %s",absolute,project.PROJECT_FILE)}
     base.text_set(p.opening[:],absolute)
-    p.error_length,p.failed_opening[0],p.error_packages_dirty=0,0,false
+    p.error_length,p.failed_opening[0],p.error_packages_dirty,p.error_plugin=0,0,false,{}
     p.cancelling=false
     p.from_git=len(steps)>0 || install.sync_needed(absolute)
     if p.from_git {
@@ -724,14 +725,16 @@ projects_poll :: proc(s:^Session) {
 }
 
 // The project being opened failed to build, refresh its assets or build its
-// shaders: the banner offers to retry it, after restoring the package pins
-// its Kai working copy changed.
+// shaders: the banner offers to retry it, after updating a git plugin the
+// error named, restoring changed package pins, or cleaning its build cache.
 @(private)
 projects_open_failed :: proc(s:^Session) {
     p:=s.projects
     folder:=base.text_get(p.opening[:])
     base.text_set(p.failed_opening[:],folder)
     p.error_packages_dirty=ka.project_packages_dirty(&s.store,folder,kai_types(s))
+    p.error_plugin={}
+    if name:=projects_error_plugin(folder,string(p.error[:p.error_length]));name!="" {base.text_set(p.error_plugin[:],name)}
 }
 
 // Starts the editor on the project built. False when it could not.
@@ -1232,13 +1235,16 @@ projects_error_build :: proc(s:^Session) {
     ctx:=s.gui.ctx
     if p.error_length<=0 {return}
     if error_banner(ctx,ui.id(ctx,"projects_error"),p.error[:],&p.error_length,&p.error_copied,dismiss=true) {
-        p.error_length,p.failed_opening[0],p.error_packages_dirty=0,0,false
+        p.error_length,p.failed_opening[0],p.error_packages_dirty,p.error_plugin=0,0,false,{}
         return
     }
     failed:=base.text_get(p.failed_opening[:])
     if failed=="" || !os.is_file(project.path(failed,project.PROJECT_FILE,allocator=context.temp_allocator)) {return}
     busy:=projects_opening(p) || p.next
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),gap=8,align_y=.Center}) {
+        if plugin:=base.text_get(p.error_plugin[:]);plugin!="" {
+            if ui.button(ctx,ui.id(ctx,"projects_error_plugin"),{label=fmt.tprintf("Update %s & retry",plugin),icon=ui.icon_user(u8(User_Icon.Down)),variant="field",height=26,size=ui.metric(ctx,"font_small"),disabled=busy,tip="Fetches the latest version of this plugin from its repository and retries opening"}).clicked {projects_retry_plugin(s)}
+        }
         if p.error_packages_dirty && ui.button(ctx,ui.id(ctx,"projects_error_packages"),{label="Restore package pins & retry",icon=ui.icon_user(u8(User_Icon.Retry)),variant="field",height=26,size=ui.metric(ctx,"font_small"),disabled=busy,tip="Restores packages.mirai and packages/*.mirai from the last change; every other edit stays"}).clicked {projects_retry_packages(s)}
         if ui.button(ctx,ui.id(ctx,"projects_error_clean"),{label="Clean cache & retry",icon=.Refresh,variant="field",height=26,size=ui.metric(ctx,"font_small"),disabled=busy,tip="Removes the generated build, shader and asset caches in .mirai, never its Kai workspace"}).clicked {projects_retry_clean(s)}
     }

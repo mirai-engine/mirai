@@ -94,15 +94,11 @@ dialog.
 - Sync (`install.sync`, before a project opens) makes a copy of a checkout without `.git` (one a
   pull brought) the checkout at the pinned commit, keeping its files; what differs stays as
   changes of its own.
-- Updating and removing refuse if the checkout has changes of its own; removing also refuses if an
-  active plugin that is not its companion depends on it. An update that does not pass
-  `plugin_check` goes back to the previous commit.
-- One installed from the catalog (`catalog` in its source) updates only to the commit that the
-  catalog lists, when a PR to the catalog moves it and not when its repository advances, and never
-  goes back: if it arrived with `--ref` at a descendant of that commit, it stays. Without a
-  readable catalog, or if the catalog no longer lists it or lists it with another `url`, the
-  update fails. The editor shows "Update available" only when the catalog lists another commit.
-  One added by address goes to the default branch of its remote.
+- Updating moves a plugin to the default branch of its repository (or `--ref`) and updates its
+  pinned commit in `project.mirai`, whether it was installed from the catalog or by URL; it needs
+  no PR to the catalog. Updating and removing refuse if the checkout has changes of its own;
+  removing also refuses if an active plugin that is not its companion depends on it. An update that
+  does not pass `plugin_check` goes back to the previous commit.
 - The commit in `sources` rules: `sync` clones or moves each checkout to it (a fresh clone of the
   project, a pull that changed a commit). `sync_needed` decides it without running git, and the
   `tools/mirai` build (`build`, `edit`, `play`), the editor Build and the launcher call it before
@@ -115,12 +111,13 @@ dialog.
   nothing else.
 
 The **catalog** is the `project.CATALOG_URL` repository with one file per plugin,
-`plugins/<name>.json` (`project.Catalog_File`; the name is the file's): each plugin with the
-commit that was reviewed, which is the one installed, never HEAD. The engine reads the format;
-what validates it on each PR is the catalog's CI
-([publishing](../SKILL.md#publish-a-plugin-in-the-catalog)). One is added or moved with a PR that
-touches only its file, so two PRs never collide; an invalid file leaves the catalog unread and the
-error names the plugin. The machine keeps a checkout of the catalog in its machine folder
+`plugins/<name>.json` (`project.Catalog_File`; the name is the file's): each plugin with its
+description and repository URL. Installing by catalog name checks out that repository's default
+branch (or `--ref`) and pins the commit in `project.mirai`. The engine reads the format; what
+validates it on each PR is the catalog's CI
+([publishing](../SKILL.md#publish-a-plugin-in-the-catalog)). One is added with a PR that touches
+only its file, so two PRs never collide; an invalid file leaves the catalog unread and the error
+names the plugin. The machine keeps a checkout of the catalog in its machine folder
 (`project.machine_folder`). Next to the file, `plugins/<name>.png` (optional,
 `project.catalog_icon`) is the icon with which the editor shows it before installing it; once
 installed, the `icon` of its `plugin.mirai` applies

@@ -5,6 +5,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "mirai:cook/build"
+import "mirai:cook/install"
 import ka "mirai:cook/kai"
 import vcs "mirai:kai"
 import "mirai:platform"
@@ -80,10 +81,38 @@ projects_cache_clean :: proc(s:^Session,folder:string) -> string {
 
 // The opening that failed has its errors cleared and starts again.
 @(private)
-projects_retry :: proc(s:^Session,folder:string) {
+projects_retry :: proc(s:^Session,folder:string,steps:[]install.Step={}) {
     p:=s.projects
-    p.error_length,p.failed_opening[0],p.error_packages_dirty=0,0,false
-    if message:=projects_open(s,folder);message!="" {notify(s,message)}
+    p.error_length,p.failed_opening[0],p.error_packages_dirty,p.error_plugin=0,0,false,{}
+    if message:=projects_open(s,folder,steps);message!="" {notify(s,message)}
+}
+
+// If an opening error names a file inside plugins/<name>/ of a git source
+// listed in folder's project.mirai, returns that plugin name; "" otherwise.
+@(private)
+projects_error_plugin :: proc(folder,text:string) -> string {
+    if folder=="" || text=="" {return ""}
+    m,e:=project.manifest_read(project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator))
+    if e.code!=.None {return ""}
+    normalized,_:=strings.replace_all(text,"\\","/",context.temp_allocator)
+    for &source in m.sources {
+        name:=base.text_get(source.name[:])
+        if name=="" {continue}
+        if strings.contains(normalized,fmt.tprintf("/plugins/%s/",name)) {
+            return strings.clone(name,context.temp_allocator)
+        }
+    }
+    return ""
+}
+
+// Updates the git plugin whose file failed to build and opens the project again.
+projects_retry_plugin :: proc(s:^Session) {
+    p:=s.projects
+    folder:=strings.clone(base.text_get(p.failed_opening[:]),context.temp_allocator)
+    plugin:=strings.clone(base.text_get(p.error_plugin[:]),context.temp_allocator)
+    if folder=="" || plugin=="" {return}
+    steps:=[1]install.Step{{kind=.Update,text=plugin}}
+    projects_retry(s,folder,steps[:])
 }
 
 // Restores the pins of the packages of the project whose opening failed
@@ -171,7 +200,7 @@ projects_remove_local :: proc(s:^Session,folder:string) -> string {
     }
     projects_recent_save(s)
     if project.path_same(base.text_get(p.removing[:]),absolute) {p.removing[0]=0}
-    if project.path_same(base.text_get(p.failed_opening[:]),absolute) {p.error_length,p.failed_opening[0],p.error_packages_dirty=0,0,false}
+    if project.path_same(base.text_get(p.failed_opening[:]),absolute) {p.error_length,p.failed_opening[0],p.error_packages_dirty,p.error_plugin=0,0,false,{}}
     if s.kai!=nil && s.kai.team!=nil {kai_team_read(s)}
     projects_rows_read(s)
     return ""
