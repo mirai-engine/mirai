@@ -88,8 +88,9 @@ mirai shaders check templates/empty/shaders/pulse.slang --project demo
 
 ## Programs
 
-Every program declares `//! mirai surface|postprocess|vfx|ui Name` and `//! parameter field {json}`
-(`group` sets Details card); parameters pack into a fixed reflected block.
+Every program declares `//! mirai surface|postprocess|vfx|ui|sky Name` and
+`//! parameter field {json}` (`group` sets Details card); parameters pack into a fixed reflected
+block.
 
 | Domain | Contract & key helpers |
 | --- | --- |
@@ -97,6 +98,7 @@ Every program declares `//! mirai surface|postprocess|vfx|ui Name` and `//! para
 | Vfx | `mirai_vfx.slang`: `Attributes` (`<= ATTRIBUTE_BYTES`), `initialize`, `update`, `render`, optional `//! moves`, `//! births` (`births`), up to `PROGRAM_RESOURCES` `//! resource <name> surface\|channel\|grid\|bones\|transform` (`mirai_vfx_surface_*`, `_channel_*`, `_grid_*`, `_bone*`, `_transform*`), up to `MAX_STAGES` `//! stage <name> over particles\|<res> [iterations N]` (`mirai_vfx_particle_stage`/`_cell_stage`). `mirai_vfx_texture`, `mirai_vfx_random`, `mirai_vfx_trace` (opaque hits outside `render`). Example: `Orbit` (`plugins/vfx/shaders/orbit.slang`). |
 | PostProcess | `Mirai_PostProcess_Context`, `mirai_scene_color`/`depth`/`normal`, `mirai_outline` (`Mirai_Outline`). Builtins: `Blur` (`shaders/materials/screen_blur.slang`), `ColorGrade` (`shaders/materials/color_grade.slang`). |
 | UI | `evaluate(Mirai_Ui_Context, Parameters)` -> straight-alpha display color; receives 4 node floats (16 bytes, no catalog defaults). Builtins (`shaders/materials/ui_*.slang`): `Ui_Radial_Wipe`, `Ui_Dissolve`, `Ui_Shine`, `Ui_Gradient_Sweep`, `Ui_Slant`, `Ui_Polygon`, `Ui_Radial_Gradient`, `Ui_Rays` ([UI](ui.md#ui-world-panels-and-debug-lines)). |
+| Sky | `evaluate(Mirai_Sky_Context, Parameters)` -> color of a direction of the sky (`direction`, `sun_direction`, `sun`, `texel`), baked into an image ([sky programs](gi.md)). `sky_probe` sets `abi.Program.sun` when it reads the sun: only then does a moving sun draw it again. |
 
 ```slang
 //! mirai vfx Spark_Drift

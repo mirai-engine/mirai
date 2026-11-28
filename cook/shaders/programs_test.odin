@@ -849,6 +849,36 @@ sky_programs_have_an_include_of_their_own_and_are_listed_for_their_stages :: pro
     testing.expect(t,!os.exists(path_join(f.output,"include",SKY_FOLDER,"Grade",allocator=context.temp_allocator)),"a program of another domain has no include of a Sky program")
 }
 
+// The probe of a Sky program says whether it reads the sun of its context, a
+// read behind a branch a parameter turns off included; one that does not is
+// not drawn again as the sun moves. The cache keeps what it says.
+@(test)
+the_probe_of_a_sky_program_says_whether_it_reads_the_sun :: proc(t:^testing.T) {
+    f:Programs_Fixture
+    if !programs_fixture(t,&f) {return}
+    Case :: struct {name,body:string,sun:bool}
+    cases:=[]Case{
+        {"Plain","return ctx.direction.y>0.0?p.tint:float3(0.0);",false},
+        {"Textured","return mirai_sample_texture_level(p.map,ctx.direction.xz*0.5+0.5,0.0).rgb*p.tint;",false},
+        {"Glowing","return p.tint*pow(saturate(dot(ctx.direction,ctx.sun_direction)),8.0);",true},
+        {"Lit","return p.tint.x>2.0?p.tint*ctx.sun:p.tint;",true},
+    }
+    for c in cases {
+        fixture_write(t,f.project,fmt.tprintf("shaders/%s.slang",c.name),fmt.tprintf("//! mirai sky %s\nnamespace %s {{struct Parameters {{float3 tint;uint map;}}; float3 evaluate(Mirai_Sky_Context ctx,Parameters p) {{%s}}}}\n",c.name,c.name,c.body))
+    }
+    catalog,problem:=programs_of(&f)
+    testing.expect_value(t,problem,"")
+    f.runner.runs=0
+    warm,_:=programs_of(&f)
+    testing.expect_value(t,f.runner.runs,0)
+    for c in cases {
+        for read in ([]Catalog{catalog,warm}) {
+            program,found:=program_named(read,c.name)
+            testing.expectf(t,found && program.sun==c.sun,"%s reads the sun: %v, not %v",c.name,c.sun,program.sun)
+        }
+    }
+}
+
 // A Surface program that says `//! vertex` has its function vertex called in
 // its own include, says in the catalog what it reads and how far it
 // reaches, a number or a float parameter, and is listed for the stages

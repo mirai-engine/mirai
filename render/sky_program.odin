@@ -1,5 +1,6 @@
 package mirai_render
 
+import "core:math"
 import "core:math/linalg"
 import "mirai:render/abi"
 import "mirai:rhi"
@@ -12,17 +13,25 @@ import "mirai:rhi"
 // exposure, media and glass take it as they take an image, times the
 // luminance of the sky. The program colors directions of the sky, which turns
 // with its entity, so turning it draws nothing again; another program, other
-// parameters or a sun that moves draw it again at the start of the frame, and
-// the world is lit again. A look of the sky whose program was never drawn
+// parameters, or a sun that turns by more than SKY_SUN_TURN under a program
+// that reads it (abi.Program.sun), draw it again at the start of the frame,
+// and the world is lit again. A look of the sky whose program was never drawn
 // shows the gradient of its luminance until its stage is made; one drawn
 // before keeps its image until it is drawn again (an edit of the program in
 // the editor). Nothing is made until a sky names a program.
+//
+// Memory: each look of the sky a program draws keeps an image of
+// SKY_BAKE_TEXELS half-float RGBA texels, 22.4 MB, two at most (44.8 MB); the
+// texels a bake writes before they are copied in take as much again, only
+// from the frame that draws one to the next that draws none (67.1 MB at the
+// peak).
 
 SKY_BAKE_WIDTH :: abi.SKY_BAKE_WIDTH
 SKY_BAKE_HEIGHT :: SKY_BAKE_WIDTH / 2
 SKY_BAKE_LEVELS :: 12 // from SKY_BAKE_WIDTH across to one texel
 #assert(1 << (SKY_BAKE_LEVELS - 1) == SKY_BAKE_WIDTH)
 @(private) SKY_BAKE_TEXELS :: SKY_BAKE_WIDTH * SKY_BAKE_HEIGHT * 4 / 3 + SKY_BAKE_LEVELS // of every level, rounded up
+SKY_SUN_TURN :: 2 * math.PI / SKY_BAKE_WIDTH // radians the sun turns before a program that reads it is drawn again: a texel of the finest level
 
 // A sky a Sky program draws: the program and its parameters, as it reflects
 // them. program 0: none.
@@ -51,7 +60,7 @@ Sky_Bake :: struct {
 @(private)
 Sky_Bakes :: struct {
 	bakes:   [2]Sky_Bake, // of the sky on, and of the one a change comes from
-	staging: rhi.Buffer,  // the texels of every level of a bake, half floats, before they are copied in
+	staging: rhi.Buffer,  // the texels of every level of a bake, half floats, before they are copied in: while frames draw bakes
 	stages:  Program_Computes, // of sky_bake__<program>.comp
 }
 
@@ -63,22 +72,30 @@ sky_programs_wanted :: proc "contextless" (r: ^Renderer) -> [2]Sky_Program {
 	return {e.sky_program, e.sky_from_program if e.sky_from_weight > 0 else {}}
 }
 
-// The image of each look of the sky drawn by a program, and the texels of a
-// bake, made the first time a frame wants them and kept; before the frame
-// begins, as the texture table changes only between frames. Without memory
-// for them, the error says so and the sky shows its gradient.
+// The image of each look of the sky drawn by a program, made the first time a
+// frame wants it and kept; before the frame begins, as the texture table
+// changes only between frames. Without memory for it, the error says so and
+// the sky shows its gradient.
 @(private)
 sky_bakes_ensure :: proc(r: ^Renderer) {
 	b := &r.sky_bakes
-	wanted := sky_programs_wanted(r)
-	for sky, i in wanted {
+	for sky, i in sky_programs_wanted(r) {
 		if sky.program == 0 || b.bakes[i].texture != 0 {continue}
 		b.bakes[i].texture, b.bakes[i].handle = written_texture(r, SKY_BAKE_WIDTH, SKY_BAKE_HEIGHT, SKY_BAKE_LEVELS, .RGBA16_Float, "sky program")
 		if b.bakes[i].texture == 0 {return}
 	}
-	if b.staging != 0 || wanted[0].program == 0 && wanted[1].program == 0 {return}
-	b.staging = rhi.buffer_create(r.device, {size = SKY_BAKE_TEXELS * 8, usage = {.Storage, .Transfer_Src}, name = "sky program bake"})
-	if b.staging == 0 {set_error(r, "sky program: %s", rhi.device_error(r.device))}
+}
+
+// Whether a bake that holds `held` (once held) is drawn again for a sky and
+// the sun it sees: another program or other parameters, a stage made again,
+// or, under a program that reads the sun, a sun that came on, went off or
+// turned by more than SKY_SUN_TURN since it was drawn.
+@(private)
+sky_bake_due :: proc "contextless" (bake: Sky_Bake, sky: Sky_Program, sun: Vec4, reads_sun: bool) -> bool {
+	if !bake.held || bake.stale || bake.key.sky != sky {return true}
+	if !reads_sun {return false}
+	was := bake.key.sun
+	return was.w != sun.w || sun.w > 0 && linalg.dot(was.xyz, sun.xyz) < math.cos(f32(SKY_SUN_TURN))
 }
 
 @(private)
@@ -127,7 +144,12 @@ sky_image_of :: proc "contextless" (r: ^Renderer, slot: int, texture: Texture_Ha
 @(private)
 sky_bakes_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 	b := &r.sky_bakes
-	if b.staging == 0 {return true}
+	drawn := false
+	// The texels of a bake go once a frame draws none: the device frees them after the frames that copy them.
+	defer if !drawn && b.staging != 0 {
+		rhi.buffer_destroy(r.device, b.staging)
+		b.staging = 0
+	}
 	sun: Vec4
 	if s := &r.scene; s.sun.enabled {
 		turn := s.environment.sky_orientation
@@ -137,12 +159,19 @@ sky_bakes_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 	}
 	for sky, i in sky_programs_wanted(r) {
 		bake := &b.bakes[i]
-		key := Sky_Bake_Key{sky, sun}
-		if sky.program == 0 || bake.texture == 0 || bake.held && !bake.stale && bake.key == key {continue}
+		if sky.program == 0 || bake.texture == 0 {continue}
 		program := program_of_id(r, sky.program)
-		if program == nil || program.domain != .Sky || program.id >= POINTS_PROGRAM_CAPACITY {continue}
+		if program == nil || program.domain != .Sky || program.id >= POINTS_PROGRAM_CAPACITY || !sky_bake_due(bake^, sky, sun, program.sun) {continue}
 		pipeline := program_compute(r, &b.stages, program^, "sky_bake")
 		if pipeline == 0 {continue}
+		if b.staging == 0 {
+			b.staging = rhi.buffer_create(r.device, {size = SKY_BAKE_TEXELS * 8, usage = {.Storage, .Transfer_Src}, name = "sky program bake"})
+			if b.staging == 0 {
+				set_error(r, "sky program: %s", rhi.device_error(r.device))
+				return true
+			}
+		}
+		drawn = true
 		rhi.cmd_timestamp(cmd, "sky program")
 		Params :: struct {packed: [16]Vec4, sun: Vec4, level: u32, pad: [3]u32}
 		params := Params{packed = sky.params, sun = sun}
@@ -161,7 +190,7 @@ sky_bakes_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 			offset += u64(max(u32(SKY_BAKE_WIDTH) >> level, 1)) * u64(max(u32(SKY_BAKE_HEIGHT) >> level, 1))
 		}
 		rhi.cmd_barrier_texture(cmd, bake.texture, .Shader_Read)
-		bake.key, bake.held, bake.stale = key, true, false
+		bake.key, bake.held, bake.stale = {sky, sun}, true, false
 		scene_relit(&r.scene)
 	}
 	return true

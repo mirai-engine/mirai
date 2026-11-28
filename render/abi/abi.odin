@@ -732,7 +732,7 @@ Shader_Entry :: struct {
 // by its id and gives it up to PROGRAM_PARAMETER_BYTES of parameters, laid
 // out as the program reflects them.
 SHADER_CATALOG :: "catalog.json"
-SHADER_CATALOG_VERSION :: 8
+SHADER_CATALOG_VERSION :: 9
 
 Shader_Catalog :: struct {
     version:int,
@@ -797,6 +797,7 @@ Program :: struct {
     standard:bool,                // of a Surface program: it builds on the standard model of its material (mirai_surface_standard), whose maps it reads
     reflectance:bool,             // of a Surface program: its source names the specular color, factor or IOR of Mirai_Surface, so what it reflects may depart from what its base color and metallic give
     reads:Program_Reads,          // of a Surface program: what its evaluation reads of its context
+    sun:bool,                     // of a Sky program: its evaluation reads the sun of its context, so its image is drawn again as the sun moves
     attributes:int,               // of a Vfx program: bytes of what it keeps of each particle
     attribute_fields:[]Program_Attribute, // of a Vfx program: the fields of those bytes, in the order it declares them
     resources:[]Program_Resource, // of a Vfx program, in the order it declares them

@@ -152,11 +152,14 @@ ok := render.reference_frame(r, frame_desc, {.Gi}, &gi_ref)
   multiplies it, exposure and light scale unchanged). `sky_bake__<Name>.comp` (`//! per sky
   program`, no stage without a program) draws a mipped `SKY_BAKE_WIDTH` x half RGBA16F
   equirect in a texture-table slot, which `view_begin` reads in place of `sky_texture`, so every
-  consumer above is unchanged. Drawn at frame start (before DDGI) when program, params or the sun
-  (in sky space) change, then `scene_relit`; turning the sky draws nothing. Two slots (on and
-  `sky_from`) blend program changes. Until a slot's stage is made it shows the gradient; an edited
-  program keeps its last image until redrawn. Lit `atmosphere` still wins (`render.sky_material`).
-  Not per pixel: sharpness is the bake's; no `time` (animated skies are the next form).
+  consumer above is unchanged. Drawn at frame start (before DDGI) when program or params change,
+  or the sun (in sky space) turns more than `SKY_SUN_TURN` (a finest texel) under a program whose
+  `sky_probe` found it reads the sun (`abi.Program.sun`), then `scene_relit`; turning the sky draws
+  nothing. Two slots (on and `sky_from`) blend program changes. Memory: 22.4 MB per slot image; the
+  22.4 MB staging lives only from a frame that bakes to the next that does not. Until a slot's
+  stage is made it shows the gradient; an edited program keeps its last image until redrawn. Lit
+  `atmosphere` still wins (`render.sky_material`). Not per pixel: sharpness is the bake's; no
+  `time` (animated skies are the next form).
 - **Functions.** `sky_radiance(dir, spread)`, `sky_irradiance(normal)`, `sky_seen(dir)` (adds sun
   disc `Settings.sun_radius`, capped at `SUN_DISC_MAX`, + halo when `Sun.disc`),
   `sun_light(position)`.

@@ -933,6 +933,41 @@ surface_probe :: proc(
     return spirv_takes_derivatives(spirv),spirv_reads(spirv,PROBE_READS),spirv_reads(spirv,PROBE_READS+PROBE_READ_CLASSES),true
 }
 
+// Whether a Sky program reads the sun of its context (sun_direction and sun):
+// its evaluation compiled alone and optimized, with the sun from a buffer of
+// its own, at PROBE_READS, which what is left still reads where the program
+// does. A program that does not is drawn once and not again as the sun moves.
+// ok: the compiler ran.
+@(private)
+sky_probe :: proc(
+    runner:^Runner,slangc,root,copied,source_folder,name,temporary:string,content:Program_Content,
+    plugins:[]string=nil,memory:=Memory{},
+) -> (sun,ok:bool) {
+    wrapper:=path_join(temporary,fmt.tprintf("%s.sky.slang",name),allocator=context.temp_allocator)
+    compiled:=path_join(temporary,fmt.tprintf("%s.sky.spv",name),allocator=context.temp_allocator)
+    text:=strings.builder_make(context.temp_allocator)
+    strings.write_string(&text,"#define MIRAI_MATERIAL_REFLECTION 1\n#include \"mirai_material.slang\"\n")
+    fmt.sbprintf(&text,"[[vk::binding(%d,0)]] RWStructuredBuffer<float4> mirai_probe_colors;\n",PROBE_BINDING)
+    fmt.sbprintf(&text,"[[vk::binding(%d,0)]] StructuredBuffer<float4> mirai_probe_inputs;\n",PROBE_BINDING+1)
+    fmt.sbprintf(&text,"[[vk::binding(%d,0)]] StructuredBuffer<float4> mirai_probe_sun;\n",PROBE_READS)
+    program_content_write(&text,content)
+    fmt.sbprintf(&text,"[[vk::binding(%d,0)]] ConstantBuffer<%s::Parameters> mirai_probe_parameters;\n",PROBE_BINDING+2,name)
+    strings.write_string(&text,"[shader(\"fragment\")] float4 probe_main() : SV_Target {Mirai_Sky_Context c;c.direction=mirai_probe_inputs[0].xyz;c.texel=mirai_probe_inputs[0].w;c.sun_direction=mirai_probe_sun[0].xyz;c.sun=mirai_probe_sun[0].w;\n")
+    fmt.sbprintf(&text,"mirai_probe_colors[0]=float4(%s::evaluate(c,mirai_probe_parameters),0.0);return float4(0.0);}}\n",name)
+    if !write_file(wrapper,text.buf[:]) {return}
+    command:=make([dynamic]string,context.temp_allocator)
+    append(&command,slangc,wrapper)
+    reflection_include_dirs(&command,root,copied,source_folder,plugins,content)
+    append(&command,"-entry","probe_main","-o",compiled,"-warnings-disable","40100,41035")
+    append(&command,..SPIRV_FLAGS)
+    append(&command,..SLANG_OPTIMIZATION)
+    if _,ran:=slang_run(runner,command[:],context.temp_allocator,memory);!ran {return}
+    spirv,read_error:=os.read_entire_file(compiled,context.temp_allocator)
+    if read_error!=nil {return}
+    // The buffer of the sun is that of the first class of spirv_reads.
+    return abi.Program_Read(0) in spirv_reads(spirv,PROBE_READS),true
+}
+
 // The classes whose buffer, at `first` plus the class, the code of a module
 // reads. Anything it does not follow counts as a read of every class.
 @(private)
@@ -1106,6 +1141,7 @@ Program_Entry :: struct {
     coverage:        bool, // of a Surface program, it sets alpha (alpha_probe)
     derivatives:     bool, // of a Surface program, it takes derivatives across a quad (surface_probe)
     reads,vertex_reads:abi.Program_Reads, // of a Surface program and its function vertex (surface_probe)
+    sun:             bool, // of a Sky program, it reads the sun (sky_probe)
     probed:          bool, // what its probes find is known
     layouts:         [2]Layout,
     cached:          bool, // the cache has its layouts: it is not reflected
@@ -1142,7 +1178,16 @@ programs_reflect :: proc(r:^Program_Reflection,workers:int) {
             copied_source:=path_join(r.copied,e.relative,allocator=context.temp_allocator)
             content:=Program_Content{path=copied_source}
             if e.generated {content={text=e.text,includes=r.active}}
-            if !e.probed && e.error=="" {
+            if !e.probed && e.error=="" && e.domain=="sky" {
+                // Without its probe a Sky program counts as reading the sun.
+                sun,ran:=sky_probe(r.runner,r.slangc,r.root,r.copied,e.folder,e.said.name,temporary,
+                    content,r.plugins,r.memory)
+                e.sun=!ran || sun
+                if ran {
+                    e.probed=true
+                    write_file_atomic(e.caches[3],transmute([]u8)fmt.tprintf("%d",int(sun)))
+                }
+            } else if !e.probed && e.error=="" {
                 coverage,ran:=alpha_probe(r.runner,r.slangc,r.root,r.copied,e.folder,
                     e.said.name,temporary,content,r.plugins,r.memory)
                 derivatives,reads,vertex_reads,derived:=surface_probe(r.runner,r.slangc,r.root,
@@ -1396,11 +1441,17 @@ programs_generate :: proc(
                 cache_touch(entry.caches[2])
             }
         }
-        // Only a Surface program is probed, and one that does not compile is not.
+        // Only a Surface or a Sky program is probed, and one that does not compile is not.
         entry.caches[3]=path_join(cache,strings.concatenate({entry.fingerprint,".probes.txt"},context.temp_allocator),allocator=context.temp_allocator)
-        entry.derivatives=true
-        entry.probed=entry.domain!="surface" || entry.error!=""
-        if !entry.probed {
+        entry.derivatives,entry.sun=true,true
+        entry.probed=entry.domain!="surface" && entry.domain!="sky" || entry.error!=""
+        if !entry.probed && entry.domain=="sky" {
+            // "<sun>": 0 or 1.
+            if said,read_error:=os.read_entire_file(entry.caches[3],context.temp_allocator);read_error==nil && len(said)==1 && (said[0]=='0' || said[0]=='1') {
+                entry.sun,entry.probed=said[0]=='1',true
+                cache_touch(entry.caches[3])
+            }
+        } else if !entry.probed {
             // "<coverage> <derivatives> <reads> <vertex reads>": 0 or 1, then a hex digit of
             // the bits of abi.Program_Reads each.
             bits :: proc(said:[]u8) -> (reads:abi.Program_Reads,ok:bool) {
@@ -1551,7 +1602,7 @@ programs_generate :: proc(
             dispatchers_add(&dispatchers,of,id,name,relative,layout)
         }
         moves,births,prepare:=of==.Vfx && e.said.moves,of==.Vfx && e.said.births,of==.Vfx && e.said.prepare
-        append(&programs,abi.Program{id=u32(id),name=strings.clone(name,allocator),domain=of,source=relative,size=layout.size,parameters=parameters,layers=layers,attributes=attributes,attribute_fields=attribute_fields,resources=resources,stages=stages,moves=moves,births=births,prepare=prepare,coverage=e.coverage,standard=of==.Surface && word_in(e.text,"mirai_surface_standard"),reflectance=of==.Surface && program_reflectance(e.text),reads=e.reads,vertex=vertex,uses=drawn})
+        append(&programs,abi.Program{id=u32(id),name=strings.clone(name,allocator),domain=of,source=relative,size=layout.size,parameters=parameters,layers=layers,attributes=attributes,attribute_fields=attribute_fields,resources=resources,stages=stages,moves=moves,births=births,prepare=prepare,coverage=e.coverage,standard=of==.Surface && word_in(e.text,"mirai_surface_standard"),reflectance=of==.Surface && program_reflectance(e.text),reads=e.reads,sun=of==.Sky && e.sun,vertex=vertex,uses=drawn})
     }
     // A project does without a program of its own that fails; nothing does without one of the engine.
     if len(broken)>0 {

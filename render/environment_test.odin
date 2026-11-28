@@ -291,6 +291,7 @@ a_sky_program_draws_the_sky_seen_and_the_light_of_a_surface :: proc(t:^testing.T
     delete(pixels)
     testing.expectf(t,dominant(top,blue) && dominant(bottom,red),"the image turns with the sky: %v above, %v below",top,bottom)
     testing.expect(t,r.sky_bakes.bakes[0].key==drawn,"turning the sky draws nothing again")
+    testing.expect(t,r.sky_bakes.staging==0,"the texels of a bake go once a frame draws none")
 
     // Other parameters draw it again; a change from the first sky shows both.
     greener:=bands
