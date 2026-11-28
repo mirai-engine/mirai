@@ -127,9 +127,11 @@ Sun_Desc :: struct {
 Environment :: struct {
 	sky:            Vec3, // luminance of the sky, nits (it lights the scene through misses); with an image, what multiplies its values
 	sky_texture:    Texture_Handle, // an image of the whole sky, twice as wide as tall; 0: a gradient of `sky`
+	sky_program:    Sky_Program, // a Sky program that draws the image of the sky in place of sky_texture (sky_program.odin)
 	sky_orientation: quaternion128, // the turn of the sky, that of its entity; zero is none
 	sky_from:       Vec3, // a change on its way: the luminance the sky changes from, nits
 	sky_from_texture: Texture_Handle, // and the image it changes from; 0: a gradient
+	sky_from_program: Sky_Program, // or the Sky program that draws it, as sky_program
 	sky_from_weight: f32, // how much of what it changes from still shows, 0 to 1
 	sky_atmosphere: bool, // the sky is the air lit by the sun (air.odin), whose light it crosses: sky does not apply
 	sky_from_atmosphere: bool, // and what it changes from, of the same air

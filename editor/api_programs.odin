@@ -26,9 +26,9 @@ import "mirai:std/serial"
 @(private)
 Api_Program_Result :: struct {
     program:string,
-    kind:string `mirai:"label=surface; postprocess; vfx or ui"`,
+    kind:string `mirai:"label=surface; postprocess; vfx; ui or sky"`,
     file:string `mirai:"label=The program as its diagnostics name it"`,
-    compiled:bool `mirai:"label=Every stage of the check compiled: raster and rays for a Surface program (it also runs on ray hits); the stages of the engine that run the others"`,
+    compiled:bool `mirai:"label=Every stage of the check compiled: raster and rays for a Surface program (it also runs on ray hits); the stages of the engine that run the others (sky_bake for a Sky program)"`,
     errors:int,
     warnings:int,
     parameters_size:int `mirai:"label=Bytes of its struct Parameters"`,
@@ -39,7 +39,7 @@ Api_Program_Result :: struct {
 @(private)
 Api_Program_Inspect :: struct {
     program:string,
-    kind:string `mirai:"label=surface; postprocess; vfx or ui"`,
+    kind:string `mirai:"label=surface; postprocess; vfx; ui or sky"`,
     file:string `mirai:"label=Its .slang: from the folder of the project when it is in it"`,
     source:string,
     parameters:[]Api_Program_Parameter `mirai:"label=The fields of its struct Parameters"`,
@@ -79,13 +79,13 @@ Api_Program_Params_Edits :: struct {
     old,new:string,
 }
 Api_Program_Params :: struct {
-    program:string `mirai:"optional,label=A program by name (Surface, PostProcess, Vfx or UI), or the path of its .slang under the project"`,
+    program:string `mirai:"optional,label=A program by name (Surface, PostProcess, Vfx, UI or Sky), or the path of its .slang under the project"`,
     material:string `mirai:"optional,label=A material whose program it is: its path under the assets folder, or its id"`,
     source:string `mirai:"optional,label=check: the text to check in place of the file; edit: the whole new source"`,
     edits:[]Api_Program_Params_Edits `mirai:"optional,label=edit: replacements applied in order; each old occurs once in the source"`,
 }
 
-Api_Material_Program_Create_Params_Kind :: enum u8 {surface,postprocess,vfx,ui}
+Api_Material_Program_Create_Params_Kind :: enum u8 {surface,postprocess,vfx,ui,sky}
 Api_Material_Program_Create_Params :: struct {
     program:string `mirai:"label=The name of the new program: a Slang identifier no program of the project, its plugins or the engine has"`,
     kind:Api_Material_Program_Create_Params_Kind `mirai:"optional,label=Its domain; without it the one source declares, else surface"`,
@@ -270,7 +270,7 @@ api_program_create :: proc(s:^Session,call:^api.Call) {
     declared_domain,declared,has_declaration:=said.domain,said.name,said.name!=""
     kind:=fmt.tprint(p.kind) if api.call_given(call,"kind") else declared_domain if has_declaration else "surface"
     domain,known:=shaders.program_domain(kind)
-    if !known {api.call_failf(call,api.INVALID_PARAMS,"kind %q is not a domain of programs: surface, postprocess, vfx or ui",kind);return}
+    if !known {api.call_failf(call,api.INVALID_PARAMS,"kind %q is not a domain of programs: surface, postprocess, vfx, ui or sky",kind);return}
     text:string
     if api.call_given(call,"source") {
         text,_=strings.replace_all(p.source,"\r\n","\n",context.temp_allocator)

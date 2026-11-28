@@ -545,6 +545,38 @@ void main(uint3 id : SV_DispatchThreadID) {
 @(private="file")
 SWAY_PROGRAM :: "//! mirai surface Sway\n//! vertex reach 0.5\nnamespace Sway {struct Parameters {float strength;}; Mirai_Vertex vertex(Mirai_Vertex_Context ctx,Parameters p) {Mirai_Vertex v=mirai_vertex_default(ctx);v.position.x+=sin(ctx.time)*clamp(p.strength,0.0,0.5);return v;} Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {return mirai_surface_default(ctx);}}\n"
 
+// The stage that draws the image of a sky (render/sky_program.odin) is
+// compiled once for each Sky program and never alone: an engine or a project
+// without one has none.
+@(test)
+stage_per_sky_program_is_compiled_only_for_sky_programs :: proc(t:^testing.T) {
+    mini:Mini
+    if !mini_make(t,&mini) {return}
+    bake,_:=os.read_entire_file(path_join(path_clean(ENGINE_ROOT,context.temp_allocator),"shaders/sky_bake.comp.slang",allocator=context.temp_allocator),context.temp_allocator)
+    if !testing.expect(t,len(bake)>0,"the engine has the stage") {return}
+    fixture_write(t,mini.root,"shaders/sky_bake.comp.slang",string(bake))
+    engine:=mini_generate(t,&mini,mini.options)
+    testing.expect_value(t,engine.error,"")
+    if engine.error!="" {return}
+    host:=HOST_CODE
+    published :: proc(folder,stage,host:string) -> bool {return os.is_file(path_join(folder,strings.concatenate({stage,host},context.temp_allocator),allocator=context.temp_allocator))}
+    testing.expect(t,!published(mini.output,"sky_bake.comp",host),"no stage of its own")
+    table:=mini_read(&mini,"render/shaders_gen.odin")
+    enum_end:=strings.index(table,"}")
+    testing.expect(t,enum_end>0 && !strings.contains(table[:enum_end],"Sky_Bake"),"the engine without a Sky program has no stage that draws a sky")
+
+    project:=path_join(mini.root,"game",allocator=context.temp_allocator)
+    output:=path_join(project,PROJECT_OUTPUT,allocator=context.temp_allocator)
+    fixture_write(t,project,"shaders/dusk.slang",program_template(.Sky,"Dusk",context.temp_allocator))
+    fixture_write(t,project,"shaders/tint.slang",tint_program("1.0"))
+    options:=mini.options
+    options.odin=false
+    options.project=project
+    first:=mini_generate(t,&mini,options)
+    testing.expect_value(t,first.error,"")
+    testing.expect(t,published(output,"sky_bake__Dusk.comp",host) && !published(output,"sky_bake__Tint.comp",host) && !published(output,"sky_bake.comp",host),"of the programs of a project, only the Sky program has the stage")
+}
+
 // A stage marked per vertex program is compiled only for the Surface
 // programs with a function vertex, and has no stage of its own: one that
 // moves no vertices runs nothing.

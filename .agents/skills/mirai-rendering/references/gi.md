@@ -147,6 +147,16 @@ ok := render.reference_frame(r, frame_desc, {.Gi}, &gi_ref)
 - `Sky.luminance` (nits): gradient or multiplier for equirectangular BC6H `Sky.image` (sun painted
   out; rotated by `Gpu_Frame.sky_orientation`, mip by `spread` up to `SKY_GATHER_LEVELS` before
   last). Transitions blend `sky_from`/`sky_from_map`.
+- **Sky programs** (`render/sky_program.odin`, `//! mirai sky Name`): `Sky.material` names a `.mat`
+  whose Sky program gives the sky's color per direction in image values (`Sky.luminance`
+  multiplies it, exposure and light scale unchanged). `sky_bake__<Name>.comp` (`//! per sky
+  program`, no stage without a program) draws a mipped `SKY_BAKE_WIDTH` x half RGBA16F
+  equirect in a texture-table slot, which `view_begin` reads in place of `sky_texture`, so every
+  consumer above is unchanged. Drawn at frame start (before DDGI) when program, params or the sun
+  (in sky space) change, then `scene_relit`; turning the sky draws nothing. Two slots (on and
+  `sky_from`) blend program changes. Until a slot's stage is made it shows the gradient; an edited
+  program keeps its last image until redrawn. Lit `atmosphere` still wins (`render.sky_material`).
+  Not per pixel: sharpness is the bake's; no `time` (animated skies are the next form).
 - **Functions.** `sky_radiance(dir, spread)`, `sky_irradiance(normal)`, `sky_seen(dir)` (adds sun
   disc `Settings.sun_radius`, capped at `SUN_DISC_MAX`, + halo when `Sun.disc`),
   `sun_light(position)`.

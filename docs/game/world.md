@@ -49,11 +49,11 @@ matched by its `id` or its `name`. A component starts from its defaults and take
 named. The `sun` preset aims it like the editor's sun, shining toward its -Z; a `View_Volume`
 without a `Volume` is the whole scene.
 
-- Sky: `luminance` and an `image` (a 2:1 equirectangular HDR), or `atmosphere=true` for the air
-  lit by the sun: turning the sun entity then changes the whole day. A painted sky:
+- Sky: `luminance` times an `image` (2:1 equirectangular HDR) or a `material` whose program is a
+  Sky program (`//! mirai sky`, `kind:"sky"`), or `atmosphere=true`: the air lit by the sun, so
+  turning the sun changes the day (it shows in place of the others). A painted backdrop:
   `use_background` with a `background_image` (2:1) times `background` (nits) is what the camera
-  and mirrors see, while `luminance` and `image` light; a lit `atmosphere` shows instead. One
-  `Sky` and one `Sun` are on at a time; without a `Sky` the background is black.
+  and mirrors see while the sky lights. One `Sky` and one `Sun` are on; without a `Sky`, black.
 - API: `"preset":"sun"` aims a new entity like the editor's sun; `scene.write {"root":"Sky",
   "entities":[{"components":{"Sky":{"atmosphere":true}}}]}` changes only the fields
   named of the entity `root` names.

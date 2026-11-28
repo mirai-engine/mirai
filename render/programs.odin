@@ -62,7 +62,7 @@ program_catalog_parse :: proc(bytes:[]u8,allocator:=context.allocator) -> (catal
 catalog_valid :: proc(catalog:abi.Shader_Catalog) -> bool {
     if catalog.version!=abi.SHADER_CATALOG_VERSION {return false}
     for program in catalog.programs {
-        if program.id<1 || program.domain==.Surface && program.id>=POINTS_PROGRAM_CAPACITY || program.size<0 || program.size>PROGRAM_PARAMETER_BYTES || program.attributes<0 || program.attributes>PARTICLE_ATTRIBUTE_BYTES || program.attributes%4!=0 {return false}
+        if program.id<1 || (program.domain==.Surface || program.domain==.Sky) && program.id>=POINTS_PROGRAM_CAPACITY || program.size<0 || program.size>PROGRAM_PARAMETER_BYTES || program.attributes<0 || program.attributes>PARTICLE_ATTRIBUTE_BYTES || program.attributes%4!=0 {return false}
         if len(program.resources)>PROGRAM_RESOURCES || len(program.stages)>PROGRAM_STAGES {return false}
         for field in program.attribute_fields {
             if field.kind==.Texture || field.components<1 || field.components>4 || field.offset%4!=0 || int(field.offset)+int(field.components)*4>program.attributes {return false}
@@ -108,6 +108,12 @@ program_find :: proc(r:^Renderer,name:string,domain:Program_Domain) -> ^Program 
     for &program in renderer_programs(r) {
         if program.domain==domain && program.name==name {return &program}
     }
+    return nil
+}
+
+// The program of that name, of whatever domain: no two programs share a name.
+program_named :: proc(r:^Renderer,name:string) -> ^Program {
+    for &program in renderer_programs(r) {if program.name==name {return &program}}
     return nil
 }
 

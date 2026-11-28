@@ -225,7 +225,7 @@ material_given_read :: proc(s:^Session,call:^api.Call,program:^gpu.Program,mater
                 for &candidate in program.parameters {if candidate.kind!=.Texture && candidate.name==key {parameter=&candidate}}
             }
             if parameter==nil {
-                rpc_fail(&r,"parameters: %s is not a number of the Surface program of the material",key)
+                rpc_fail(&r,"parameters: %s is not a number of the program of the material",key)
                 break
             }
             name:=base.name_hash(parameter.name)

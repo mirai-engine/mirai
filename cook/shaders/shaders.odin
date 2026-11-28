@@ -223,6 +223,7 @@ Generation :: struct {
     surface:      []string, // the Surface programs: a stage marked `//! per surface program <uses>` is compiled for each built for one of those uses
     surface_uses: []abi.Program_Uses, // by surface: what each is built for
     vertex:       []string, // those of them with a function vertex: a stage marked `//! per vertex program` is compiled once for each
+    sky:          []string, // the Sky programs: a stage marked `//! per sky program` is compiled once for each, and never alone
     staging:      string,
     warnings:     strings.Builder,
     layouts:      []Shared_Layout, // of the structs shaders share with the CPU, from the probe
@@ -780,18 +781,21 @@ jobs_collect :: proc(g:^Generation,jobs:^[dynamic]Job,source_dir,out,staging:str
         // The stage itself of one per Surface program evaluates none (the include of the
         // generation): it is that of the materials without a program, unless the source
         // says it has none (`//! per surface program only`). One per vertex program is compiled
-        // only for the Surface programs with a function vertex, with their include.
+        // only for the Surface programs with a function vertex, with their include; one per
+        // sky program, only for each Sky program.
         // A stage of a Surface program is compiled for those built for one of the uses its variant serves.
         Of :: struct {name,folder:string,uses:abi.Program_Uses,vfx:Vfx_Uses}
         per_surface,surface_only,surface_problem:=surface_stage_marked(text)
         per_vertex:=strings.contains(text,"//! per vertex program")
-        only:=per_vertex || surface_only
+        per_sky:=strings.contains(text,"//! per sky program")
+        only:=per_vertex || per_sky || surface_only
         programs:=make([dynamic]Of,context.temp_allocator)
         if collected!=.Programs && !only {append(&programs,Of{})}
         if collected!=.Plain {
             if strings.contains(text,"//! per vfx program") {for program in g.vfx {append(&programs,Of{name=program.name,folder=VFX_FOLDER,vfx=program.uses})}}
             if per_surface {for name,i in g.surface {append(&programs,Of{name=name,folder=SURFACE_FOLDER,uses=g.surface_uses[i]})}}
             if per_vertex {for name in g.vertex {append(&programs,Of{name=name,folder=SURFACE_FOLDER})}}
+            if per_sky {for name in g.sky {append(&programs,Of{name=name,folder=SKY_FOLDER})}}
         }
         declared:=constants(text,allocator)
         problem:=constants_problem(declared,allocator)
@@ -1312,7 +1316,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     }
     append(&bases,Base{"engine",g.root})
     g.includes,g.bases=includes,bases[:]
-    g.catalog,g.vfx,g.surface,g.surface_uses,g.vertex=catalog.fingerprint,catalog.vfx,catalog.surface,catalog.surface_uses,catalog.vertex
+    g.catalog,g.vfx,g.surface,g.surface_uses,g.vertex,g.sky=catalog.fingerprint,catalog.vfx,catalog.surface,catalog.surface_uses,catalog.vertex,catalog.sky
     // The tools after Slang shape the Metal output of a shader, not what a
     // generation shares with the engine: they are of each shader's digest.
     {

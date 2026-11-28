@@ -828,7 +828,7 @@ material_write :: proc(s:^Session,owner:base.Asset_Id,change:Material_Change) ->
         // The parameters are of the program the values of the call name.
         if change.kind==.Set {
             info=change.info
-            program=erender.program_find(a,base.text_get(info.program[:]),.Surface)
+            program=erender.program_named(a,base.text_get(info.program[:]))
         }
         values: for name,i in o.names[:min(int(o.count),len(o.names))] {
             if program!=nil {

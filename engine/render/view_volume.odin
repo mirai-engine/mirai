@@ -99,7 +99,7 @@ postprocess_effects :: proc(a:^host.Assets,layers:[POST_PROCESS_CAPACITY]Post_Pr
 // Says on the first View_Volume with an enabled layer of material why that
 // layer draws nothing, and how to make it draw.
 @(private)
-postprocess_report :: proc(a:^host.Assets,material:base.Asset_Id,problem:host.Postprocess_Problem,views:^core.Table(View_Volume,.Read),problems:^core.Problems) {
+postprocess_report :: proc(a:^host.Assets,material:base.Asset_Id,problem:host.Material_Program_Problem,views:^core.Table(View_Volume,.Read),problems:^core.Problems) {
     if views==nil || problems==nil {return}
     for row in 0..<core.count(views) {
         look:=core.at(views,row)

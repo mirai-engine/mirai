@@ -1646,7 +1646,7 @@ assets_material_desc :: proc(a:^Assets,material:^Assets_Material,id:base.Asset_I
     waiting:=false
     defer material.waiting=waiting
     program:=assets_material_program(a,material,.Surface)
-    if program==nil && material.info.program[0]!=0 && a.renderer!=nil && assets_material_program(a,material,.Postprocess)==nil {
+    if program==nil && material.info.program[0]!=0 && a.renderer!=nil && assets_material_program(a,material,.Postprocess)==nil && assets_material_program(a,material,.Sky)==nil {
         assets_fail(a,id,.Material,.Unsupported)
     }
     masks_by_color:=desc.alpha_mode==.Mask && desc.maps.mask.texture=={}
@@ -2130,22 +2130,38 @@ assets_overlays :: proc(a:^Assets,id:base.Asset_Id,overlays:[]asset.Material_Ove
     return
 }
 
-// The effect of a material whose program is a PostProcess one, with the
-// parameters it stores; for any other material, why it has none.
-assets_postprocess :: proc(a:^Assets,id:base.Asset_Id) -> (effect:render.Postprocess_Desc,problem:Postprocess_Problem) {
+// The program of a material of that domain and the parameters the material
+// stores for it; for any other material, why it has none.
+@(private="file")
+assets_material_program_values :: proc(a:^Assets,id:base.Asset_Id,domain:render.Program_Domain) -> (program:^render.Program,params:[16]render.Vec4,problem:Material_Program_Problem) {
     material:=assets_material(a,id)
-    if material==nil || material.failed {return {},.Material}
-    if base.text_get(material.info.program[:])=="" {return {},.No_Program}
-    program:=assets_material_program(a,material,.Postprocess)
-    if program==nil {return {},.Program}
-    effect={program=program.id,params=render.program_defaults(program),enabled=true}
-    assets_program_parameters(a,program,&effect.params,assets_material_parameters(a,material),0)
-    return effect,.None
+    if material==nil || material.failed {return nil,{},.Material}
+    if base.text_get(material.info.program[:])=="" {return nil,{},.No_Program}
+    if program=assets_material_program(a,material,domain);program==nil {return nil,{},.Program}
+    params=render.program_defaults(program)
+    assets_program_parameters(a,program,&params,assets_material_parameters(a,material),0)
+    return program,params,.None
 }
 
-// Why a material gives no PostProcess effect: it does not load, it names no
-// program, or the program it names is not a PostProcess one the renderer has.
-Postprocess_Problem :: enum u8 {None,Material,No_Program,Program}
+// The effect of a material whose program is a PostProcess one, with the
+// parameters it stores; for any other material, why it has none.
+assets_postprocess :: proc(a:^Assets,id:base.Asset_Id) -> (effect:render.Postprocess_Desc,problem:Material_Program_Problem) {
+    program,params,why:=assets_material_program_values(a,id,.Postprocess)
+    if program==nil {return {},why}
+    return {program=program.id,params=params,enabled=true},.None
+}
+
+// The sky a material whose program is a Sky one draws, with the parameters
+// it stores; for any other material, why it draws none.
+assets_sky :: proc(a:^Assets,id:base.Asset_Id) -> (sky:render.Sky_Program,problem:Material_Program_Problem) {
+    program,params,why:=assets_material_program_values(a,id,.Sky)
+    if program==nil {return {},why}
+    return {program=program.id,params=params},.None
+}
+
+// Why a material gives no program of a domain: it does not load, it names no
+// program, or the program it names is not one of that domain the renderer has.
+Material_Program_Problem :: enum u8 {None,Material,No_Program,Program}
 
 // --------------------------------------------------------------------- scenes
 

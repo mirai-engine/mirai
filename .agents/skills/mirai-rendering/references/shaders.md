@@ -128,12 +128,14 @@ void render(
 - **Domain includes:** `include/surface_programs.slang` (no-program stub) + per-program
   `include/surface/<Name>/surface_programs.slang`; `include/postprocess_programs.slang`;
   `include/vfx_programs.slang` (included by `particle_programs.slang`, `PARTICLES_WRITABLE`);
-  `include/ui_programs.slang` (`ui.frag`). No program alpha include: `alpha_probe` flags
+  `include/ui_programs.slang` (`ui.frag`); per Sky program `include/sky/<Name>/sky_programs.slang`
+  (`mirai_sky_program`, no stub). No program alpha include: `alpha_probe` flags
   `coverage` in catalog, and masked materials whose program writes alpha error with `Coverage`.
 - **Stage expansion:** `//! per surface program <uses>` (`abi.Program_Use`: `opaque`, `blend`,
   `overlay`, `mesh`, `particle_sprite`, `preview`, `impostor`, `decal`; `<variant>=<use>`,
   `only`) emits `<root>__<Program>[_<variant>]<suffix>` for matching programs;
-  `//! per vertex program` emits `surface_vertices.comp` for vertex-moving programs only.
+  `//! per vertex program` emits `surface_vertices.comp` for vertex-moving programs only;
+  `//! per sky program` emits `sky_bake__<Sky>.comp` per Sky program and nothing without one.
   Editing a program recompiles only its domain stages (never tracing, visibility, or shadows).
 - **Program uses (`build.program_uses`):** Inferred from project materials, overlays, plugin
   `program_uses` (`.particle`, `.pcg`), `//! use <uses>`, and editor on-demand `preview`

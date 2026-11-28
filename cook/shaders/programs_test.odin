@@ -828,6 +828,27 @@ programs_leave_out_one_that_fails_and_publish_the_others :: proc(t:^testing.T) {
     testing.expect(t,strings.contains(problem,"Broken") && strings.contains(problem,"shaders/materials") && strings.contains(problem,"mirai shaders"),problem)
 }
 
+// A Sky program has an include of its own, which evaluates it, and is listed
+// for the stages compiled per sky program; the others are not. Its id stays
+// below the capacity of the tables of programs the renderer keeps by id.
+@(test)
+sky_programs_have_an_include_of_their_own_and_are_listed_for_their_stages :: proc(t:^testing.T) {
+    f:Programs_Fixture
+    if !programs_fixture(t,&f) {return}
+    fixture_write(t,f.project,"shaders/dusk.slang",program_template(.Sky,"Dusk",context.temp_allocator))
+    fixture_write(t,f.project,"shaders/grade.slang",program_template(.Postprocess,"Grade",context.temp_allocator))
+    catalog,problem:=programs_of(&f)
+    testing.expect_value(t,problem,"")
+    dusk,has_dusk:=program_named(catalog,"Dusk")
+    if !testing.expect(t,has_dusk) {return}
+    testing.expect_value(t,dusk.domain,Program_Domain.Sky)
+    testing.expect(t,len(dusk.parameters)==4 && dusk.parameters[0].name=="zenith" && dusk.parameters[0].color,"its parameters are reflected with their metadata")
+    testing.expect(t,len(catalog.sky)==1 && catalog.sky[0]=="Dusk","only the Sky program is listed for the stages per sky program")
+    own,_:=os.read_entire_file(path_join(f.output,"include",SKY_FOLDER,"Dusk",SKY_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
+    testing.expect(t,strings.contains(string(own),"float3 mirai_sky_program(float4 packed[16],Mirai_Sky_Context ctx) {return Dusk::evaluate(ctx,mirai_load_Dusk(packed));}"),string(own))
+    testing.expect(t,!os.exists(path_join(f.output,"include",SKY_FOLDER,"Grade",allocator=context.temp_allocator)),"a program of another domain has no include of a Sky program")
+}
+
 // A Surface program that says `//! vertex` has its function vertex called in
 // its own include, says in the catalog what it reads and how far it
 // reaches, a number or a float parameter, and is listed for the stages

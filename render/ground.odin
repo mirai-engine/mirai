@@ -125,34 +125,6 @@ ground_stale :: proc "contextless" (r: ^Renderer) {
 	for &slot in r.ground.slots {slot.stale = true}
 }
 
-// A texture of the texture table, square, which the renderer writes on the
-// GPU: it covers nothing until then.
-@(private)
-ground_texture :: proc(r: ^Renderer, side, levels: u32, format: rhi.Format, name: string) -> (texture: rhi.Texture, handle: Texture_Handle) {
-	state := &r.textures
-	index := texture_slot(state)
-	if !textures_room(r, index, name) {return}
-	empty, error := make([]u8, int(side) * int(side) * 4, r.allocator)
-	defer delete(empty, r.allocator)
-	if error != nil {
-		set_error(r, "%s: out of memory for its %d texels", name, side * side)
-		return
-	}
-	each: [GROUND_MIPS][]u8
-	for level in 0 ..< levels {each[level] = empty[:int(side >> level) * int(side >> level) * 4]}
-	texture = rhi.texture_create(r.device, {width = side, height = side, mip_levels = levels, format = format, usage = {.Sampled}, name = name})
-	if texture == 0 || !rhi.texture_upload_levels(r.device, texture, each[:levels]) || !rhi.texture_table_set(r.device, texture_entry(index), texture) {
-		set_error(r, "%s: %s", name, rhi.device_error(r.device))
-		if texture != 0 {rhi.texture_destroy(r.device, texture)}
-		return 0, 0
-	}
-	state.textures[index] = texture
-	state.keys[index] = 0
-	state.sizes[index] = {int(side), int(side)}
-	state.count = max(state.count, index + 1)
-	return texture, Texture_Handle(index + 1)
-}
-
 // Between frames, once a chunk is registered: the slots the settings ask for,
 // the table and the texels of a bake. Without memory for them the chunks
 // without a slot are not baked, and the error says so.
@@ -172,12 +144,12 @@ ground_prepare :: proc(r: ^Renderer) {
 		}
 	}
 	if g.table == 0 {
-		g.table, g.table_handle = ground_texture(r, GROUND_TABLE, 1, .RGBA8_Unorm, "ground color table")
+		g.table, g.table_handle = written_texture(r, GROUND_TABLE, GROUND_TABLE, 1, .RGBA8_Unorm, "ground color table")
 		if g.table == 0 {return}
 	}
 	for g.made < wanted {
 		slot := &g.slots[g.made]
-		slot.texture, slot.handle = ground_texture(r, GROUND_TEXELS, GROUND_MIPS, .RGBA8_Srgb, "ground color")
+		slot.texture, slot.handle = written_texture(r, GROUND_TEXELS, GROUND_TEXELS, GROUND_MIPS, .RGBA8_Srgb, "ground color")
 		if slot.texture == 0 {return}
 		g.made += 1
 	}

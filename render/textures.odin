@@ -429,6 +429,36 @@ texture_image :: proc(r: ^Renderer, key: u64, pixels: []u8, width, height: int, 
 	return handle, true
 }
 
+// A texture of the texture table which the renderer writes on the GPU,
+// copied in from a buffer: it covers nothing until then. Its levels halve to
+// one texel along each side.
+@(private)
+written_texture :: proc(r: ^Renderer, width, height, levels: u32, format: rhi.Format, name: string) -> (texture: rhi.Texture, handle: Texture_Handle) {
+	state := &r.textures
+	index := texture_slot(state)
+	if !textures_room(r, index, name) {return}
+	texel := u32(rhi.format_size(format))
+	empty, error := make([]u8, int(width) * int(height) * int(texel), r.allocator)
+	defer delete(empty, r.allocator)
+	if error != nil {
+		set_error(r, "%s: out of memory for its %d texels", name, width * height)
+		return
+	}
+	each := make([][]u8, levels, context.temp_allocator)
+	for level in 0 ..< levels {each[level] = empty[:int(max(width >> level, 1)) * int(max(height >> level, 1)) * int(texel)]}
+	texture = rhi.texture_create(r.device, {width = width, height = height, mip_levels = levels, format = format, usage = {.Sampled}, name = name})
+	if texture == 0 || !rhi.texture_upload_levels(r.device, texture, each) || !rhi.texture_table_set(r.device, texture_entry(index), texture) {
+		set_error(r, "%s: %s", name, rhi.device_error(r.device))
+		if texture != 0 {rhi.texture_destroy(r.device, texture)}
+		return 0, 0
+	}
+	state.textures[index] = texture
+	state.keys[index] = 0
+	state.sizes[index] = {int(width), int(height)}
+	state.count = max(state.count, index + 1)
+	return texture, Texture_Handle(index + 1)
+}
+
 // Drops every texture. Materials that name them must be replaced with
 // materials_set before the next frame.
 textures_clear :: proc(r: ^Renderer) {

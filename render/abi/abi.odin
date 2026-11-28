@@ -85,6 +85,10 @@ AIR_SKY_TEXTURE           :: 3
 GROUND_TEXELS :: 256
 GROUND_TABLE  :: 32
 
+// The image of the sky a Sky program draws (render/sky_program.odin): texels across its whole
+// turn at its finest level, half as many from its zenith to its nadir, a power of two.
+SKY_BAKE_WIDTH :: 2048
+
 // The constants of a frame (Gpu_Frame).
 VIEW_CAPACITY        :: 4
 NESTED_VIEW_CAPACITY :: 4
@@ -567,7 +571,7 @@ POINTS_HEADS_FROM  :: 11 // and the heads of the round it ended, which the resum
 POINTS_HEADS_TO    :: 12
 POINTS_ARGS        :: 13 // three words: a thread per point of the window
 POINTS_HEAD_ARGS   :: 16 // three words: a thread per head of the round, in groups of POINTS_HEAD_GROUP
-POINTS_PROGRAM_CAPACITY :: 1024 // bins the groups of points.comp aggregate (BINS_MAX of bins.slang), and draws of the resolve of programs
+POINTS_PROGRAM_CAPACITY :: 1024 // bins the groups of points.comp aggregate (BINS_MAX of bins.slang), and draws of the resolve of programs; Surface and Sky programs have ids below it
 POINTS_HEADER      :: 20
 POINT_WORDS        :: 9
 RECORD_WORDS       :: 18
@@ -724,11 +728,11 @@ Shader_Entry :: struct {
 
 // What a generation of shaders says of its material programs and of what it
 // adds to the constants of every view, in SHADER_CATALOG of its folder. A
-// material, a post-process effect or an emitter of particles names a program
+// material, a post-process effect, an emitter of particles or a sky names a program
 // by its id and gives it up to PROGRAM_PARAMETER_BYTES of parameters, laid
 // out as the program reflects them.
 SHADER_CATALOG :: "catalog.json"
-SHADER_CATALOG_VERSION :: 7
+SHADER_CATALOG_VERSION :: 8
 
 Shader_Catalog :: struct {
     version:int,
@@ -773,7 +777,7 @@ Frame_Catalog :: struct {
 }
 Frame_Extension :: struct {name:string,offset,size:int}
 
-Program_Domain :: enum u8 {Surface,Postprocess,Vfx,Ui}
+Program_Domain :: enum u8 {Surface,Postprocess,Vfx,Ui,Sky}
 Program_Kind :: enum u8 {Float,Int,Uint,Bool,Texture}
 // The surface of a mesh or of what an entity draws, the births a game gives,
 // a grid of the world, the bones of the skeleton an entity shows, or the

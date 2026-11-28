@@ -309,6 +309,12 @@ program_find :: proc(a:^host.Assets,name:string,domain:Program_Domain) -> ^Progr
     return gpu.program_find(a.renderer,name,domain)
 }
 
+// The program a material names, of whatever domain (a Surface, PostProcess or Sky program).
+program_named :: proc(a:^host.Assets,name:string) -> ^Program {
+    if a==nil || a.renderer==nil || name=="" {return nil}
+    return gpu.program_named(a.renderer,name)
+}
+
 program_defaults :: gpu.program_defaults
 program_parameter :: gpu.program_parameter
 

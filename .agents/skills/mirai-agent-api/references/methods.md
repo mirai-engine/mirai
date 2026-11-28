@@ -452,7 +452,7 @@ list, and tap/hold durations. Write overrides via `settings.set` on `Input_Setti
 
 ## Material programs
 
-Serves all domains (Surface, PostProcess, Vfx, UI) by `program` name/path or `material`:
+Serves all domains (Surface, PostProcess, Vfx, UI, Sky) by `program` name/path or `material`:
 - `material.program.check`: compiles target stages without publishing and validates
   [rules](../../mirai-rendering/references/shaders.md#check-of-a-program).
 - `material.program.create`: writes `shaders/<lower>.slang`, validates `//! mirai <kind> <name>`

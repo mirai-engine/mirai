@@ -200,6 +200,19 @@ struct Mirai_Ui_Context {
     float4 color;
     float time; // seconds of the world shown
 };
+// Of a direction a sky program colors, as an image of the whole sky gives
+// it: the program returns the color there, which Sky.luminance multiplies
+// into nits. direction is of the sky itself, which turns with its entity: y
+// towards its zenith. sun_direction is towards the sun in that space, with
+// sun 1 while a Sun is on and 0 without one (sun_direction is then the
+// zenith). texel: radians from this direction to the next one drawn, over
+// which a sharp edge softens (a sky program takes no derivatives).
+struct Mirai_Sky_Context {
+    float3 direction;
+    float3 sun_direction;
+    float sun;
+    float texel;
+};
 // The outline of the game at a point of the image: the Outline of what is
 // there, where the editor does not outline it.
 struct Mirai_Outline {

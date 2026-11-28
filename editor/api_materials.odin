@@ -152,7 +152,7 @@ api_material_set :: proc(s:^Session,call:^api.Call) {
     if !material_values_read(call,string(p.values),&info) {return}
     // What it is given by name, of the program its values name now.
     given:=erender.MATERIAL_VALUES_DEFAULT
-    program:=erender.program_find(s.app.assets,base.text_get(info.program[:]),.Surface)
+    program:=erender.program_named(s.app.assets,base.text_get(info.program[:]))
     if !material_given_read(s,call,program,t.id,0,string(p.parameters),string(p.textures),p.overlays,&given,"material.set takes") {return}
     label:=t.created?"Create material":"Material"
     if !api_edit_begin(s,call,label) {return}

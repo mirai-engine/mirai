@@ -678,6 +678,7 @@ Renderer :: struct {
 	ground:               Ground, // the color of the ground under what reads it (ground.odin)
 	points:               Material_Points, // where the passes of a frame need a material program evaluated (points.odin)
 	vertex_stages:        Program_Computes, // of surface_vertices__<program>.comp, which move the vertices of instances (displace.odin)
+	sky_bakes:            Sky_Bakes, // the images of the skies Sky programs draw (sky_program.odin)
 	program_graphics:     [PROGRAM_GRAPHICS_CAPACITY]Program_Graphics, // the raster stages of Surface programs (program_stages.odin)
 	pipeline_thread:      ^Pipeline_Thread, // makes the variants of the stages, and the pipelines of programs with pipelines_async; nil: where they are asked for
 	pipelines_async:      bool, // Renderer_Desc.pipeline_thread
@@ -850,6 +851,7 @@ renderer_destroy :: proc(r: ^Renderer) {
 	extension_readbacks_destroy(r)
 	points_destroy(r)
 	ground_destroy(r)
+	sky_bakes_destroy(r)
 	ui_offscreen_destroy(r)
 	impostor_gpu_destroy(d, &r.impostor)
 	textures_clear(r)

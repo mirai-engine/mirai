@@ -223,6 +223,7 @@ program_stages_publish :: proc(r: ^Renderer, next: []rhi.Shader_Code, moved: []u
 	program_computes_publish(r, &r.points.stages, next, moved)
 	ground_stale(r)
 	program_computes_publish(r, &r.vertex_stages, next, moved)
+	sky_bakes_publish(r, next, moved)
 	for &entry in r.stage_pipelines {
 		if !entry.asked || entry.program == 0 {continue}
 		// Its key holds the id of its program: it stays only under the same id.

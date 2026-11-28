@@ -314,6 +314,7 @@ renderer_publish_shader_reload :: proc(r:^Renderer,assets:^Shader_Assets,candida
     r.frame_layout=frame_layout_of(&r.shader_assets)
     stage_pipelines_destroy(r)
     points_pipelines_destroy(r)
+    sky_bakes_drop(r)
     program_graphics_destroy(r)
     program_catalog_destroy(&r.programs)
     program_misses_clear(r)

@@ -58,17 +58,20 @@ air_metres :: proc(air:Air) -> gpu.Air {
     }
 }
 
-// What a sky shows: its luminance and its image, or its atmosphere.
+// What a sky shows: its luminance and its image or the material that draws
+// it, or its atmosphere.
 Sky_Look :: struct {
     luminance:[3]f32 `mirai:"color"`, // nits; with an image, what multiplies its values
     image:base.Asset_Id,              // the whole sky, twice as wide as tall, its horizon across its middle; none: a gradient of luminance
+    material:base.Asset_Id,           // a material whose Sky program draws the sky in place of image, as Sky.material
     atmosphere:bool,                  // the air of the sky lit by the sun, as Sky.atmosphere
 }
 
-@(component,single,replicated,description="The light of the sky and what shows behind the scene. Its images turn with the entity. With use_background the camera, mirrors and glass see the background while the sky lights the scene; a lit atmosphere shows itself instead. The world uses one at a time: turning one on turns off the one that was on; without one, no light comes from the sky and the background is black.")
+@(component,single,replicated,description="The light of the sky and what shows behind the scene. Its images turn with the entity; a material whose program is a Sky one draws the whole sky in place of image, its values times luminance. With use_background the camera, mirrors and glass see the background while the sky lights the scene; a lit atmosphere shows itself instead. The world uses one at a time: turning one on turns off the one that was on; without one, no light comes from the sky and the background is black.")
 Sky :: struct {
     luminance:[3]f32 `mirai:"color,section=Light"`, // nits; with an image, what multiplies its values
     image:base.Asset_Id,              // the whole sky, twice as wide as tall, its horizon across its middle; none: a gradient of luminance
+    material:base.Asset_Id,           // a material whose program is a Sky one (`//! mirai sky Name`): it draws the whole sky in place of image, in the same values, with the parameters the material stores
     background:[3]f32 `mirai:"color,section=Background"`, // nits; with an image, what multiplies its values
     background_image:base.Asset_Id,   // what shows behind in place of the sky, as image is; none: background alone
     use_background:bool,              // the camera and what reflects the sky see the background; the sky still lights the scene
@@ -167,17 +170,18 @@ environment_activate :: proc(
 // What a sky shows now, with the change on its way taken where it is.
 @(private)
 sky_look_now :: proc(sky:Sky) -> Sky_Look {
-    if sky.fade<=0 {return {sky.luminance,sky.image,sky.atmosphere}}
+    if sky.fade<=0 {return {sky.luminance,sky.image,sky.material,sky.atmosphere}}
     // An image cannot be half of another: the look keeps the one that shows most.
-    look:=Sky_Look{luminance=mm.lerp(sky.luminance,sky.from.luminance,sky.fade),image=sky.image,atmosphere=sky.atmosphere}
-    if sky.fade>0.5 {look.image,look.atmosphere=sky.from.image,sky.from.atmosphere}
+    look:=Sky_Look{luminance=mm.lerp(sky.luminance,sky.from.luminance,sky.fade),image=sky.image,material=sky.material,atmosphere=sky.atmosphere}
+    if sky.fade>0.5 {look.image,look.material,look.atmosphere=sky.from.image,sky.from.material,sky.from.atmosphere}
     return look
 }
 
-// What the renderer draws of the sky on: luminance, image and the turn of
-// its entity, mixed with what it arrives or changes from, and its background.
-// Without one, black. A background image without use_background would never
-// show: it is a problem, and the sky shows.
+// What the renderer draws of the sky on: luminance, image or the program of
+// its material and the turn of its entity, mixed with what it arrives or
+// changes from, and its background. Without one, black. A background image
+// without use_background would never show, nor a material under a lit
+// atmosphere: each is a problem, and the sky shows.
 sky_environment :: proc(e:core.Entity,sky:Sky,found,sunlit:bool,worlds:^core.Table(core.World_Transform,$A),a:^host.Assets,problems:^core.Problems) -> gpu.Environment {
     if !found {
         empty:=gpu.Environment{use_background=true}
@@ -188,21 +192,47 @@ sky_environment :: proc(e:core.Entity,sky:Sky,found,sunlit:bool,worlds:^core.Tab
     }
     // The air shows only when lit, and then it is what is seen and reflected: no background stands for it.
     atmosphere:=sky.atmosphere && sunlit
+    if sky.material!={} && atmosphere {
+        core.report(problems,e,"render.sky_material","the Sky has a material, but its atmosphere is lit by the Sun and shows in its place; turn atmosphere off to see the material (and use_background off, or the camera sees the background)")
+    }
     environment:=gpu.Environment{sky=sky.luminance,background=sky.background,use_background=sky.use_background && !atmosphere}
     if world,ok:=core.get(worlds,e);ok {environment.sky_orientation=world.rotation}
     environment.sky_texture=image_texture(a,sky.image)
+    environment.sky_program=sky_program(a,e,sky.material,problems)
     if environment.use_background {environment.background_texture=image_texture(a,sky.background_image)}
     environment.sky_atmosphere=atmosphere
     environment.air=air_metres(sky.air)
     switch {
     case sky.arrival>0:
         environment.sky_from,environment.sky_from_texture,environment.sky_from_weight=sky.arrival_from.luminance,image_texture(a,sky.arrival_from.image),min(sky.arrival,1)
-        environment.sky_from_atmosphere=sky.arrival_from.atmosphere
+        environment.sky_from_program,environment.sky_from_atmosphere=sky_program(a,e,sky.arrival_from.material,nil),sky.arrival_from.atmosphere
     case sky.fade>0:
         environment.sky_from,environment.sky_from_texture,environment.sky_from_weight=sky.from.luminance,image_texture(a,sky.from.image),min(sky.fade,1)
-        environment.sky_from_atmosphere=sky.from.atmosphere
+        environment.sky_from_program,environment.sky_from_atmosphere=sky_program(a,e,sky.from.material,problems),sky.from.atmosphere
     }
     return environment
+}
+
+// What the program of a material draws of the sky: none without a material
+// or without assets. One that draws none is a problem of the sky that says
+// why; the sky shows its image or its gradient instead.
+@(private)
+sky_program :: proc(a:^host.Assets,e:core.Entity,material:base.Asset_Id,problems:^core.Problems) -> gpu.Sky_Program {
+    if material=={} || a==nil {return {}}
+    sky,problem:=host.assets_sky(a,material)
+    buffer:[base.ASSET_ID_TEXT]u8
+    switch problem {
+    case .None: return sky
+    case .Material:
+        core.report(problems,e,"render.sky_material","the material %s of the Sky does not load (engine.diagnostics says why), so it draws no sky; give the Sky a material that loads",host.assets_name(a,material,&buffer))
+    case .No_Program:
+        core.report(problems,e,"render.sky_material","the material %s of the Sky names no program, so it draws no sky; give the material a Sky program (`//! mirai sky Name`)",host.assets_name(a,material,&buffer))
+    case .Program:
+        program:=""
+        if m:=host.assets_material(a,material);m!=nil {program=base.text_get(m.info.program[:])}
+        core.report(problems,e,"render.sky_material","the material %s of the Sky names %q, which is not a Sky program of the project, so it draws no sky; declare it with `//! mirai sky %s` and build the shaders, or name one that is",host.assets_name(a,material,&buffer),program,program)
+    }
+    return {}
 }
 
 // The texture of an image asset, loaded if it was not: 0 for none, for one

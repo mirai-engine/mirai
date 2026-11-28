@@ -277,7 +277,7 @@ material_set_gives_a_material_its_values_textures_and_overlays_in_one_step :: pr
 
     // The standard model has no parameters, and a layer is another material.
     _,failure,ok=call(t,state,"material.set",`{"material":"wall.mat","parameters":{"glow":2}}`)
-    testing.expect(t,!ok && strings.contains(failure.message,"glow is not a number of the Surface program"),failure.message)
+    testing.expect(t,!ok && strings.contains(failure.message,"glow is not a number of the program of the material"),failure.message)
     _,failure,ok=call(t,state,"material.set",`{"material":"wall.mat","overlays":[{"material":"wall.mat"}]}`)
     testing.expect(t,!ok && strings.contains(failure.message,"a material other than the one it is drawn over"),failure.message)
 

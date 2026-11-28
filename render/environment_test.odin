@@ -233,3 +233,98 @@ a_mirror_reflects_the_sky_soft_and_a_background_sharp :: proc(t:^testing.T) {
         testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
     }
 }
+
+// A Sky program (testdata/bands.slang) draws the sky the camera sees and the
+// light of a surface, as an image of the sky would: its image is drawn again
+// when its parameters or the sun change, turns with the sky without being
+// drawn again, and blends with the one a change comes from. The sun it sees
+// is the one of the scene, in the space of the sky: a spot it draws there
+// stays at the sun however the sky turns.
+@(test)
+a_sky_program_draws_the_sky_seen_and_the_light_of_a_surface :: proc(t:^testing.T) {
+    settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.taa=false
+    f:Fixture
+    if !fixture_init(t,&f,96,64,settings,hardware_rt=false,programs=true) {return}
+    defer fixture_destroy(&f)
+    r,device:=f.renderer,f.device
+    program:=program_find(r,"Bands",.Sky)
+    if !testing.expect(t,program!=nil,"the generation of testdata has the Sky program Bands") {return}
+    bands:=Sky_Program{program=program.id,params=program_defaults(program)}
+    floor:=DEFAULT_MATERIAL
+    floor.base_color,floor.roughness=0.8,1
+    materials_set(r,{floor})
+    corners:=[4]Vec3{{-50,-1,-50},{-50,-1,50},{50,-1,50},{50,-1,-50}}
+    vertices:[4]Mesh_Vertex
+    for corner,i in corners {vertices[i]={position=corner,normal={0,1,0},color={1,1,1},material=1}}
+    quad,made:=mesh_add(r,vertices[:],[]u32{0,1,2,0,2,3});testing.expect(t,made,r.error);if !made {return}
+    camera:=Camera{position={0,0,5},forward={0,0,-1},up={0,1,0},fov_y=50,near=0.05,far=200,exposure=UNIT_EXPOSURE}
+    width,height:=int(r.targets.width),int(r.targets.height)
+    at::proc(pixels:[]f16,width,x,y:int) -> Vec3 {i:=(y*width+x)*4;return {f32(pixels[i]),f32(pixels[i+1]),f32(pixels[i+2])}}
+    dominant::proc(pixel,hue:Vec3) -> bool {return linalg.dot(pixel,hue)>4*linalg.dot(pixel,Vec3{1,1,1}-hue) && linalg.dot(pixel,hue)>0.01}
+    red,green,blue:=Vec3{1,0,0},Vec3{0,1,0},Vec3{0,0,1}
+    shown::proc(t:^testing.T,r:^Renderer,camera:Camera) -> []f16 {
+        for _ in 0..<2 {testing.expect(t,renderer_frame(r,{camera=camera}),r.error)}
+        return grid_read_hdr(t,r,r.targets.display)
+    }
+
+    // The camera sees the image of the program: red above the horizon, blue below.
+    scene_given(r,nil,nil,{},{sky={1,1,1},sky_program=bands})
+    pixels:=shown(t,r,camera)
+    top,bottom:=at(pixels,width,width/2,2),at(pixels,width,width/2,height-3)
+    delete(pixels)
+    testing.expectf(t,dominant(top,red) && dominant(bottom,blue),"the camera sees the bands: %v above, %v below",top,bottom)
+    drawn:=r.sky_bakes.bakes[0].key
+    testing.expect(t,r.sky_bakes.bakes[0].held && drawn.sky==bands,"the image of the program is drawn")
+
+    // A floor under the eye takes the light of the red half above it.
+    scene_given(r,{{object_id=1,mesh=quad,transform=Mat4(1),material=1,tint={1,1,1}}},nil,{},{sky={1,1,1},sky_program=bands})
+    pixels=shown(t,r,camera)
+    lit:=at(pixels,width,width/2,height-3)
+    delete(pixels)
+    testing.expectf(t,dominant(lit,red),"the floor is lit by the sky above it: %v",lit)
+
+    // Upside down the sky shows blue above, and its image is not drawn again.
+    flipped:=quaternion128(quaternion(w=0,x=0,y=0,z=1))
+    scene_given(r,nil,nil,{},{sky={1,1,1},sky_program=bands,sky_orientation=flipped})
+    pixels=shown(t,r,camera)
+    top,bottom=at(pixels,width,width/2,2),at(pixels,width,width/2,height-3)
+    delete(pixels)
+    testing.expectf(t,dominant(top,blue) && dominant(bottom,red),"the image turns with the sky: %v above, %v below",top,bottom)
+    testing.expect(t,r.sky_bakes.bakes[0].key==drawn,"turning the sky draws nothing again")
+
+    // Other parameters draw it again; a change from the first sky shows both.
+    greener:=bands
+    testing.expect(t,program_parameter_set(&greener.params,program_parameter(program,"above"),{0,1,0,0}))
+    scene_given(r,nil,nil,{},{sky={1,1,1},sky_program=greener})
+    pixels=shown(t,r,camera)
+    top=at(pixels,width,width/2,2)
+    delete(pixels)
+    testing.expectf(t,dominant(top,green),"other parameters draw the sky again: %v",top)
+    scene_given(r,nil,nil,{},{sky={1,1,1},sky_program=greener,sky_from={1,1,1},sky_from_program=bands,sky_from_weight=0.5})
+    pixels=shown(t,r,camera)
+    top=at(pixels,width,width/2,2)
+    delete(pixels)
+    testing.expectf(t,top.x>0.4*top.y && top.y>0.4*top.x && top.z<0.25*top.x,"half of each sky while it changes: %v",top)
+
+    // The spot the program draws at the sun stays at the sun as the sky turns, and follows it.
+    brightest::proc(pixels:[]f16,width,height:int) -> (x,y:int) {
+        most:=f32(-1)
+        for py in 0..<height/2 {for px in 0..<width {
+            if v:=f32(pixels[(py*width+px)*4+1]);v>most {most,x,y=v,px,py}
+        }}
+        return
+    }
+    glowing:=bands
+    testing.expect(t,program_parameter_set(&glowing.params,program_parameter(program,"sun_glow"),{50,0,0,0}))
+    Sun_Case::struct {name:string,toward:Vec3,turn:quaternion128,x,y:int}
+    turned:=quaternion128(quaternion(w=math.SQRT_TWO/2,x=0,y=math.SQRT_TWO/2,z=0))
+    for c in ([]Sun_Case{{"ahead",{0,0.2,-1},1,48,18},{"ahead, the sky turned",{0,0.2,-1},turned,48,18},{"to the right",{0.2,0.2,-1},turned,62,18}}) {
+        sun:=Sun_Desc{direction=linalg.normalize(c.toward),color={1,1,1},illuminance=1,enabled=true}
+        scene_given(r,nil,nil,sun,{sky={1,1,1},sky_program=glowing,sky_orientation=c.turn})
+        pixels=shown(t,r,camera)
+        x,y:=brightest(pixels,width,height)
+        delete(pixels)
+        testing.expectf(t,abs(x-c.x)<=2 && abs(y-c.y)<=2,"%s: the spot is at the sun, near (%d, %d): (%d, %d)",c.name,c.x,c.y,x,y)
+    }
+    testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
+}

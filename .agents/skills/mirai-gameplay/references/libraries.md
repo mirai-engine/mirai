@@ -96,9 +96,10 @@ navmesh and foliage collision.
   `Bounce_Light` (`@(component,single)` global indirect scale).
 - **Camera & exposure:** `Camera` (`View_Camera` overrides `active`, handles blends/fade/
   `own_hidden`); `Exposure` (`Auto`/`Manual` + EV `compensation`, overrides `View_Volume`).
-- **Sky (`@(component,single)`, `sky.odin`):** `luminance` + `image` or `atmosphere` (tracks active
-  `Sun`), optional `use_background`, replicable `from`/`fade` transition, or local transition via
-  `render.activate` (`Environment_Requests`; invalid -> `render.activate` problem).
+- **Sky (`@(component,single)`, `sky.odin`):** `luminance` + `image`, a Sky-program `material`
+  ([sky programs](../../mirai-rendering/references/gi.md#sky-and-sun)) or `atmosphere` (tracks
+  active `Sun`), optional `use_background`, replicable `from`/`fade` transition, or local
+  transition via `render.activate` (`Environment_Requests`; invalid -> `render.activate` problem).
 - **`View_Volume` (`view_volume.odin`):** per-zone `exposure`, `tint` and up to 8 post-process
   `layers` (per split-screen `Camera.slot`; given again when the layers, or a material or program
   they name, change or load late; sky/sun stay global). An enabled layer whose material does not

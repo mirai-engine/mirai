@@ -562,6 +562,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
                  prepare_views(r,frame.views,alone) && (r.view_count>0 || (alone || frame.ui_only || scene_targets(r,&r.main)) && ensure_glass_targets(r,&r.main.targets)) &&
                  (frame.ui_only || air_tables_ensure(r) && points_prepare(r))
     if prepared_ok {ground_prepare(r)}
+    if prepared_ok && !frame.ui_only {sky_bakes_ensure(r)}
     if prepared_ok && r.view_count>0 {main_scene_release(r)}
     // A window whose pipeline generates frames shows them through the presenter of the device.
     if prepared_ok && !frame.offscreen {
@@ -617,7 +618,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     recorded_ok=recorded_ok && upload_scene(r,cmd) && viewmodels_place(r,cmd,frame)
     base.profile_end(zone)
     zone=render_zone_begin(r,"mesh draws")
-    recorded_ok=recorded_ok && decals_order(r,cmd) && mesh_draws_record(r,cmd) && (frame.ui_only || air_frame(r,cmd))
+    recorded_ok=recorded_ok && decals_order(r,cmd) && mesh_draws_record(r,cmd) && (frame.ui_only || air_frame(r,cmd) && sky_bakes_record(r,cmd))
     if recorded_ok {pages_record_begin(r,cmd)}
     recorded_ok=recorded_ok && textures_feedback_begin(r,cmd,frame)
     base.profile_end(zone)
@@ -967,8 +968,8 @@ view_begin :: proc(p: ^Pass) -> bool {
 	p.blend = transparency && stage_asked(r, .Blend)
 	scale := s.light_scale if s.light_scale > 0 else 1
 	frame_sun_sky(&f, s.sun, s.environment, scale, max(settings.sun_radius, SUN_RADIUS), r.air.built, settings.sun_shadows && !s.sun.shadowless)
-	f.sky_map = sky_map(r, s.environment.sky_texture, s.environment.sky_atmosphere)
-	f.sky_from_map = sky_map(r, s.environment.sky_from_texture, s.environment.sky_from_atmosphere)
+	f.sky_map = sky_map(r, sky_image_of(r, 0, s.environment.sky_texture, s.environment.sky_program), s.environment.sky_atmosphere)
+	f.sky_from_map = sky_map(r, sky_image_of(r, 1, s.environment.sky_from_texture, s.environment.sky_from_program), s.environment.sky_from_atmosphere)
 	if s.environment.use_background {
 		f.background_map = sky_map(r, s.environment.background_texture, false)
 		f.background_map.y = 0 if s.environment.background_behind else 1

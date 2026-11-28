@@ -72,6 +72,7 @@ MIRAI_API :: [Program_Domain]string{
     .Postprocess="Slang intrinsics, the functions of the program and mirai_scene_color(ctx, uv), mirai_scene_depth(ctx, uv), mirai_scene_normal(ctx, uv), mirai_outline(ctx, uv), mirai_sample_texture(ctx, index, uv, lod) and mirai_sample_texture_level(index, uv, level)",
     .Vfx="Slang intrinsics, the functions of the program and mirai_vfx_random(seed) and mirai_vfx_texture(index, uv, level)",
     .Ui="Slang intrinsics, the functions of the program and mirai_sample_texture_level(index, uv, level)",
+    .Sky="Slang intrinsics, the functions of the program and mirai_sample_texture_level(index, uv, level)",
 }
 
 // How a program of each domain reads a texture parameter.
@@ -81,6 +82,7 @@ TEXTURE_READ :: [Program_Domain]string{
     .Postprocess="mirai_sample_texture(ctx, p.<texture parameter>, uv, 0)",
     .Vfx="mirai_vfx_texture(p.<texture parameter>, uv, level)",
     .Ui="mirai_sample_texture_level(p.<texture parameter>, uv, level)",
+    .Sky="mirai_sample_texture_level(p.<texture parameter>, uv, level)",
 }
 
 // The functions a program of each domain declares in its namespace, one per
@@ -93,6 +95,7 @@ ENTRIES :: [Program_Domain]string{
         "void update(Mirai_Vfx_Context ctx, Parameters p, inout Mirai_Vfx_Particle particle, inout Attributes a) {...}\n"+
         "void render(Mirai_Vfx_Context ctx, Parameters p, Mirai_Vfx_Particle particle, Attributes a, inout Mirai_Vfx_Visual visual) {...}",
     .Ui="float4 evaluate(Mirai_Ui_Context ctx, Parameters p) {... return ctx.color;}",
+    .Sky="float3 evaluate(Mirai_Sky_Context ctx, Parameters p) {... return color;}",
 }
 
 // The function of a Surface program that says `//! vertex`.
@@ -101,13 +104,15 @@ VERTEX_ENTRY :: "Mirai_Vertex vertex(Mirai_Vertex_Context ctx, Parameters p) {Mi
 
 // The stages of the engine that evaluate a program of each domain; a Surface
 // program reaches many, and the check compiles it in two of its own; a Vfx
-// program, in the stages of plugins marked `//! per vfx program`.
+// program, in the stages of plugins marked `//! per vfx program`; a Sky
+// program, with the include of its own as the stages of each Sky program.
 @(private="file")
 CHECK_STAGES :: [Program_Domain][]string{
     .Surface={},
     .Postprocess={"postprocess.frag.slang"},
     .Vfx={},
     .Ui={"ui.frag.slang"},
+    .Sky={"sky_bake.comp.slang"},
 }
 
 // A ui program receives the four floats of its node.
@@ -138,7 +143,7 @@ token_at :: proc(c:^Checker,index:int) -> Token {return c.src.tokens[clamp(index
 rules_declaration :: proc(c:^Checker) -> (name:string) {
     src:=c.src
     if src.name=="" {
-        report(c,.Error,"mirai.declaration",1,1,"the program does not declare its name","start the file with `//! mirai surface Name` (or postprocess, vfx or ui in place of surface)")
+        report(c,.Error,"mirai.declaration",1,1,"the program does not declare its name","start the file with `//! mirai surface Name` (or postprocess, vfx, ui or sky in place of surface)")
         return src.namespace_name
     }
     if src.name=="pbr" {report(c,.Error,"mirai.declaration",src.declared_line,1,"pbr is the name of the standard model","give the program another name")}
@@ -225,6 +230,7 @@ rules_code :: proc(c:^Checker) {
                 #partial switch c.domain {
                 case .Surface: report(c,.Error,"mirai.ray_derivatives",at.line,at.column,fmt.aprintf("%s needs screen derivatives, and Surface programs also run on ray hits (ctx.ray), which have none",name,allocator=c.allocator),"sample with mirai_sample_texture(ctx, index, uv, lod), which takes the level from ctx, and widen filters with ctx.lod")
                 case .Vfx: report(c,.Error,"mirai.derivatives",at.line,at.column,fmt.aprintf("%s needs screen derivatives, and Vfx programs run in compute and vertex stages, which have none",name,allocator=c.allocator),"read textures with mirai_vfx_texture(p.<texture parameter>, uv, level), which takes the level")
+                case .Sky: report(c,.Error,"mirai.derivatives",at.line,at.column,fmt.aprintf("%s needs screen derivatives, and a Sky program draws an image of the sky in a compute stage, which has none",name,allocator=c.allocator),"soften an edge over ctx.texel, the angle from one direction drawn to the next, and read textures with mirai_sample_texture_level(p.<texture parameter>, uv, level)")
                 }
             }
             for pair in FOREIGN {
@@ -244,6 +250,7 @@ rules_code :: proc(c:^Checker) {
                 #partial switch c.domain {
                 case .Surface: report(c,.Error,"mirai.ray_derivatives",at.line,at.column,fmt.aprintf("%s takes its level from screen derivatives, and Surface programs also run on ray hits",name,allocator=c.allocator),"use mirai_sample_texture(ctx, p.<texture parameter>, uv, 0)")
                 case .Vfx: report(c,.Error,"mirai.derivatives",at.line,at.column,fmt.aprintf("%s takes its level from screen derivatives, and Vfx programs run in compute and vertex stages",name,allocator=c.allocator),"use mirai_vfx_texture(p.<texture parameter>, uv, level)")
+                case .Sky: report(c,.Error,"mirai.derivatives",at.line,at.column,fmt.aprintf("%s takes its level from screen derivatives, and a Sky program draws in a compute stage",name,allocator=c.allocator),"use mirai_sample_texture_level(p.<texture parameter>, uv, level)")
                 }
             }
             for name in TEXTURE_METHODS {
@@ -657,29 +664,35 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
         dispatchers:=dispatchers_make()
         own,failure:string
         program_include:=strings.concatenate({label,"/",relative},context.temp_allocator)
-        if c.domain==.Vfx {
-            path:=strings.concatenate({"programs/",program_include},context.temp_allocator)
+        path:=strings.concatenate({"programs/",program_include},context.temp_allocator)
+        #partial switch c.domain {
+        case .Vfx:
             own,failure=vfx_program_include(name,prelude,Program_Content{path=path},
                 layout,attributes,stages_declared,directives)
-        } else {
+        case .Sky:
+            own=sky_program_include(name,name,Program_Content{path=path},layout)
+        case:
             dispatchers_add(&dispatchers,c.domain,1,name,program_include,layout)
         }
-        own_folder:=path_join(include,VFX_FOLDER,name,allocator=context.temp_allocator)
+        // The include of a Vfx or Sky program alone, which its stages take before those of the generation.
+        own_file:=SKY_INCLUDE if c.domain==.Sky else VFX_INCLUDE
+        own_folder:=path_join(include,SKY_FOLDER if c.domain==.Sky else VFX_FOLDER,name,allocator=context.temp_allocator)
+        owned:=c.domain==.Vfx || c.domain==.Sky
         if failure!="" {
             line:=src.declared_line
             if fields:=src.structs["Attributes"];len(fields)>0 {line=fields[0].line}
             report(&c,.Error,"mirai.attributes",line,1,failure,fmt.aprintf("keep struct Attributes within %d bytes of float, int, uint and bool scalars and vectors: what the program needs again in the next step",ATTRIBUTE_BYTES,allocator=c.allocator))
         } else {
             failed:=dispatchers_write(&dispatchers,include)
-            if failed=="" && c.domain==.Vfx {
+            if failed=="" && owned {
                 os.make_directory_all(own_folder)
-                if !write_file(path_join(own_folder,VFX_INCLUDE,allocator=context.temp_allocator),transmute([]u8)own) {failed=VFX_INCLUDE}
+                if !write_file(path_join(own_folder,own_file,allocator=context.temp_allocator),transmute([]u8)own) {failed=own_file}
             }
             if failed!="" {
                 result.error=fmt.aprintf("could not write %s for the check",failed,allocator=allocator)
                 return
             }
-            // own: the include of the Vfx program, before those of the generation. A stage reads
+            // own: the include of the Vfx or Sky program, before those of the generation. A stage reads
             // its constants (`//! constant`) as the build gives them.
             command :: proc(slangc,source,stage,output:string,own,include,root,project,folder:string,sources:[]Source,constants:[]Constant=nil) -> []string {
                 out:=make([dynamic]string,context.temp_allocator)
@@ -722,7 +735,7 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
                 stage:=path_name(source)
                 _,kind,_:=stage_of(stage)
                 output:=path_join(temporary,stage,allocator=context.temp_allocator)
-                append(&compiles,Check_Compile{runner=&runner,stage=strings.trim_suffix(stage,".slang"),command=command(slangc,source,kinds[kind],output,own_folder if c.domain==.Vfx else "",include,options.root,options.project,folder,options.sources,constants(string(sources_file(&files,source).data),context.temp_allocator))})
+                append(&compiles,Check_Compile{runner=&runner,stage=strings.trim_suffix(stage,".slang"),command=command(slangc,source,kinds[kind],output,own_folder if owned else "",include,options.root,options.project,folder,options.sources,constants(string(sources_file(&files,source).data),context.temp_allocator))})
             }
             // Every compilation at once: each waits on slangc.
             js:jobs.Job_System

@@ -359,6 +359,24 @@ float4 evaluate(Mirai_Ui_Context ctx, Parameters p) {return ctx.color*p.tint*p.e
 }
 `)
     expect_rule(t,ui,"mirai.parameter_packing",3,.Error)
+
+    // A Sky program draws in a compute stage: no derivatives, which ctx.texel stands for.
+    sky:=check_text(t,&f,"rules",`//! mirai sky Rules
+namespace Rules {
+struct Parameters {float3 zenith;};
+float3 evaluate(Mirai_Sky_Context ctx, Parameters p) {return p.zenith*fwidth(ctx.direction.y);}
+}
+`)
+    edge:=expect_rule(t,sky,"mirai.derivatives",4,.Error)
+    testing.expect(t,strings.contains(edge.fix,"ctx.texel"),edge.fix)
+    returned:=check_text(t,&f,"rules",`//! mirai sky Rules
+namespace Rules {
+struct Parameters {float3 zenith;};
+float4 evaluate(Mirai_Sky_Context ctx, Parameters p) {return float4(p.zenith,1.0);}
+}
+`)
+    sky_signature:=expect_rule(t,returned,"mirai.declaration",4,.Error)
+    testing.expect(t,strings.has_prefix(sky_signature.fix,"float3 evaluate(Mirai_Sky_Context ctx, Parameters p)"),sky_signature.fix)
 }
 
 @(test)
