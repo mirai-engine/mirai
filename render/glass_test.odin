@@ -154,7 +154,7 @@ glass_filters_the_scene_where_a_coat_covers_it :: proc(t: ^testing.T) {
 	above := Camera{position = {0, 5, 0}, forward = {0, -5, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	scene_given(r, {floor}, nil, SUN, {})
 	open := shown(t, &f, above, {0, 1, 0})
-	testing.expect_value(t, r.targets.glass_scene, rhi.Texture(0))
+	testing.expect_value(t, r.targets.scene_copy, rhi.Texture(0))
 	scene_given(r, {floor, {object_id = 2, mesh = sheet, transform = placed({0, 1, 0}, {2, 1, 2}), material = 1, tint = {1, 1, 1}}}, nil, SUN, {})
 	covered := shown(t, &f, above, {0, 1, 0})
 	// 60% of the sheet is a red surface lit by the sun and 40% of the floor shows.
@@ -620,7 +620,7 @@ glass_frames_stay_allocation_free :: proc(t: ^testing.T) {
 	scene_given(r, instances, []Light_Desc{{position = {1, 3, 1}, color = {1, 1, 1}, intensity = 8 * math.PI, range = 10, indirect = 1, scattering = 1}}, SUN, {})
 	camera := Camera{position = {0, 5, 0.5}, forward = {0, -5, -0.5}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 4 {testing.expect(t, fixture_frame(&f, {camera = camera}), r.error)}
-	targets := [2]rhi.Texture{r.targets.glass_scene, r.targets.glass[1].depth}
+	targets := [2]rhi.Texture{r.targets.scene_copy, r.targets.glass[1].depth}
 	testing.expect(t, targets[0] != 0 && targets[1] != 0, "both layers have their targets")
 	tracking: mem.Tracking_Allocator
 	mem.tracking_allocator_init(&tracking, context.allocator)
@@ -630,7 +630,7 @@ glass_frames_stay_allocation_free :: proc(t: ^testing.T) {
 		for _ in 0 ..< 8 {testing.expect(t, fixture_frame(&f, {camera = camera}), r.error)}
 	}
 	testing.expect_value(t, tracking.total_allocation_count, 0)
-	testing.expect_value(t, [2]rhi.Texture{r.targets.glass_scene, r.targets.glass[1].depth}, targets)
+	testing.expect_value(t, [2]rhi.Texture{r.targets.scene_copy, r.targets.glass[1].depth}, targets)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 

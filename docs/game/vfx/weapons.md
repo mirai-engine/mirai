@@ -74,6 +74,29 @@ are drawn coming from where the emitter was the frame before, without smearing.
 `blend` `Multiply` multiplies what is behind a sprite by its color (scorch puffs, shadows of
 smoke). It adds no light and is not lit.
 
+## Heat, shockwaves and spell warps
+
+`blend` `Distort` draws no color: what is behind the sprite, ribbon or beam shows shifted by
+`distortion` metres at the particle (a heat shimmer over a barrel, the ring of an impact, the warp
+of a portal). The shift follows the slope of the normal map of its `material`; without a material
+it follows its soft puff, so a burst of `Distort` puffs is a shockwave with no texture. Overlapping
+particles add their shift and the image shows once, and what stands in front of the effect is
+never smeared over what is behind it.
+
+```odin
+fx.render, fx.blend, fx.distortion, fx.size = .Billboard, .Distort, 0.08, {1.5, 2.5}
+```
+
+## Lit smoke and moving flipbooks
+
+A lit sprite whose material has a normal map is lit by the sun at each pixel by that map, as a
+surface is; one whose material has diffuse transmission glows when the sun is behind it (backlit
+smoke). `flipbook_motion` names a two-channel texture of the same tiles as the flipbook (red and
+green: where each texel moves by the next frame, 128 still; import it with `--vectors`): the
+frames slide into each other instead of cross-fading, so a flipbook of few frames looks smooth.
+`flipbook_motion_scale` scales the motion; a Surface program reads how far it is between the
+frames in `ctx.particle_frame`.
+
 ## Bones and transforms
 
 A Vfx program reads a whole skeleton with `//! resource <name> bones` (`mirai_vfx_bones_count`,

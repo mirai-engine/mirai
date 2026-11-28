@@ -45,6 +45,7 @@ Texture_Flag :: enum u8 {
     Cube,       // its layers are the faces +X, -X, +Y, -Y, +Z and -Z of cubes, sampled with a direction of the world
     Fast,       // blocks of the fast encode the editor imports with; a cook encodes them again from the source
     Fields,     // each level stores the fields of its blocks as planes, which compress smaller: the writer chooses it
+    Vectors,    // a linear vector in red and green per texel (flipbook motion), in BC5: levels are averaged as they are
 }
 Texture_Flags :: bit_set[Texture_Flag;u32]
 

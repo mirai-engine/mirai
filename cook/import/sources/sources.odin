@@ -58,13 +58,14 @@ image_use :: proc(path:string) -> importer.Image_Use {
 }
 
 // The use of an image by its name in asset.import and the settings: color,
-// data, normal or normal_green_down, in any case.
+// data, normal, normal_green_down or vectors, in any case.
 image_use_from_name :: proc(name:string) -> (use:importer.Image_Use,ok:bool) {
     switch strings.to_lower(name,context.temp_allocator) {
     case "color","srgb": return .Color,true
     case "data","linear": return .Data,true
     case "normal": return .Normal,true
     case "normal_green_down": return .Normal_Green_Down,true
+    case "vectors": return .Vectors,true
     }
     return .Color,false
 }

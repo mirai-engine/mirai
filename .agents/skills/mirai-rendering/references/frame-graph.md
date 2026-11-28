@@ -54,7 +54,11 @@ omit or interleave stages.
     Additive materials add their coverage to `Targets.reactive` in the same pass.
 11. **glass.** Shades layers back-to-front ([glass](materials.md#glass); culled when absent). Runs
     `Blend` (behind after peels, front after glass; once after composite without glass), front
-    `Lit` and `glass_inside`.
+    `Lit` and `glass_inside`. After each `Blend` side that drew into the distortion target
+    (`pass_distortion_begin`), `distortion apply` copies `display` into `scene_copy` and displaces
+    it once per pixel (`distortion.frag`), adding to `Targets.reactive`. `scene_copy` is the one
+    copy glass and distortion share: behind applies before the glass snapshot, front after
+    `glass_inside`.
 12. **taa.** Upscales to window: 10% moving, <= 64-frame still average (4x16 jitter,
     `Targets.taa_frames`), 3x3 YCoCg variance clamp (`TAA_STILL_GAMMA` widens when still),
     exposed-compressed weights (render-unit history), `Targets.reactive` (`Blend` and additive

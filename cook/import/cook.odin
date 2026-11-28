@@ -65,7 +65,7 @@ model_settings :: proc(model:^Imported_Model,options:Import_Options) -> Import_S
 
 // The options a texture of an image is built with.
 image_build_options :: proc(image:Imported_Image,settings:Import_Settings) -> textures.Build_Options {
-    return {srgb=image.srgb,normal_map=image.normal_map,green_down=image.green_down,alpha_coverage=image.alpha_cutoff,alpha_fill=image.alpha_fill,keep_precision=image.keep_precision,encoding=settings.textures,rdo_lambda=settings.rdo_lambda,channels=image.channels}
+    return {srgb=image.srgb,normal_map=image.normal_map,green_down=image.green_down,vectors=image.vectors,alpha_coverage=image.alpha_cutoff,alpha_fill=image.alpha_fill,keep_precision=image.keep_precision,encoding=settings.textures,rdo_lambda=settings.rdo_lambda,channels=image.channels}
 }
 
 // What a mesh is built with: the settings of its levels and the version of

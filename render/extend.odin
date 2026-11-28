@@ -346,7 +346,8 @@ pass_image_write :: proc(s: ^Stage_Pass, read, write: u32) -> bool {
 // vertices. One of Mask draws in pass_mask_begin; one of Decal blends into the
 // decal targets it names (pass_decal_targets), in their order, in
 // pass_decal_begin; one of Blend into the lit image with blend and into the
-// coverage TAA reads, adding, in pass_blend_begin.
+// coverage TAA reads, adding, in pass_blend_begin, or with distortion into
+// the distortion target in pass_distortion_begin.
 // Gbuffer takes pass_gbuffer_pipeline instead. A compute stage that traces
 // rays declares the variant hw (//! variant), and its pipeline is that of the
 // rays the renderer traces, as for the stages of the engine.
@@ -361,6 +362,7 @@ Stage_Pipeline_Desc :: struct {
 	name:    string,
 	fragment:string, // of a graphics stage: <fragment>.frag instead of <shader>.frag
 	program: u32, // of a graphics stage: the Surface program of the materials its draws show
+	distortion: bool, // of Blend: it adds into the distortion target in pass_distortion_begin (rgba16f) with blend Additive, not into the lit image
 }
 
 STAGE_PIPELINE_BUCKETS :: 2048
@@ -415,7 +417,7 @@ stage_pipeline :: proc(r: ^Renderer, desc: Stage_Pipeline_Desc) -> rhi.Pipeline 
 		without.program = 0
 		if plain = stage_pipeline(r, without); plain == 0 {return 0}
 	}
-	key := base.name_hash(desc.shader) ~ base.name_hash(desc.fragment) * 31 ~ (u64(desc.stage) + 1) << 56 ~ u64(transmute(u8)desc.targets) << 48 ~ u64(desc.blend) << 40 ~ u64(hardware) << 39 ~ u64(compute) << 37 ~ u64(program) * 0x9E3779B97F4A7C15
+	key := base.name_hash(desc.shader) ~ base.name_hash(desc.fragment) * 31 ~ (u64(desc.stage) + 1) << 56 ~ u64(transmute(u8)desc.targets) << 48 ~ u64(desc.blend) << 40 ~ u64(hardware) << 39 ~ u64(compute) << 37 ~ u64(desc.distortion && desc.stage == .Blend) << 36 ~ u64(program) * 0x9E3779B97F4A7C15
 	free, found := stage_pipeline_entry(r, key)
 	if found {return free.pipeline if free.pipeline != 0 else plain}
 	if free == nil {set_error(r, "no room for the pipeline of the stage %s", desc.shader); return plain}
@@ -439,6 +441,9 @@ stage_pipeline :: proc(r: ^Renderer, desc: Stage_Pipeline_Desc) -> rhi.Pipeline 
 		if desc.stage == .Mask {
 			made.color_formats, made.color_count = {0 = .RG16_Float, 1 = .R32_Float, 2 = .R8_Uint}, 3
 			made.depth_format, made.depth_test, made.depth_write, made.depth_compare = .D32_Float, true, true, .Greater
+		} else if desc.stage == .Blend && desc.distortion {
+			made.color_formats, made.color_count, made.blend = {0 = .RGBA16_Float}, 1, {0 = .Additive}
+			made.depth_format, made.depth_test, made.depth_compare = .D32_Float, true, .Greater
 		} else if desc.stage == .Blend || desc.stage == .Effect {
 			made.color_formats, made.color_count, made.blend = {0 = .RGBA16_Float, 1 = .R8_Unorm}, 2, {0 = desc.blend, 1 = .Additive}
 			made.depth_format, made.depth_test, made.depth_compare = .D32_Float, true, .Greater

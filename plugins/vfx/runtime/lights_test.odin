@@ -24,7 +24,7 @@ an_emitter_row_carries_the_light_of_its_particles :: proc(t:^testing.T) {
     testing.expect_value(t,g.light,[4]f32{0.2,0.4,1,300})
     testing.expect_value(t,g.light_reach.xyz,[3]f32{4,0.05,0.25})
     testing.expect_value(t,transmute(u32)g.light_reach.w,transmute(u32)erender.light_shares(0.5,2))
-    testing.expect_value(t,g.light_limit,[4]u32{6,0,0,0})
+    testing.expect_value(t,g.light_limit,[4]u32{6,0,max(u32),transmute(u32)f32(1)}) // no flipbook motion, at its default scale
 }
 
 // Which emitters give lights: those of a Light layer, also with no intensity

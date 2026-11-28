@@ -254,8 +254,10 @@ Import stores only source-authored `asset.Collider` rows (never auto-generates; 
 formats (`RGBA8`; no EXR). `build` generates full per-layer mip chains (linear-light color,
 renormalized normals with optional `green_down` flip, direct HDR average, optional `channels`
 swizzle/invert, bisected `alpha_coverage` preservation; rejects sides > `asset.TEXTURE_MAX_SIZE`).
-- Formats (`stored_format`): `BC5` normals, `BC6H` opaque non-negative HDR (else `RGBA16F`), `BC7`
-  color/alpha-data, `BC1` opaque data (or uncompressed `RGBA8`/`RGBA16`/`RGBA16F` when requested).
+- Formats (`stored_format`): `BC5` normals and `vectors` (two linear channels averaged as they
+  are, `Image_Use.Vectors`, `Texture_Flag.Vectors`), `BC6H` opaque non-negative HDR (else
+  `RGBA16F`), `BC7` color/alpha-data, `BC1` opaque data (or uncompressed `RGBA8`/`RGBA16`/`RGBA16F`
+  when requested).
 - Slang compute encoder runs on a shared headless GPU context (Fast skips RDO; Final enables
   `rdo_lambda`). Non-BC GPUs decode on load in `host`. Bump `BUILD_VERSION` on output changes.
 

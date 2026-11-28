@@ -24,10 +24,19 @@ layer, `PARTICLE_EFFECT_PARAMETERS` in all), `hidden` (primary instance hidden f
   strip with optional +Y arc. `scale` (0 on an axis: 1, `effect.particle_scale`) stretches quads
   in x/y, ribbon and beam width by x, meshes per axis; program `visual.scale` multiplies it per
   particle, and `visual.orientation` (world quaternion; zero keeps `facing`) turns a mesh.
-- **Blending**: `blend` (`Additive`, `Alpha`, `Multiply`) is of sprites, ribbons and beams; a `Mesh`
-  blends by its material's `alpha_mode` (`asset.alpha_blended`: `Blend`/`Additive` draw in `Blend`,
-  `Additive` with alpha 0). `effect.particle_field_applies` hides what does not apply in the
-  editor (`blend` of meshes, ribbon fields of others).
+- **Blending**: `blend` (`Additive`, `Alpha`, `Multiply`, `Distort`) is of sprites, ribbons and
+  beams; a `Mesh` blends by its material's `alpha_mode` (`asset.alpha_blended`: `Blend`/`Additive`
+  draw in `Blend`, `Additive` with alpha 0). `Distort` adds no light: it shifts what is behind by
+  `distortion` metres at the particle along the slope of its material's normal map, or of its puff
+  (across a ribbon or beam) without one ([distortion](#distortion)). `effect.particle_field_applies`
+  hides what does not apply in the editor (`blend` of meshes, ribbon fields of others,
+  `distortion` but of `Distort`).
+- **Flipbook motion**: `flipbook_motion` (a linear two-channel texture of the flipbook's tiles,
+  imported as `vectors`: BC5; 128 still, x right and y down in tiles) and `flipbook_motion_scale`
+  slide the two frames toward the instant between them instead of cross-fading; each stays half a
+  texel inside its tile, textures filter by the uv before the move, and a Surface program reads
+  that instant in `ctx.particle_frame`. `emitter_desc` is not ready until the texture is loaded;
+  meshes ignore it.
 - **Curves & gradients**: non-decreasing active times in `[0, 1]`; trailing zeros unused; sampling
   past the last key holds its value.
 - **Paths & validation**: dot paths (`rate`, `colors.1`, `bursts.0.count`,
@@ -311,7 +320,7 @@ fade), and drops unrequested effects.
 | --- | --- | --- |
 | `Simulate` (step) | `begin` / `emit` / `stage` / `simulate` | Reset/init ranges; spawn step+channel+event births; run program stages & grid swaps; forces, noise rotor, attractor, drag, `World` `trace_ray` (Coulomb friction, rest-speed hit gate), events, half-rate `lit` RGBE |
 | `Simulate` (frame) | `surface` / `stage` clear / `volume light` / `finish` | Build new surface CDFs; clear entered grid cells; light volumes (`_hw`); indirect draws & tiled sort (ribbons, mesh runs) |
-| `Blend` (view) | `volumes` / `sprites` | Raymarch volumes; draw sorted sprites (`Billboard`/`Velocity`/`Horizontal`/`Beam`/`Ribbon`) & blended `Mesh` (`particle_mesh_blend.vert`, mesh normal), Surface program or flipbook/disc, `soft`, `Additive`/`Alpha`/`Multiply` (unlit, `FLAG_MULTIPLY`), `.Glass_Depth` split |
+| `Blend` (view) | `volumes` / `sprites` / `distortion` | Raymarch volumes; draw sorted sprites (`Billboard`/`Velocity`/`Horizontal`/`Beam`/`Ribbon`) & blended `Mesh` (`particle_mesh_blend.vert`, mesh normal), Surface program or flipbook/disc, `soft`, `Additive`/`Alpha`/`Multiply` (unlit, `FLAG_MULTIPLY`), `.Glass_Depth` split; then `Distort` emitters into the distortion target (`particle_distort.frag`) |
 | `Effect` / `Gbuffer` | `effects` / `meshes` | UI effect views; opaque/masked `Mesh` particles |
 
 A Surface program on a sprite or a blended mesh has the last word on its color: it reads
@@ -327,11 +336,28 @@ material.
 
 A lit (`Particle_Info.lit`) particle is lit by what the simulate pass gathers at its center every
 other frame (local lights, probes) into its RGBE `light`. A sprite, ribbon or beam takes the sun
-there too, as a puff with no surface. A blended `Mesh` takes the sun where it is drawn instead:
-the traced sun visibility is the `SUN_SHIFT` bit of its flags, and `particle_sprite.frag` shades it
-with the fragment normal (or that of its Surface program), base color, roughness and metallic by
-`sun_radiance`, the term of the sun `direct_lighting` uses for the scene. Opaque mesh particles are
-lit in the G-buffer like any surface; translucent scene meshes by `translucent.frag`.
+there too, as a puff with no surface, unless it is shaded where it is drawn (`particle_shaded`):
+a blended `Mesh`, and a sprite, ribbon or beam whose material has a normal map, a Surface program
+or diffuse transmission. Then the traced sun visibility is the `SUN_SHIFT` bit of its flags, and
+`particle_sprite.frag` shades it with the fragment normal (mapped by the material through the
+tangent each vertex stage gives, `Particle_Varyings.tangent`, or that of its Surface program),
+base color, roughness, metallic and the layers of the material (`shading_layers`) by
+`sun_radiance`, the term of the sun `direct_lighting` uses for the scene, plus the sun from behind
+through diffuse transmission (`shading_back`). A camera-facing sprite faces the eye from its
+center; a horizontal quad faces up; a ribbon or beam faces across its path. Opaque mesh particles
+are lit in the G-buffer like any surface; translucent scene meshes by `translucent.frag`.
+
+### Distortion
+
+`Distort` emitters draw after the sprites of their side of glass, into the view's `rgba16f`
+distortion target (`erender.pass_distortion_begin`, `DISTORT_PIPELINE`), depth-tested: each adds
+its shift in uv, metres at its depth (stable as the view moves or jitters), and its depth and
+coverage. The renderer then displaces the lit image once (`render/distortion.odin`): overlaps add
+their shifts instead of showing twice, what lies in front of the distorters (their depth by
+coverage) at the shifted place is not pulled over the pixel, and the shift goes into TAA's
+reactive coverage. The copy it reads is the `scene_copy` glass uses. An
+effect view has no image to shift: its `Distort` emitters draw nothing. A view without them has
+neither target.
 
 ## Ribbons
 
@@ -370,7 +396,10 @@ Local-space meshes take motion vectors from the emitter's `previous` rows
   fog/glass sorting, zero-alloc frames, debugger (`glitch.slang`),
   additive meshes, `Multiply`, ribbon segments, `Emitter_Up` and tiles (`trail_stripes.slang`),
   `Emitter` facing with `scale`, program turn and scale of meshes (`lay_across.slang`),
-  local-space motion vectors and inheritance.
+  local-space motion vectors and inheritance, distortion (shift, overlaps without a double image,
+  foreground kept, reactive, targets freed) and both sides of glass, per-pixel normal-mapped sun on
+  billboards, horizontal quads and ribbons with transmission from behind, flipbook motion
+  (`flip_probe.slang`: still motion, tile clamp, `ctx.particle_frame`).
 - `mirai test plugins/vfx/editor -collection:plugins=<root>/plugins`: `document_test.odin`.
 - `mirai test plugins/vfx_animation/runtime --no-gpu`: `span_test.odin` (duration spans, paired
   markers, action filtering, interruption, source destruction, zero-alloc steady ticks),

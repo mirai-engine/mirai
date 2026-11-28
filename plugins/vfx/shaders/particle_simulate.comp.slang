@@ -223,8 +223,8 @@ void main(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID) {
             && view_depth(v.position) < min(frame.camera_forward.w, 100.0);
         float radius = v.size * 0.5;
         float3 light = float3(0.0);
-        // A mesh shades the sun by its normal where it is drawn: its light is the rest.
-        bool shaded = particle_emitters[slot].kinds.y == PARTICLE_RENDER_MESH;
+        // One shaded where it is drawn takes the sun by its normal there: its light is the rest.
+        bool shaded = particle_shaded(slot);
         p.flags &= ~(1u << SUN_SHIFT);
         if (frame.sun_direction.w > 0.5) {
             float3 from = v.position + frame.sun_direction.xyz * (radius + 0.02);

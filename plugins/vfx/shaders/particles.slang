@@ -54,7 +54,7 @@ struct Particle_Emitter {
     float4 velocity_b;
     float4 acceleration;  // w drag
     float4 noise;         // strength, frequency, speed; w the share of the gravity of where a particle is
-    float4 collide;       // bounce, friction, life lost
+    float4 collide;       // bounce, friction, life lost; w metres a Distort sprite shifts what is behind it (Particle_Info.distortion)
     float4 look;          // stretch, soft, intensity, flipbook speed
     float4 attractor;
     uint4 mesh;           // vertex count of a draw of the clusters of level 0 of its mesh (geometry.slang), the mesh, 0, material row
@@ -78,7 +78,7 @@ struct Particle_Emitter {
     uint4 ribbons[2];     // the ribbon each group of births joins
     float4 light;         // of its Particle_Light: color (0: that of each particle), intensity (cd)
     float4 light_reach;   // its range and radius (m), fraction (0: every particle), shares (light_shares_bits)
-    uint4 light_limit;    // lights of the emitter at once (0: as many as the world shows), cutout_count (0 or 3..8), 0, 0
+    uint4 light_limit;    // lights of the emitter at once (0: as many as the world shows), cutout_count (0 or 3..8), the texture of flipbook_motion (INVALID: none) and its scale (bits)
     float4 cutout[4];     // pairs of UV-space sprite cutout polygon vertices (xy, zw)
 };
 
@@ -722,6 +722,44 @@ float particle_puff(float2 tile, float seed) {
     float disc = saturate(1.0 - dot(tile, tile));
     return disc * disc * saturate(0.35 + n * 1.1);
 }
+
+// Whether the sun of a lit particle is shaded where it is drawn, by the normal
+// of each fragment (SUN_SHIFT), instead of at its centre as a puff with no
+// surface: a mesh, and a sprite whose material has a normal map, a Surface
+// program or diffuse transmission, which takes the sun from behind.
+bool particle_shaded(uint slot) {
+    if (particle_emitters[slot].kinds.y == PARTICLE_RENDER_MESH) return true;
+    Material m = material_row(particle_emitters[slot].mesh.w);
+    return material_has(m.textures[MATERIAL_MAP_NORMAL]) || m.program_id != 0u
+        || (material_layers_allowed(m.layers) & MATERIAL_LAYER_DIFFUSE_TRANSMISSION) != 0u;
+}
+
+// The tangent of what a particle draws along u of its texture, with in w the
+// side of its bitangent (MikkTSpace, tangent_frame_normal) that makes it
+// point where v goes down (up).
+float4 particle_tangent(float3 normal, float3 along_u, float3 up_v) {
+    return float4(along_u, dot(cross(normal, along_u), up_v) >= 0.0 ? 1.0 : -1.0);
+}
+
+// What particle_sprite.vert and particle_mesh_blend.vert give
+// particle_sprite.frag at each fragment.
+struct Particle_Varyings {
+    float4 position : SV_Position;
+    [[vk::location(0)]] float4 color : TEXCOORD0;
+    [[vk::location(1)]] float4 light : TEXCOORD1;   // w: the share of the sun the fragment shades by its normal (particle_shaded)
+    [[vk::location(2)]] float4 uv : TEXCOORD2;      // two frames of the flipbook, or the uv sets of a mesh
+    [[vk::location(3)]] float3 blend_depth_life : TEXCOORD3; // between the frames, the view depth, and the share of its life the particle lived
+    [[vk::location(4)]] nointerpolation float4 particle : TEXCOORD4; // its seed, random value, radius, and of what it draws the share it covers
+    [[vk::location(5)]] float3 world : TEXCOORD5;
+    [[vk::location(6)]] nointerpolation float4 data0 : TEXCOORD6; // what the particle gives its material
+    [[vk::location(7)]] nointerpolation float4 data1 : TEXCOORD7;
+    [[vk::location(8)]] nointerpolation float4 data2 : TEXCOORD8;
+    [[vk::location(9)]] nointerpolation float4 data3 : TEXCOORD9;
+    [[vk::location(10)]] nointerpolation uint2 given_material : TEXCOORD10; // which of data it gives, and the row of its material
+    [[vk::location(11)]] float4 tangent : TEXCOORD11; // along u, w the side of its bitangent (particle_tangent)
+    [[vk::location(12)]] float3 normal : TEXCOORD12;  // of what it draws, toward the eye or not
+    [[vk::location(13)]] float4 vertex_color : TEXCOORD13; // of a mesh; white
+};
 
 // Which of the meshes of an emitter a particle shows, by a number from 0 to 1 against their weights.
 uint particle_mesh_pick(uint slot, float u) {

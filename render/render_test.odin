@@ -5172,6 +5172,8 @@ Stages_Seen :: struct {
 	post:          bool,   // the Post pass read the image and wrote the next one
 	post_size:     [2]u32,
 	mips:          bool,   // a texture with mips bound one of them and refused one past them
+	distortion:    bool,   // the Blend pass began one into the distortion target
+	effect_distortion: bool, // the Effect pass, which has no image to displace, was refused one
 }
 
 // What an extension is given at each stage, with the shaders of the engine,
@@ -5239,10 +5241,14 @@ render_stages_run_once_a_frame_and_for_its_view :: proc(t: ^testing.T) {
 			seen.sides[s.glass] += 1
 			pass_blend_begin(s, "test blend")
 			pass_end(s)
+			seen.distortion = pass_distortion_begin(s, "test distortion")
+			if seen.distortion {pass_end(s)}
 		case .Effect:
 			seen.effect, seen.effect_size = s.texture, {s.width, s.height}
 			pass_blend_begin(s, "test effect")
 			pass_end(s)
+			seen.effect_distortion = pass_distortion_begin(s, "test effect distortion")
+			if seen.effect_distortion {pass_end(s)}
 		case .Post:
 			seen.post_size = {s.output_width, s.output_height}
 			seen.post = pass_image_bind(s, 0) && pass_image_write(s, 0, 1) && !pass_image_write(s, 2, 2)
@@ -5265,11 +5271,19 @@ render_stages_run_once_a_frame_and_for_its_view :: proc(t: ^testing.T) {
 	testing.expect(t, made)
 	// The passes are of the frame they were asked for.
 	testing.expect(t, renderer_frame(r, {camera = camera, effect_views = {{texture = effect, camera = camera}}}), r.error)
+	// Distortion keeps its targets for the frame after one that drew it, and no longer.
+	distorting := [2]bool{r.main.targets.distortion != 0 && r.main.targets.scene_copy != 0, false}
 	for i in 0 ..< 2 {
 		testing.expect(t, frame_pass(r, .Lit, record, &seen))
 		if i == 0 {testing.expect(t, frame_pass(r, .Simulate, record, &seen))}
 		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+		if i == 0 {distorting[1] = r.main.targets.distortion != 0}
 	}
+	testing.expect_value(t, distorting, [2]bool{true, true})
+	testing.expect_value(t, [2]rhi.Texture{r.main.targets.distortion, r.main.targets.scene_copy}, [2]rhi.Texture{0, 0})
+	testing.expect(t, seen.distortion && !seen.effect_distortion, "the Blend pass distorts; the Effect pass has no image to")
+	rhi.device_wait_idle(f.device)
+	expect_clean(t, f.device)
 	rhi.device_wait_idle(f.device)
 	testing.expect_value(t, seen.runs, [Frame_Stage]int{.Geometry = 1, .Instances = 0, .Simulate = 2, .Gbuffer = 1, .Decal = 1, .Mask = 1, .Lit = 3, .Blend = 1, .Post = 1, .Effect = 1, .Custom = 0, .Inspect = 0})
 	testing.expect(t, seen.post && seen.mips)

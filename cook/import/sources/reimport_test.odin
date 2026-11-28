@@ -771,7 +771,7 @@ an_image_on_its_own_holds_what_its_name_says_until_its_settings_say_otherwise ::
     testing.expect_value(t,stored(t,kept,masks),importer.Image_Use.Color)
 
     Named :: struct {name:string,use:importer.Image_Use}
-    for named in ([?]Named{{"data",.Data},{"Color",.Color},{"normal",.Normal},{"NORMAL_GREEN_DOWN",.Normal_Green_Down}}) {
+    for named in ([?]Named{{"data",.Data},{"Color",.Color},{"normal",.Normal},{"NORMAL_GREEN_DOWN",.Normal_Green_Down},{"vectors",.Vectors}}) {
         got,known:=image_use_from_name(named.name)
         testing.expectf(t,known && got==named.use,"%s: %v",named.name,got)
     }

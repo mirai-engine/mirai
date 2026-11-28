@@ -319,6 +319,7 @@ Pipeline_Id :: enum {
 	Decal_Draws, Decal, Decal_Emissive, // the decals of the scene (decals.odin): their draws, and their pass without and with the emission target
 	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Clear, Shadow_Map_Copy, Shadow_Mark, Shadow_Pages, Shadow_Pages_Sort, Shadow_Hiz, // the cull of the maps of the shadows by instance and by cluster, the draws of the triangles their lists hold by what each writes, the pages of the cache they clear and the atlas copies, the marks of the points, the table of the pages (the steps that sort the pool apart) and the farthest depth of the cache
 	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Levels, Glass_Inside, Translucent_Draws,
+	Distortion, // the lit image displaced by what the Blend stage drew into the distortion target (distortion.odin)
 	// The raster of the visibility target by raster bin (RASTER_BIN_*), then the same of a view with a clip plane.
 	Visibility, Visibility_Two_Sided, Visibility_Tested, Visibility_Tested_Two_Sided,
 	Visibility_Clip, Visibility_Two_Sided_Clip, Visibility_Tested_Clip, Visibility_Tested_Two_Sided_Clip,
@@ -378,6 +379,8 @@ Frame_Targets :: struct {
 	linear_depth:            rhi.Texture,
 	direct:                  rhi.Texture,
 	display:                 rhi.Texture, // composite output shown by tonemap (debug views)
+	scene_copy:              rhi.Texture, // a copy of display that a pass reads while it writes display: what a layer of glass is drawn over, with the levels that blur it (glass_levels.comp), and what distortion displaces (distortion.odin); made while glass is in the scene or the view distorts
+	distortion:              rhi.Texture, // RGBA16 float: how far the Blend stage displaces each pixel of display, in uv, and the depth of what displaces it by weight (pass_distortion_begin); made while the view distorts
 	subsurface:              [2]rhi.Texture, // of the pixels with a subsurface, the light to spread and that light spread across the view (subsurface.comp); made when the view first shows one
 	nested_depth:            rhi.Texture, // the depth buffer of the nested views, which draw only the pixels their mask gave them
 	views:                   rhi.Texture, // R8 uint: 1 + the nested view of each pixel, 0 the view itself (pass_nested_add)
@@ -432,7 +435,7 @@ Targets :: struct {
 	needs_clear:             bool,
 	glass:                   [GLASS_LAYERS_MAX]Glass_Layer,
 	glass_zbuffer:           rhi.Texture,
-	glass_scene:             rhi.Texture, // copy of the scene a glass layer is drawn over, for the layer to read, and its levels to blur it (glass_levels.comp)
+	distorted:               bool, // the frame before of the view drew distortion: it keeps its targets
 	direct_scale:            u32, // the pixels across a point of the direct targets
 	direct_tiles:            rhi.Buffer, // the tiles of points the passes of the direct light take after direct_maps.comp (DIRECT_TILES_REGIONS)
 	reactive:                rhi.Texture, // the share of each pixel the Blend stage and additive materials drew over: TAA keeps less of its history there
@@ -1186,6 +1189,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 		color_formats = {0 = .RGBA32_Float}, color_count = 1, name = "tonemap wide",
 	})
 	graphics(list, r, .Postprocess_Copy, {vertex=&r.shader_codes[.Fullscreen_Vert],fragment=&r.shader_codes[.Blit_Frag],color_formats={0=.RGBA8_Unorm},color_count=1,name="postprocess copy"})
+	graphics(list, r, .Distortion, {vertex=&r.shader_codes[.Fullscreen_Vert],fragment=&r.shader_codes[.Distortion_Frag],color_formats={0=.RGBA16_Float,1=.R8_Unorm},color_count=2,blend={0=.Opaque,1=.Additive},name="distortion"})
 	for id in ([]Pipeline_Id{.Postprocess_Hdr,.Postprocess_Ldr}) {
 		graphics(list,r,id,{vertex=&r.shader_codes[.Fullscreen_Vert],fragment=&r.shader_codes[.Postprocess_Frag],color_formats={0=.RGBA8_Unorm if id==.Postprocess_Ldr else .RGBA16_Float},color_count=1,name="postprocess"})
 	}
@@ -2165,7 +2169,7 @@ scene_targets :: proc(r: ^Renderer, v: ^View_State) -> bool {
 	ok &&= full(r, t, &t.motion, .RG16_Float, attachment, "gbuffer motion")
 	ok &&= full(r, t, &t.linear_depth, .R32_Float, attachment, "gbuffer depth")
 	ok &&= full(r, t, &t.direct, .RGBA16_Float, {.Sampled, .Storage}, "direct light")
-	ok &&= full(r, t, &t.display, .RGBA16_Float, HISTORY_USAGE, "display")
+	ok &&= full(r, t, &t.display, .RGBA16_Float, HISTORY_USAGE + {.Transfer_Src}, "display") // copied into scene_copy
 	if !ok {return false}
 	for i in 0 ..< 2 {t.taa[i] = rhi.texture_create(d, {width = t.output_width, height = t.output_height, format = .RGBA16_Float, usage = HISTORY_USAGE, name = "taa history"})}
 	for i in 0 ..< 2 {t.taa_frames[i] = rhi.texture_create(d, {width = t.output_width, height = t.output_height, format = .R16_Float, usage = HISTORY_USAGE, name = "taa frames"})}

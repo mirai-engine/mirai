@@ -61,6 +61,18 @@ blocks_cover_any_size :: proc(t:^testing.T) {
     plain_built,_:=build(rgba8(image[:],8,4),{encoding=.Uncompressed})
     defer built_destroy(&plain_built)
     testing.expect(t,normals.format==.BC5 && plain_built.format==.RGBA8 && len(plain_built.mips[0])==8*4*4)
+    // Vectors are BC5 too, but not renormalized: a still one (128) stays exactly still at every level.
+    for &b,i in image {b=128 if i%4<2 else 255}
+    still,_:=build(rgba8(image[:],8,4),{vectors=true},gpu=&gpu)
+    defer built_destroy(&still)
+    testing.expect(t,still.format==.BC5 && .Vectors in still.flags && .Normal_Map not_in still.flags)
+    for level,i in still.mips {
+        size:=[2]int{max(8>>uint(i),1),max(4>>uint(i),1)}
+        texels:=make([]u8,size.x*size.y*4,context.temp_allocator)
+        testing.expect(t,asset.texture_level_rgba8(.BC5,level,size.x,size.y,texels))
+        for at in 0..<size.x*size.y {testing.expectf(t,texels[at*4]==128 && texels[at*4+1]==128,"level %d keeps 128: %v",i,texels[at*4:at*4+2])}
+    }
+    testing.expect(t,settings_hash({vectors=true})!=settings_hash({normal_map=true}),"vectors are a setting of their own")
     testing.expect(t,settings_hash({srgb=true})!=settings_hash({srgb=true,encoding=.Uncompressed}),"the encoding is a setting of the import")
 }
 
@@ -97,6 +109,7 @@ a_compressed_texture_survives_the_file_within_what_a_block_keeps :: proc(t:^test
         {"data",{rdo_lambda=-1},false,.BC1,4,12},
         {"data with alpha",{rdo_lambda=-1},true,.BC7,4,12},
         {"normal map",{normal_map=true,rdo_lambda=-1},false,.BC5,2,6},
+        {"vectors",{vectors=true,rdo_lambda=-1},false,.BC5,2,6},
         {"plain",{srgb=true,encoding=.Uncompressed},true,.RGBA8,4,0},
     }
     for entry,index in cases {

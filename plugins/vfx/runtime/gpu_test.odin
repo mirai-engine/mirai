@@ -238,6 +238,11 @@ particles_of_every_kind_draw_around_glass_without_validation_errors :: proc(t: ^
 	pieces.info.shape, pieces.info.shape_size, pieces.info.acceleration = .Sphere, {0.3, 0.3, 0.3}, {0, -9.8, 0}
 	ripples := test_emitter(5, {0, -0.45, 0})
 	ripples.info.render, ripples.info.flipbook, ripples.info.local_space = .Horizontal, {2, 2}, true
+	// Heat behind the glass and in front of it: each side displaces the image it draws over.
+	behind := test_emitter(6, {0.5, 0.3, 0})
+	behind.info.blend, behind.info.distortion, behind.info.lifetime, behind.info.size = .Distort, 0.3, {10, 10}, {1.5, 1.5}
+	before := behind
+	before.id, before.transform, before.previous = 7, trs({-0.5, 0.6, 2.2}, {1, 1, 1}), trs({-0.5, 0.6, 2.2}, {1, 1, 1})
 	DT :: f32(1.0 / 60)
 	seconds: f32
 	births: u32
@@ -250,18 +255,21 @@ particles_of_every_kind_draw_around_glass_without_validation_errors :: proc(t: ^
 		pieces.spawns = test_burst(1, births) if i % 4 == 0 else {}
 		// A prewarm: births over the whole life before the first frame.
 		ripples.spawns = test_rate(16, 0.5, births) if i == 0 else {}
+		behind.spawns = test_burst(1, births) if i == 0 else {}
+		before.spawns = behind.spawns
 		births += 16
-		testing.expect(t, frame_emitters(f, &f.sync, {smoke, sparks, trail, pieces, ripples}, DT))
+		testing.expect(t, frame_emitters(f, &f.sync, {smoke, sparks, trail, pieces, ripples, behind, before}, DT))
 		seconds += DT
 		testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = seconds}), r.error)
 	}
 	rhi.device_wait_idle(f.device)
 	testing.expectf(t, particles_alive(f) > 20, "particles alive: %d", particles_alive(f))
-	testing.expect_value(t, u32(f.sync.pool.order_count), u32(5))
+	testing.expect_value(t, u32(f.sync.pool.order_count), u32(7))
+	testing.expect(t, r.targets.distortion != 0 && r.targets.scene_copy != 0, "the view distorts with glass in it")
 	// The second set drops the trail: its range goes back to the pool.
-	testing.expect(t, frame_emitters(f, &f.sync, {smoke, sparks, pieces, ripples}, DT))
+	testing.expect(t, frame_emitters(f, &f.sync, {smoke, sparks, pieces, ripples, behind, before}, DT))
 	testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = seconds + DT}), r.error)
-	testing.expect_value(t, u32(f.sync.pool.order_count), u32(4))
+	testing.expect_value(t, u32(f.sync.pool.order_count), u32(6))
 	expect_clean(t, f.device)
 }
 
@@ -3185,5 +3193,213 @@ particle_lights_hold_while_paused_and_follow_an_origin_jump :: proc(t: ^testing.
 	if !testing.expect(t, len(jumped) == 1 && len(particles) == 1) {return}
 	testing.expectf(t, linalg.length(jumped[0].position_range.xyz + origin - world) < 1e-2, "the light stays where it was in the world: %v + %v, was %v", jumped[0].position_range.xyz, origin, world)
 	testing.expectf(t, linalg.length(jumped[0].position_range.xyz - particles[0].position) < 1e-4, "and where its particle is: %v", particles[0].position)
+	expect_clean(t, f.device)
+}
+
+// A texture of one color, made while running.
+@(private = "file")
+solid_texture :: proc(t: ^testing.T, r: ^gpu.Renderer, color: [4]u8, width, height: int, normal_map := false) -> gpu.Texture_Handle {
+	pixels := make([]u8, width * height * 4, context.temp_allocator)
+	color := color
+	for i in 0 ..< width * height {copy(pixels[i * 4:], color[:])}
+	handle, made := gpu.texture_add(r, {pixels = pixels, width = width, height = height, normal_map = normal_map, name = "vfx test"})
+	testing.expect(t, made, r.error)
+	return handle
+}
+
+// The lit image of the view at a pixel, in render units before exposure, as
+// the Blend stage left it.
+@(private = "file")
+display_texel :: proc(t: ^testing.T, f: ^Gpu_Fixture, p: [2]int) -> [4]f32 {
+	r := &f.renderer
+	texels := make([]f16, int(r.targets.width * r.targets.height) * 4, context.temp_allocator)
+	if !testing.expect(t, rhi.texture_read(f.device, r.targets.display, slice.to_bytes(texels)), rhi.device_error(f.device)) {return {}}
+	at := (p.y * int(r.targets.width) + p.x) * 4
+	return {f32(texels[at]), f32(texels[at + 1]), f32(texels[at + 2]), f32(texels[at + 3])}
+}
+
+// A sprite that distorts shifts what is behind it by its distortion: two that
+// overlap shift it once by what both add, with no double image; what stands
+// in front of it is never pulled over what is behind, while what is behind it
+// moves whole, also before a farther wall; what it moves is marked for TAA;
+// and the view keeps no target for it once it is gone.
+@(test)
+particle_distortion_shifts_what_is_behind_once_by_what_overlaps :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 128, 64, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	// Opaque white, and a normal map leaning along u: each quad shifts what is behind it uniformly.
+	lens := gpu.DEFAULT_MATERIAL
+	lens.textures[.Base_Color] = solid_texture(t, r, {255, 255, 255, 255}, 4, 4)
+	lens.textures[.Normal] = solid_texture(t, r, {204, 128, 230, 255}, 4, 4, normal_map = true)
+	gpu.materials_set(r, {lens})
+	gpu.scene_set_environment(r, {direction = {0.2, 0.4, 1}, color = {1, 1, 1}, illuminance = math.PI, enabled = true, indirect = 1, scattering = 1}, {sky = {0.02, 0.02, 0.02}})
+	// A wall dark left of x 0 and bright right of it; a red post in front of the bright side.
+	wall := []gpu.Instance_Desc {
+		{object_id = 1, mesh = f.cube, transform = trs({-6, 0, -2}, {12, 12, 0.2}), tint = {0.02, 0.02, 0.02}},
+		{object_id = 2, mesh = f.cube, transform = trs({6, 0, -2}, {12, 12, 0.2}), tint = {0.9, 0.9, 0.9}},
+		{object_id = 3, mesh = f.cube, transform = trs({0.8, 0.8, 1.5}, {0.4, 1, 0.4}), tint = {0.9, 0.02, 0.02}},
+		{object_id = 4, mesh = f.cube, transform = trs({-0.8, -1, -1}, {0.4, 0.8, 0.4}), tint = {0.02, 0.9, 0.02}},
+	}
+	gpu.scene_update(r, 0, wall, true)
+	haze :: proc(id: u64, distortion: f32) -> Emitter_Desc {
+		e := test_emitter(id, {0, 0, 0})
+		e.material, e.info.blend, e.info.distortion = 1, .Distort, distortion
+		e.info.lifetime, e.info.size, e.info.soft, e.info.lit = {10, 10}, {4, 4}, 0, false
+		return e
+	}
+	row := project(r, FRONT, {0, 0, -2}).y
+	post_row := project(r, FRONT, {0.8, 0.8, 1.5}).y
+	behind_row := project(r, FRONT, {-0.8, -1, -1}).y
+	Shown :: struct {edge, mixed, red, green: int, moved: u8, still: u8}
+	shown := proc(t: ^testing.T, f: ^Gpu_Fixture, emitters: []Emitter_Desc, row, post_row, behind_row: int) -> (s: Shown) {
+		r := &f.renderer
+		frames_of_one(t, f, emitters, 6, FRONT)
+		pixels, w, _, ok := gpu.renderer_capture(r)
+		if !testing.expect(t, ok, r.error) {return}
+		defer delete(pixels)
+		// The first bright pixel along the row, and those neither dark nor bright: a double image.
+		dark, bright := pixel(pixels, w, {1, row})[1], pixel(pixels, w, {w - 2, row})[1]
+		testing.expectf(t, bright > dark + 60, "the wall is dark %f on the left and bright %f on the right", dark, bright)
+		s.edge, s.green = -1, -1
+		for x in 0 ..< w {
+			green := pixel(pixels, w, {x, behind_row})
+			if green[1] > green[0] + 60 && s.green < 0 {s.green = x}
+			c := pixel(pixels, w, {x, row})
+			if c[1] > (dark + bright) / 2 && s.edge < 0 {s.edge = x}
+			if c[1] > dark + 0.25 * (bright - dark) && c[1] < bright - 0.25 * (bright - dark) {s.mixed += 1}
+			red := pixel(pixels, w, {x, post_row})
+			if red[0] > red[1] + 60 {s.red += 1}
+		}
+		coverage := make([]u8, int(r.targets.width * r.targets.height), context.temp_allocator)
+		if testing.expect(t, rhi.texture_read(f.device, r.targets.reactive, coverage), rhi.device_error(f.device)) {
+			s.moved = coverage[row * w + w / 2 - 2]
+			s.still = coverage[row * w + 2]
+		}
+		return
+	}
+	none := shown(t, f, {}, row, post_row, behind_row)
+	one := shown(t, f, {haze(1, 1)}, row, post_row, behind_row)
+	two := shown(t, f, {haze(2, 0.5), haze(3, 0.5)}, row, post_row, behind_row)
+	// 1 m along u at 5 m with a slope of 0.6: some 6.6 of the 128 pixels across.
+	testing.expectf(t, none.edge > 0 && none.edge - one.edge >= 5 && none.edge - one.edge <= 8, "the edge at pixel %d shows at %d: shifted toward the left", none.edge, one.edge)
+	testing.expectf(t, abs(two.edge - one.edge) <= 1, "two that overlap at half the distortion shift it as one: %d against %d", two.edge, one.edge)
+	testing.expectf(t, one.mixed <= 2 && two.mixed <= 2, "no double image: %d and %d pixels between dark and bright", one.mixed, two.mixed)
+	testing.expectf(t, one.red == none.red && two.red == none.red, "the red post in front keeps its %d pixels: %d and %d", none.red, one.red, two.red)
+	testing.expectf(t, none.green > 0 && none.green - one.green >= 4, "the green post behind it, nearer than the wall, shifts with it: from pixel %d to %d", none.green, one.green)
+	testing.expectf(t, one.moved > 200 && one.still == 0 && none.moved == 0, "what moved is marked for TAA (%d), what did not is not (%d, %d)", one.moved, one.still, none.moved)
+	testing.expect(t, r.targets.distortion != 0 && r.targets.scene_copy != 0)
+	frames_of_one(t, f, {}, 2, FRONT)
+	testing.expect_value(t, [2]rhi.Texture{r.targets.distortion, r.targets.scene_copy}, [2]rhi.Texture{0, 0})
+	expect_clean(t, f.device)
+}
+
+// A lit sprite, horizontal quad or ribbon whose material has a normal map
+// takes the sun by the normal of each fragment: the one leaning toward the
+// sun is the brighter. One whose material transmits light shines with the sun
+// behind it, unlike one that does not.
+@(test)
+lit_particles_shade_the_sun_by_their_normal_map_and_transmit_it_from_behind :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 128, 64, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	white := solid_texture(t, r, {255, 255, 255, 255}, 4, 4)
+	toward, away := gpu.DEFAULT_MATERIAL, gpu.DEFAULT_MATERIAL
+	toward.textures[.Base_Color], away.textures[.Base_Color] = white, white
+	toward.textures[.Normal] = solid_texture(t, r, {230, 128, 166, 255}, 4, 4, normal_map = true)
+	away.textures[.Normal] = solid_texture(t, r, {25, 128, 166, 255}, 4, 4, normal_map = true)
+	flat, thin := toward, toward
+	flat.textures[.Normal] = solid_texture(t, r, {128, 128, 255, 255}, 4, 4, normal_map = true)
+	thin.textures[.Normal] = flat.textures[.Normal]
+	thin.diffuse_transmission = {weight = 1, color = {1, 1, 1}}
+	gpu.materials_set(r, {toward, away, flat, thin})
+	above := gpu.Camera{position = {0, 5, 0}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	Case :: struct {name: string, render: effect.Particle_Render, camera: gpu.Camera, sun: [3]f32, materials: [2]gpu.Material_Handle, at: f32}
+	cases := []Case {
+		{"camera-facing sprites", .Billboard, FRONT, {1, 0.2, 0.5}, {1, 2}, 0},
+		{"horizontal quads", .Horizontal, above, {1, 1, 0}, {1, 2}, 0},
+		{"rising ribbons", .Ribbon, FRONT, {1, 0.2, 0.5}, {1, 2}, 0.6},
+		{"sprites with the sun behind", .Billboard, FRONT, {0, 0.2, -1}, {4, 3}, 0},
+	}
+	DT :: f32(1.0 / 60)
+	for c, k in cases {
+		gpu.scene_set_environment(r, {direction = linalg.normalize(c.sun), color = {1, 1, 1}, illuminance = 4 * math.PI, enabled = true, indirect = 1, scattering = 1}, {sky = {0.01, 0.01, 0.01}})
+		emitters: [2]Emitter_Desc
+		for &e, side in emitters {
+			e = test_emitter(u64(10 * k + side + 1), {1.5 if side == 0 else -1.5, 0, 0})
+			e.material, e.info.render, e.info.blend, e.info.lit = c.materials[side], c.render, .Alpha, true
+			e.info.lifetime, e.info.size, e.info.soft, e.info.intensity = {10, 10}, {1.4, 1.4}, 0, 1
+			if c.render == .Ribbon {
+				e.info.lifetime, e.info.speed, e.info.velocity = {1, 1}, {0, 0}, {{0, 2, 0}, {0, 2, 0}}
+			}
+		}
+		for i in 0 ..< 40 {
+			for &e in emitters {
+				e.spawns = test_rate(2, DT, u32(i) * 2) if c.render == .Ribbon else (test_burst(1) if i == 0 else {})
+			}
+			testing.expect(t, frame_emitters(f, &f.sync, emitters[:], DT))
+			testing.expect(t, gpu.renderer_frame(r, {camera = c.camera, time = f32(i) * DT}), r.error)
+		}
+		rhi.device_wait_idle(f.device)
+		lit := display_texel(t, f, project(r, c.camera, {1.5, c.at, 0}))
+		dark := display_texel(t, f, project(r, c.camera, {-1.5, c.at, 0}))
+		testing.expectf(t, lit[1] > dark[1] * 1.5 + 0.02, "%s: %v the brighter by the sun than %v", c.name, lit, dark)
+	}
+	expect_clean(t, f.device)
+}
+
+// The two frames of a flipbook move along its motion texture before its
+// material reads them: a still motion (128 of 255) moves nothing, a strong
+// one stays inside its tile, and the material reads where it is between the
+// frames (testdata/flip_probe.slang).
+@(test)
+flipbook_frames_move_along_their_motion_inside_their_tile :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 128, 64, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	probe := gpu.program_find(r, "Flip_Probe", .Surface)
+	if !testing.expect(t, probe != nil && .Particle in probe.reads, "testdata has the Surface program Flip_Probe, which reads its particle") {return}
+	shown := gpu.DEFAULT_MATERIAL
+	shown.program_id = probe.id
+	gpu.materials_set(r, {shown})
+	gpu.scene_set_environment(r, {}, {sky = {0, 0, 0}})
+	still := solid_texture(t, r, {128, 128, 0, 255}, 64, 32)
+	strong := solid_texture(t, r, {255, 128, 0, 255}, 64, 32)
+	Case :: struct {name: string, x: f32, motion: gpu.Texture_Handle, scale: f32, across: [2]f32}
+	cases := []Case {
+		{"without motion", -2.5, 0, 1, {0.45, 0.55}},
+		{"with a still motion", 0, still, 1, {0.45, 0.55}},
+		{"with a motion past its tile", 2.5, strong, 2, {0, 0.05}},
+	}
+	emitters := make([]Emitter_Desc, len(cases), context.temp_allocator)
+	for c, i in cases {
+		e := &emitters[i]
+		e^ = test_emitter(u64(i + 1), {c.x, 0, 0})
+		e.material, e.motion = 1, c.motion
+		e.info.blend, e.info.flipbook, e.info.flipbook_motion_scale = .Alpha, {2, 1}, c.scale
+		e.info.lifetime, e.info.size, e.info.soft, e.info.emission_mode = {0.5, 0.5}, {1.6, 1.6}, 0, .Relative
+	}
+	frames_of_one(t, f, emitters, 6, FRONT)
+	between: [3]f32
+	for c, i in cases {
+		texel := display_texel(t, f, project(r, FRONT, {c.x, 0, 0}))
+		if !testing.expectf(t, texel[2] > 0, "%s shows its probe: %v", c.name, texel) {continue}
+		across := texel[0] / texel[2]
+		between[i] = texel[1] / texel[2]
+		testing.expectf(t, across >= c.across[0] && across <= c.across[1], "%s: uv0 at %f across its tile, not in %v", c.name, across, c.across)
+	}
+	testing.expectf(t, between[0] > 0.2 && between[0] < 0.7 && abs(between[1] - between[0]) < 0.01 && abs(between[2] - between[0]) < 0.01, "each is as far between its frames: %v", between)
 	expect_clean(t, f.device)
 }

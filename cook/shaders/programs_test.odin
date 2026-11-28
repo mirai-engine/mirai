@@ -531,6 +531,7 @@ the_probe_of_a_surface_program_says_its_derivatives_and_what_it_reads :: proc(t:
         {"Sparked","s.emission=ctx.particle_data[0].rgb*ctx.particle_random;","",false,{.Particle},{}},
         {"Rimmed","s.emission=p.tint*pow(1.0-saturate(dot(ctx.normal,ctx.view_direction)),4.0);","",false,{.View},{}},
         {"Aged","s.emission=ctx.particle_color.rgb*(1.0-ctx.particle_life);","",false,{.Particle},{}},
+        {"Framed","s.emission=float3(ctx.particle_frame);","",false,{.Particle},{}},
         {"Sway","s.base_color=p.tint;","v.position.x+=sin(ctx.time)*0.1;",false,{},{.Time}},
         {"Spread","s.base_color=p.tint;","v.position+=v.normal*mirai_noise(ctx,1.0)*0.1;",false,{},{.Place}},
     }

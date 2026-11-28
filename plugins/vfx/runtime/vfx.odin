@@ -826,6 +826,11 @@ emitter_desc :: proc(spec:^Emitter_Info,a:^host.Assets,renderer:^erender.Rendere
     d.capacity=emitter_capacity(m)
     if a==nil {return d,false}
     d.material=erender.Material_Handle(m.material!={}?host.assets_material_row(a,m.material):0)
+    // The flipbook moves along its motion only once that is on the GPU.
+    if m.flipbook_motion!={} && m.render!=.Mesh && m.render!=.Light {
+        motion:=host.assets_texture_image(a,m.flipbook_motion)
+        if motion==nil {ready=false} else if !motion.failed {d.motion=motion.handle}
+    }
     if m.render==.Mesh {
         // A material that blends or adds draws its meshes over the lit scene, as a sprite.
         if found:=host.assets_material(a,m.material);found!=nil {d.blended=asset.alpha_blended(found.info.alpha_mode)}

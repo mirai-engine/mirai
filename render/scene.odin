@@ -154,7 +154,7 @@ Translucent :: struct {
 	program:         u32, // its one blended Surface program (0: plain), when !multi_program
 	slots:           u8,  // mesh slots, capped at MESH_MAX_SLOTS, for render-pass command budget
 	multi_program:   bool, // more than one blended Surface program across its slots
-	glass_smooth:    bool, // every glass slot is a thin smooth pane (no blurred mips of glass_scene needed)
+	glass_smooth:    bool, // every glass slot is a thin smooth pane (no blurred mips of scene_copy needed)
 	forward, glass:  bool,
 	before:          bool, // of the view drawing it: nearer than every glass where it covers, so in front of the nearest layer
 	medium:          u32,  // the row plus one of a blended material of it with a medium (material_solid), 0 none: the camera can be in it

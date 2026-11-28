@@ -1052,7 +1052,7 @@ Mirai_Surface_Context material_context(float3 position, float3 normal, float3 ve
     ctx.object_center = float3(0.0); ctx.object_radius = 0.0; ctx.object_low = float3(0.0); ctx.object_high = float3(0.0); ctx.wet = 0.0;
     ctx.material_values = 0u; ctx.material = INVALID;
     ctx.particle_data[0] = float4(0.0); ctx.particle_data[1] = float4(0.0); ctx.particle_data[2] = float4(0.0); ctx.particle_data[3] = float4(0.0); ctx.particle_given = 0u; ctx.particle_random = 0.0; ctx.particle_radius = 0.0;
-    ctx.particle_color = float4(1.0); ctx.particle_life = 0.0;
+    ctx.particle_color = float4(1.0); ctx.particle_life = 0.0; ctx.particle_frame = 0.0;
     float4 clip = view_clip(position);
     float2 ndc = clip.xy / max(clip.w, 1e-6);
     ctx.screen = float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5); ctx.screen_size = frame.resolution;

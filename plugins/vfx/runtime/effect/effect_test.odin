@@ -16,6 +16,8 @@ particle_effects_keep_their_values_parameters_hidden_fields_and_assets :: proc(t
     info.velocity={{-1,2,0},{1,3,0}}
     info.size_over_life.values[1]=0.25
     info.light={color={1,0.5,0.2},intensity=400,range=8,radius=0.1,fraction=0.5,max_lights=12,indirect=1,scattering=0.5}
+    info.blend,info.distortion=.Distort,0.12
+    info.flipbook_motion,info.flipbook_motion_scale={11,12},0.5
     info.cutout_count=4
     info.cutout[0],info.cutout[1],info.cutout[2],info.cutout[3]={0.5,0},{1,0.5},{0.5,1},{0,0.5}
     base.text_set(info.program[:],"Swirl")
@@ -48,7 +50,7 @@ particle_effects_keep_their_values_parameters_hidden_fields_and_assets :: proc(t
     testing.expect(t,particle_parameter_find(view.parameters,"radius",1)==&view.parameters[2])
     found:=particle_parameter_find(view.parameters,"pattern")
     testing.expect(t,found!=nil && found.texture==base.Asset_Id{9,10})
-    testing.expect_value(t,len(a.dependencies),3) // its material, its sub particle and the texture of a parameter
+    testing.expect_value(t,len(a.dependencies),4) // its material, its flipbook motion, its sub particle and the texture of a parameter
     testing.expect_value(t,a.blob.header.kind_version,u16(PARTICLE_VERSION))
 
     // An effect of the version before is not read: there is no reading of old ones.
@@ -131,7 +133,11 @@ invalid_effects_say_which_field_and_how_to_correct_it :: proc(t:^testing.T) {
         {proc(p:^Particle_Info) {p.mesh_weights[1]=-1},"mesh_weights"},
         {proc(p:^Particle_Info) {p.facing=Particle_Facing(5)},"facing"},
         {proc(p:^Particle_Info) {p.lifetime={0,0}},"lifetime"},
-        {proc(p:^Particle_Info) {p.blend=Particle_Blend(3)},"blend"},
+        {proc(p:^Particle_Info) {p.blend=Particle_Blend(4)},"blend"},
+        {proc(p:^Particle_Info) {p.blend,p.distortion=.Distort,-0.1},"distortion"},
+        {proc(p:^Particle_Info) {p.distortion=math.inf_f32(1)},"distortion"},
+        {proc(p:^Particle_Info) {p.flipbook_motion_scale=-1},"flipbook_motion_scale"},
+        {proc(p:^Particle_Info) {p.flipbook_motion_scale=math.nan_f32()},"flipbook_motion_scale"},
         {proc(p:^Particle_Info) {p.ribbon_axis=Particle_Ribbon_Axis(2)},"ribbon_axis"},
         {proc(p:^Particle_Info) {p.scale.y=-1},"scale"},
         {proc(p:^Particle_Info) {p.ribbon_tile=-0.5},"ribbon_tile"},
@@ -172,6 +178,14 @@ invalid_effects_say_which_field_and_how_to_correct_it :: proc(t:^testing.T) {
     info.render=.Light
     testing.expect(t,!particle_field_applies(&info,"blend") && !particle_field_applies(&info,"material") && !particle_field_applies(&info,"lit"))
     testing.expect(t,particle_field_applies(&info,"light") && particle_field_applies(&info,"velocity"))
+    testing.expect_value(t,particle_validate({info=info}).message,"")
+    // Only a sprite, a ribbon or a beam that distorts has a distortion, and a mesh no flipbook motion.
+    info.render=.Billboard
+    testing.expect(t,!particle_field_applies(&info,"distortion") && particle_field_applies(&info,"flipbook_motion"))
+    info.blend=.Distort
+    testing.expect(t,particle_field_applies(&info,"distortion"))
+    info.render=.Mesh
+    testing.expect(t,!particle_field_applies(&info,"distortion") && !particle_field_applies(&info,"flipbook_motion_scale"))
     testing.expect_value(t,particle_validate({info=info}).message,"")
     info.render=PARTICLE_DEFAULTS.render
     // Some particles of a range may die as they are born.

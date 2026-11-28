@@ -23,6 +23,7 @@ Image_Use :: enum u8 {
     Color,             // sRGB
     Normal,            // a tangent-space normal map, +Y up the image
     Normal_Green_Down, // a normal map whose green points down the image, as DirectX writes them
+    Vectors,           // a linear vector of two channels per texel, 128 of 255 zero (the flipbook_motion of a particle effect): its levels are averaged as they are
 }
 
 // Of a model: the skeleton its meshes are skinned to. Other than Source, a

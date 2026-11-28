@@ -131,12 +131,13 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil,peers:
         case "--final": options.fast_textures=false
         case "--uncompressed": given.textures=.Uncompressed;changed+={.Textures}
         case "--blocks": given.textures=.Blocks;changed+={.Textures}
-        case "--srgb","--normal","--normal-green-down","--data":
-            if .Image in changed {fmt.wprintln(errors,"mirai import: an image is one of --srgb, --normal, --normal-green-down or --data; pass only one");return 2}
+        case "--srgb","--normal","--normal-green-down","--vectors","--data":
+            if .Image in changed {fmt.wprintln(errors,"mirai import: an image is one of --srgb, --normal, --normal-green-down, --vectors or --data; pass only one");return 2}
             switch args[at] {
             case "--srgb": given.image=.Color
             case "--normal": given.image=.Normal
             case "--normal-green-down": given.image=.Normal_Green_Down
+            case "--vectors": given.image=.Vectors
             case: given.image=.Data
             }
             changed+={.Image}

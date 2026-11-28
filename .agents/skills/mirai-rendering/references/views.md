@@ -218,7 +218,7 @@ choices ([`fsr`](../../mirai-plugins/references/render-plugins.md#fsr)).
 | `Gbuffer` | Per view / `Geometry` | Lit custom geometry: `pass_gbuffer_begin`, `pass_gbuffer_pipeline`, `pass_depth_pyramid`, `pass_rest_write`. |
 | `Mask` | Per view / `Nested` | Nested views: `pass_nested_add`/`pass_nested_faces`, `pass_mask_begin`..`pass_end`. |
 | `Lit` | Per view (no inspect) / `Lit` | Read-write `rgba16f` opaque image (`pass_image_bind`), runs `Behind`/`Front` if glass (`Glass_Depth`). |
-| `Blend` | Per view (no inspect) / `Transparency` | Forward blend (`pass_blend_begin`, TAA coverage), runs `Behind`/`Front` if glass (`Glass_Depth`). |
+| `Blend` | Per view (no inspect) / `Transparency` | Forward blend (`pass_blend_begin`, TAA coverage), runs `Behind`/`Front` if glass (`Glass_Depth`); screen offsets, depth and coverage added into the `rgba16f` distortion target (`pass_distortion_begin`, `Stage_Pipeline_Desc.distortion`), applied once after the side. |
 | `Post` | Per view (no inspect) / `Output` | Output-size resolved image (`pass_image_write` ping-pong, never in-place; reads G-buffer). |
 | `Effect` | Per `effect_views` | Offscreen UI effects (`Stage_Pass.texture`, `pass_blend_begin`, empty depth). |
 | `Custom` | Pipeline-placed | Compute over declared `pass_resource` slots; rejected by `frame_pass`. |

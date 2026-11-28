@@ -72,6 +72,11 @@ struct Mirai_Surface_Context {
     float4 particle_color;
     // The share of its life it lived, 0 to 1; 0 where no particle draws.
     float particle_life;
+    // Where it is between the frame of its flipbook at uv0 and the next at
+    // uv1, 0 to 1: the engine blends the two by it, and a program that reads
+    // the flipbook itself mixes by it. uv0 and uv1 come already moved along
+    // the flipbook_motion of its effect. 0 where no particle draws.
+    float particle_frame;
 };
 // A vector or a point of the world in the space of the object of ctx, and back.
 float3 mirai_object_vector(Mirai_Surface_Context ctx, float3 v) {

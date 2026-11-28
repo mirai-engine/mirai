@@ -38,9 +38,10 @@ Particle_Shape :: enum u32 {Point,Sphere,Hemisphere,Cone,Box,Circle,Line,Surface
 // Light: the particles draw nothing and give only their lights (light).
 Particle_Render :: enum u32 {Billboard,Velocity,Horizontal,Ribbon,Mesh,Beam,Light}
 // How a sprite, a ribbon or a beam covers what is behind it: Additive adds
-// its light, Alpha covers it by its opacity, Multiply darkens it by its color.
+// its light, Alpha covers it by its opacity, Multiply darkens it by its color,
+// Distort shows it displaced (distortion) and adds no light of its own.
 // A Mesh particle blends as the alpha mode of its material says.
-Particle_Blend :: enum u32 {Additive,Alpha,Multiply}
+Particle_Blend :: enum u32 {Additive,Alpha,Multiply,Distort}
 Particle_Collision :: enum u32 {None,World}
 // How a Mesh particle turns: Tumble, about an axis of its own by its rotation
 // and spin; Velocity, its front (-Z) along its velocity, its +Y as near the
@@ -139,6 +140,7 @@ Particle_Info :: struct {
     collision_life:f32 `mirai:"min=0,max=1"`, // share of its life a particle loses per hit
     render:Particle_Render `mirai:"section=Look"`,
     blend:Particle_Blend,
+    distortion:f32 `mirai:"min=0,unit=m"`,    // Distort: how far it shifts what is behind it, at the particle, along the slope of its normal map or of its puff
     lit:bool,                                 // the sun, the lights and the light probes light it
     sort:bool,                                // blended particles drawn back to front
     material:base.Asset_Id,                   // its base color texture is the flipbook; none: a soft puff
@@ -152,6 +154,8 @@ Particle_Info :: struct {
     soft:f32 `mirai:"min=0,unit=m"`,          // a sprite fades over this distance into what is behind it
     flipbook:[2]u32,                          // columns and rows
     flipbook_speed:f32 `mirai:"min=0"`,       // frames per second; 0: the whole flipbook over the life
+    flipbook_motion:base.Asset_Id `mirai:"kind=.tex"`, // a linear two-channel texture of the same tiles: where each texel of a frame moves to by the next, 128 still; none: the frames cross-fade
+    flipbook_motion_scale:f32 `mirai:"min=0"`, // of flipbook_motion: tiles the full value moves a texel
     size_over_life:Particle_Curve,
     color_over_life:Particle_Gradient,
     trigger:Particle_Event `mirai:"section=Collision"`, // when sub_particle starts particles where one of these is
@@ -171,7 +175,7 @@ PARTICLE_DEFAULTS :: Particle_Info{
     duration=2,rate=20,
     shape=.Cone,shape_size={0.1,0.1,0.1},shape_angle=0.35,
     lifetime={1.5,2},speed={1,2},size={0.2,0.35},colors={{1,1,1,1},{1,1,1,1}},intensity=1,emission_mode=.Relative,
-    blend=.Alpha,lit=true,scale={1,1,1},soft=0.3,flipbook={1,1},
+    blend=.Alpha,distortion=0.05,lit=true,scale={1,1,1},soft=0.3,flipbook={1,1},flipbook_motion_scale=1,
     size_over_life={values={0.5,1,1,1,1,1,1,1},times={0,0.3,1,1,1,1,1,1}},
     color_over_life={
         colors={{1,1,1,0},{1,1,1,1},{1,1,1,1},{1,1,1,0},{1,1,1,0},{1,1,1,0},{1,1,1,0},{1,1,1,0}},
@@ -283,7 +287,9 @@ particle_info_problem :: proc(p:^Particle_Info,coupled:bool) -> Particle_Problem
     if field,ok:=particle_finite(p);!ok {return {field,"Use finite numbers"}}
     if p.shape>max(Particle_Shape) {return {"shape","Use Point, Sphere, Hemisphere, Cone, Box, Circle, Line or Surface"}}
     if p.render>max(Particle_Render) {return {"render","Use Billboard, Velocity, Horizontal, Ribbon, Mesh, Beam or Light"}}
-    if p.blend>max(Particle_Blend) {return {"blend","Use Additive, Alpha or Multiply"}}
+    if p.blend>max(Particle_Blend) {return {"blend","Use Additive, Alpha, Multiply or Distort"}}
+    if p.distortion<0 {return {"distortion","Use a distance of zero or more metres"}}
+    if p.flipbook_motion_scale<0 {return {"flipbook_motion_scale","Use a scale of zero or more; 0 keeps the frames still"}}
     if p.collision>max(Particle_Collision) {return {"collision","Use None or World"}}
     if p.facing>max(Particle_Facing) {return {"facing","Use Tumble, Velocity or Emitter"}}
     if p.ribbon_axis>max(Particle_Ribbon_Axis) {return {"ribbon_axis","Use Camera or Emitter_Up"}}
@@ -356,6 +362,8 @@ particle_field_applies :: proc(info:^Particle_Info,top:string) -> bool {
     switch top {
     case "blend": return info.render!=.Mesh && info.render!=.Light
     case "lit","sort","material","soft","stretch","flipbook","flipbook_speed","scale": return info.render!=.Light
+    case "distortion": return info.blend==.Distort && info.render!=.Mesh && info.render!=.Light
+    case "flipbook_motion","flipbook_motion_scale": return info.render!=.Mesh && info.render!=.Light
     case "ribbon_axis","ribbon_tile": return info.render==.Ribbon
     case "facing","meshes","mesh_weights": return info.render==.Mesh
     case "cutout","cutout_count": return info.render==.Billboard || info.render==.Velocity || info.render==.Horizontal

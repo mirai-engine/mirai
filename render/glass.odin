@@ -43,32 +43,30 @@ ensure_glass_targets :: proc(r: ^Renderer, t: ^Targets) -> bool {
 			return false
 		}
 	}
-	if t.glass_scene == 0 {
-		t.glass_scene = rhi.texture_create(r.device, {
-			width = t.width, height = t.height, format = .RGBA16_Float, usage = HISTORY_USAGE,
-			mip_levels = glass_scene_levels(t), name = "glass scene",
-		})
-		if t.glass_scene == 0 {set_error(r, "glass scene: %s", rhi.device_error(r.device)); return false}
-	}
+	if !scene_copy_target(r, t) {return false}
 	return target(r, nil, &t.glass_zbuffer, t.width, t.height, .D32_Float, {.Depth_Target}, "glass z")
 }
 
-// Every texture of the glass of a view, made or not.
+// Every texture of the glass of a view, made or not, but scene_copy, which is of its frame.
 @(private)
-glass_textures :: proc(t: ^Targets) -> (all: [GLASS_LAYERS_MAX * 7 + 2]rhi.Texture) {
+glass_textures :: proc(t: ^Targets) -> (all: [GLASS_LAYERS_MAX * 7 + 1]rhi.Texture) {
 	for layer, i in t.glass {
 		each := [7]rhi.Texture{layer.albedo, layer.normal, layer.emission, layer.ids, layer.depth, layer.surface, layer.layers}
 		copy(all[i * 7:], each[:])
 	}
-	rest := [2]rhi.Texture{t.glass_zbuffer, t.glass_scene}
-	copy(all[GLASS_LAYERS_MAX * 7:], rest[:])
+	all[GLASS_LAYERS_MAX * 7] = t.glass_zbuffer
 	return
 }
 
 @(private)
 destroy_glass_targets :: proc(r: ^Renderer, t: ^Targets) {
 	for tex in glass_textures(t) {if tex != 0 {rhi.texture_destroy(r.device, tex)}}
-	t.glass, t.glass_zbuffer, t.glass_scene = {}, 0, 0
+	t.glass, t.glass_zbuffer = {}, 0
+	// The view that distorts keeps it.
+	if t.scene_copy != 0 && t.distortion == 0 {
+		shared_target_release(r, t.scene_copy)
+		t.scene_copy = 0
+	}
 }
 
 // m over the top of a solid within which the pixels of a view near it decide whether they start in it
@@ -471,7 +469,7 @@ glass_shade :: proc(p: ^Pass) -> bool {
 		params.snapshot = 1
 		set_params(cmd, &params)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.display)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.glass_scene, 0)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.scene_copy, 0)
 		rhi.cmd_dispatch_indirect(cmd, p.view.glass_dispatch, 0)
 		if p.glass_rough {glass_scene_levels_record(p)}
 		glass_layer_bind(p, k)
@@ -484,7 +482,7 @@ glass_shade :: proc(p: ^Pass) -> bool {
 		rhi.cmd_dispatch_indirect(cmd, p.view.glass_dispatch, 0)
 		rhi.cmd_bind_pipeline(cmd, pipeline)
 		set_params(cmd, &params)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.glass_scene)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.scene_copy)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS8, t.linear_depth)
 		rhi.cmd_dispatch_indirect(cmd, p.view.glass_dispatch, 0)
 	}
@@ -512,8 +510,8 @@ glass_scene_levels_record :: proc(p: ^Pass) {
 	for level in 1 ..< levels {
 		params := Params{source_size = {i32(max(t.width >> (level - 1), 1)), i32(max(t.height >> (level - 1), 1))}, first = 1 if level == 1 else 0}
 		set_params(cmd, &params)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.glass_scene, i32(level - 1))
-		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.glass_scene, i32(level))
+		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.scene_copy, i32(level - 1))
+		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.scene_copy, i32(level))
 		rhi.cmd_dispatch(cmd, groups(max(t.width >> level, 1), 8), groups(max(t.height >> level, 1), 8))
 	}
 }
@@ -558,7 +556,7 @@ glass_inside :: proc(p: ^Pass) {
 	rhi.cmd_timestamp(cmd, "glass inside")
 	params := glass_params(p)
 	glass_layer_bind(p, 0)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.glass_scene)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.scene_copy)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.display)
 	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Glass_Inside)^)
 	set_params(cmd, &params)

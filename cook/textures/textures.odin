@@ -228,6 +228,7 @@ Build_Options :: struct {
     srgb:bool,           // color: averaged as light, stored as sRGB in the formats of 8 bits
     normal_map:bool,     // averaged as vectors and renormalized
     green_down:bool,     // of a normal map whose green points down the image, as DirectX writes them: inverted, so that +Y points up as the renderer reads it
+    vectors:bool,        // a linear vector in red and green, 128 of 255 zero (flipbook motion): stored in BC5, which keeps them apart and 128 exact, levels averaged as they are
     alpha_coverage:f32,  // above 0: the cutoff of a masked material whose coverage every level keeps
     // Above 0: texels whose alpha is below it take the color of the nearest
     // texel of their layer whose alpha is not, their alpha as it was: the
@@ -271,7 +272,7 @@ built_desc :: proc(built:^Built,id:base.Asset_Id,source:^asset.Import_Info) -> a
 
 // The settings hash an import records. Fast has a different hash from Final.
 settings_hash :: proc(options:Build_Options) -> u64 {
-    kind:=u64(options.srgb)|u64(options.normal_map)<<1|u64(options.encoding)<<2|u64(options.green_down)<<4|u64(options.keep_precision)<<5|u64(BUILD_VERSION)<<8
+    kind:=u64(options.srgb)|u64(options.normal_map)<<1|u64(options.encoding)<<2|u64(options.green_down)<<4|u64(options.keep_precision)<<5|u64(options.vectors)<<6|u64(BUILD_VERSION)<<8
     hash:=base.hash_combine(kind,u64(transmute(u32)options.alpha_coverage))
     if options.alpha_fill>0 {hash=base.hash_combine(hash,u64(transmute(u32)options.alpha_fill)|1<<32)}
     final:=options
@@ -301,7 +302,7 @@ stored_format :: proc(source:Source,options:Build_Options) -> asset.Texture_Form
         case .RGBA16F,.RGBA32F: return .RGBA16F
         }
     }
-    if options.normal_map {return .BC5}
+    if options.normal_map || options.vectors {return .BC5}
     hdr:=source_hdr(source.format)
     if !hdr && options.srgb {return .BC7}
     transfer:=transfer_make(false)
@@ -432,6 +433,7 @@ build :: proc(
     built.flags=flags
     if options.srgb {built.flags+={.Srgb}}
     if options.normal_map {built.flags+={.Normal_Map}}
+    if options.vectors {built.flags+={.Vectors}}
     #partial switch built.format {
     case .BC1,.BC5,.BC6H,.BC7: if options.speed==.Fast {built.flags+={.Fast}}
     }
@@ -662,7 +664,7 @@ blocks_of :: proc(
         levels[i]={texels=texels,width=w,height=h,layers=layers,format=.RGBA8,
             cube=.Cube in info.flags}
     }
-    options:=Build_Options{srgb=.Srgb in info.flags,normal_map=.Normal_Map in info.flags,
+    options:=Build_Options{srgb=.Srgb in info.flags,normal_map=.Normal_Map in info.flags,vectors=.Vectors in info.flags,
         alpha_coverage=info.alpha_coverage,rdo_lambda=0 if rdo else -1}
     format:=stored_format(levels[0],options)
     built={width=int(info.width),height=int(info.height),layers=layers,format=format,flags=info.flags,alpha_coverage=info.alpha_coverage,allocator=allocator}

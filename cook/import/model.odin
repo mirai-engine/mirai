@@ -144,6 +144,7 @@ Imported_Image :: struct {
     srgb:bool,
     normal_map:bool,
     green_down:bool,     // a normal map whose green points down the image: it is turned to +Y up
+    vectors:bool,        // a vector of two linear channels per texel (tex.Build_Options)
     alpha_cutoff:f32,    // above 0: the base color of a masked material
     alpha_fill:f32,      // above 0: the base color of outlines cut from a mask with this cutoff (cutout.odin)
     keep_precision:bool, // its source asks for the precision of its 16 bits or floats (tex.Build_Options)

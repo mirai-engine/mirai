@@ -30,8 +30,8 @@ mirai import assets/player/step.wav assets/player/land.wav   # .sound each; many
 - Formats: OBJ, glTF/GLB, USD, FBX; PNG, JPEG, TGA, BMP, GIF, PSD, HDR; WAV and Ogg Vorbis (mono
   or stereo); TTF, OTF; prompt manifests. Texts are `.strings`: [texts](ui/texts.md).
 - A model writes meshes, materials, textures, skeletons, clips and a prefab: instantiate that.
-- An image is color unless its name says otherwise (`normal`, `_n`, `rough`, `metal`, `orm`,
-  `_ao`, `height`, `mask`); force it with `--srgb`, `--data`, `--normal`, `--normal-green-down`.
+- An image is color unless its name says otherwise (`normal`, `_n`, `rough`, `metal`, `orm`, `_ao`,
+  `height`, `mask`); force it: `--srgb`, `--data`, `--normal`, `--normal-green-down`, `--vectors`.
 - An import leaves the source where it is and pins its package in `packages.mirai`, manifest in
   `packages/` (flags, folder, asset ids): importing again keeps ids and material edits, another
   edit stops it until `--discard-changes`; a renamed part is a new asset. History keeps both.

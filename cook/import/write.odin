@@ -343,7 +343,7 @@ Texture_Job :: struct {
     make:Image_Make,        // of an image only its format decodes
     size:u64,
     hash:u64,
-    srgb,normal_map,green_down,keep_precision:bool,
+    srgb,normal_map,green_down,vectors,keep_precision:bool,
     alpha_cutoff:f32,
     alpha_fill:f32,
     channels:textures.Channels,
@@ -354,7 +354,7 @@ Texture_Job :: struct {
 
 @(private)
 texture_options :: proc(w:^Writer,job:Texture_Job) -> textures.Build_Options {
-    return image_build_options({srgb=job.srgb,normal_map=job.normal_map,green_down=job.green_down,alpha_cutoff=job.alpha_cutoff,alpha_fill=job.alpha_fill,keep_precision=job.keep_precision,channels=job.channels},w.options.settings)
+    return image_build_options({srgb=job.srgb,normal_map=job.normal_map,green_down=job.green_down,vectors=job.vectors,alpha_cutoff=job.alpha_cutoff,alpha_fill=job.alpha_fill,keep_precision=job.keep_precision,channels=job.channels},w.options.settings)
 }
 
 // Builds one texture of source as the asset id at path, or takes the object it
@@ -1008,7 +1008,7 @@ import_texture :: proc(path:string,options:Import_Options={},allocator:=context.
             source:=w.source
             job:=Texture_Job{
                 name=filepath.stem(path),bytes=data,size=u64(len(data)),hash=base.hash64(data),
-                srgb=use==.Color,normal_map=use==.Normal || use==.Normal_Green_Down,green_down=use==.Normal_Green_Down,alpha_cutoff=options.alpha_coverage,version=import_version(0),
+                srgb=use==.Color,normal_map=use==.Normal || use==.Normal_Green_Down,green_down=use==.Normal_Green_Down,vectors=use==.Vectors,alpha_cutoff=options.alpha_coverage,version=import_version(0),
             }
             id,target,output:=root_take(&w,asset.KIND_TEXTURE,job.name,".tex")
             built:=write_texture(&w,job,id,{},target,source,output)

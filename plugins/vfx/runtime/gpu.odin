@@ -81,6 +81,7 @@ Emitter_Desc :: struct {
     paused:bool,         // its particles stay as they are
     culled:bool,         // and they are not drawn: its emitter waits (Emitter_Clock.culled)
     material:erender.Material_Handle, // of info.material
+    motion:erender.Texture_Handle, // of info.flipbook_motion; 0: none
     meshes:[effect.PARTICLE_MESHES]Mesh_Choice, // of Mesh particles: what each mesh draws, mesh_count of them
     mesh_count:u32,
     mesh_extent:f32,
@@ -148,7 +149,7 @@ Gpu_Emitter :: struct {
     velocity_a,velocity_b:[4]f32,
     acceleration:[4]f32, // w drag
     noise:[4]f32,       // strength, frequency, speed; w the share of the gravity of where a particle is
-    collide:[4]f32,     // bounce, friction, life lost
+    collide:[4]f32,     // bounce, friction, life lost; w metres a Distort sprite shifts what is behind it
     look:[4]f32,        // stretch, soft, intensity, flipbook speed
     attractor:[4]f32,
     mesh:[4]u32,        // of Mesh particles: its meshes, Particle_Facing, 0; material row
@@ -171,7 +172,7 @@ Gpu_Emitter :: struct {
     ribbons:[2][4]u32,  // the ribbon each group of births joins
     light:[4]f32,       // of effect.Particle_Light: its color (0: that of each particle), intensity (cd)
     light_reach:[4]f32, // its range and radius (m), fraction (0: every particle), shares (erender.light_shares)
-    light_limit:[4]u32, // lights of the emitter at once (0: as many as the world shows), cutout_count (0 or 3..8), 0, 0
+    light_limit:[4]u32, // lights of the emitter at once (0: as many as the world shows), cutout_count (0 or 3..8), the texture of flipbook_motion (max(u32): none), its scale (f32 bits)
     cutout:[effect.PARTICLE_CUTOUT_VERTICES/2][4]f32, // pairs of UV-space cutout polygon vertices (xy, zw)
 }
 #assert(size_of(Gpu_Emitter)==1088)
@@ -745,7 +746,7 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
         flags:=u32(FLAG_ACTIVE)
         if s.fresh {flags|=FLAG_RESET;pool.needs_reset=true}
         if d.info.local_space {flags|=FLAG_LOCAL}
-        if d.info.lit && d.info.render!=.Light {flags|=FLAG_LIT}
+        if d.info.lit && d.info.render!=.Light && !emitter_distorts(d) {flags|=FLAG_LIT}
         if d.info.sort || d.info.render==.Ribbon {flags|=FLAG_SORT}
         // While an effect view plays alone, the emitters of the world keep their particles as they are.
         if d.paused || pool.still && d.view==0 {flags|=FLAG_PAUSED}
@@ -923,7 +924,7 @@ emitter_row :: proc(g:^Gpu_Emitter,s:^Pool_Slot,capacity:u32) {
     g.noise={m.noise,max(m.noise_frequency,0),m.noise_speed,m.gravity}
     // The particles of an effect view are of no place: they fall with GRAVITY.
     if d.view!=0 {g.acceleration.xyz+=GRAVITY*m.gravity;g.noise.w=0}
-    g.collide={clamp(m.bounce,0,1),clamp(m.friction,0,1),clamp(m.collision_life,0,1),0}
+    g.collide={clamp(m.bounce,0,1),clamp(m.friction,0,1),clamp(m.collision_life,0,1),max(m.distortion,0) if emitter_distorts(d) else 0}
     g.look={max(m.stretch,0),max(m.soft,0),m.intensity,max(m.flipbook_speed,0)}
     g.beam={m.beam_end.x,m.beam_end.y,m.beam_end.z,m.beam_arc}
     g.attractor={m.attractor.x,m.attractor.y,m.attractor.z,m.attractor_strength}
@@ -948,11 +949,18 @@ emitter_row :: proc(g:^Gpu_Emitter,s:^Pool_Slot,capacity:u32) {
     g.light={max(light.color.r,0),max(light.color.g,0),max(light.color.b,0),max(light.intensity,0)}
     g.light_reach={max(light.range,0),max(light.radius,0),clamp(light.fraction,0,1),erender.light_shares(light.indirect,light.scattering)}
     cutout_count:=m.cutout_count if m.cutout_count>=3 && m.cutout_count<=effect.PARTICLE_CUTOUT_VERTICES && (m.render==.Billboard || m.render==.Velocity || m.render==.Horizontal) else 0
-    g.light_limit={u32(light.max_lights),cutout_count,0,0}
+    motion:=erender.texture_index(d.motion) if m.render!=.Mesh else max(u32)
+    g.light_limit={u32(light.max_lights),cutout_count,motion,transmute(u32)max(m.flipbook_motion_scale,0)}
     g.cutout={}
     for i in 0..<int(cutout_count) {
         if i&1==0 {g.cutout[i/2].x,g.cutout[i/2].y=m.cutout[i].x,m.cutout[i].y} else {g.cutout[i/2].z,g.cutout[i/2].w=m.cutout[i].x,m.cutout[i].y}
     }
+}
+
+// Whether the sprites, ribbons or beams of an emitter shift what is behind
+// them instead of covering it (effect.Particle_Blend.Distort).
+emitter_distorts :: proc "contextless" (d:^Emitter_Desc) -> bool {
+    return d.info.blend==.Distort && d.info.render!=.Mesh && d.info.render!=.Light
 }
 
 // Whether the particles of an emitter give lights: those of a Light layer,
@@ -967,7 +975,7 @@ emitter_lights :: proc "contextless" (d:^Emitter_Desc) -> bool {
 // asked again when the shaders are, or when the renderer takes another
 // variant of a stage (the one particle_simulate gives changes).
 Particle_Pipelines :: struct {
-    shift,data_copy,begin,emit,simulate,finish,sort,mesh_draws,surface,stage,volume_light,world_texture,additive,alpha,multiply,volume:erender.Pipeline,
+    shift,data_copy,begin,emit,simulate,finish,sort,mesh_draws,surface,stage,volume_light,world_texture,additive,alpha,multiply,distort,volume:erender.Pipeline,
     groups:[dynamic]Program_Group, // first: emitters without a program
     by_program:map[u32]int,
     reloads:u64,
@@ -1106,7 +1114,8 @@ particles_frame :: proc(sync:^Particle_Sync,app:^host.App,lights:=u32(PARTICLE_L
         p.additive=erender.stage_pipeline(app.renderer,{stage=.Blend,shader="particle_sprite",blend=.Additive,name="particles additive"})
         p.alpha=erender.stage_pipeline(app.renderer,{stage=.Blend,shader="particle_sprite",blend=.Premultiplied,name="particles blended"})
         p.multiply=erender.stage_pipeline(app.renderer,{stage=.Blend,shader="particle_sprite",blend=.Multiply,name="particles multiplied"})
-        if p.shift==0 || p.begin==0 || p.emit==0 || p.finish==0 || p.sort==0 || p.mesh_draws==0 || p.surface==0 || p.stage==0 || p.volume_light==0 || p.world_texture==0 || p.additive==0 || p.alpha==0 || p.multiply==0 || p.volume==0 {return false}
+        p.distort=erender.stage_pipeline(app.renderer,DISTORT_PIPELINE)
+        if p.distort==0 || p.shift==0 || p.begin==0 || p.emit==0 || p.finish==0 || p.sort==0 || p.mesh_draws==0 || p.surface==0 || p.stage==0 || p.volume_light==0 || p.world_texture==0 || p.additive==0 || p.alpha==0 || p.multiply==0 || p.volume==0 {return false}
         p.simulate=simulate
         pool.regroup=true
     }
@@ -1522,19 +1531,13 @@ particles_sprites :: proc(pass:^erender.Pass,user:rawptr) {
     if len(draws)==0 || !mesh_draws_prepare(sync,pass,draws) || !view_sort(sync,pass,draws) {return}
     media:=erender.pass_media(pass,MEDIA_SLOT)
     erender.pass_blend_begin(pass,"particle sprites")
-    erender.pass_indices(pass,.Quad)
-    erender.pass_buffer(pass,0,pool_buffer(pool,.Particles))
-    pool_bind_frame(pass,sync)
-    erender.pass_buffer(pass,3,pool_buffer(pool,.Lists))
-    erender.pass_buffer(pass,9,pool_buffer(pool,.Data))
-    erender.pass_surface_read(pass,7,.Linear_Depth)
-    erender.pass_surface_read(pass,8,.Glass_Depth)
-    state:=pool_buffer(pool,.State)
-    erender.pass_buffer(pass,2,state)
+    state:=sprites_bind(pass,sync)
     Params :: struct {emitter,pass,mesh,pad1:u32,media:erender.Media_Grid}
+    distorting:=0
     for draw in draws {
         // The stage of its program, with the fragment of the Surface program of its material.
         desc:=&pool.slots[draw.slot].desc
+        if emitter_distorts(desc) {distorting+=1;continue}
         // A Mesh particle blends as its material says: an additive material gives its light
         // without alpha in the premultiplied blend.
         mesh:=desc.info.render==.Mesh
@@ -1549,13 +1552,7 @@ particles_sprites :: proc(pass:^erender.Pass,user:rawptr) {
             if pipeline==0 {continue}
             erender.pass_pipeline(pass,pipeline)
             erender.pass_params(pass,&params,size_of(params))
-            offset:=u64(draw.slot)*size_of(Gpu_State)+u64(offset_of(Gpu_State,draw))
-            if desc.info.cutout_count>=3 && desc.info.cutout_count<=effect.PARTICLE_CUTOUT_VERTICES &&
-               (desc.info.render==.Billboard || desc.info.render==.Velocity || desc.info.render==.Horizontal) {
-                erender.pass_draw_indirect(pass,state,offset)
-            } else {
-                erender.pass_draw_indexed_indirect(pass,state,offset)
-            }
+            sprites_draw(pass,state,draw.slot,desc)
             continue
         }
         for choice,c in desc.meshes[:min(desc.mesh_count,effect.PARTICLE_MESHES)] {
@@ -1573,6 +1570,50 @@ particles_sprites :: proc(pass:^erender.Pass,user:rawptr) {
         }
     }
     erender.pass_end(pass)
+    // What distorts shifts the lit image, once after the side of glass is drawn; an effect view has none to shift.
+    if distorting==0 || pass.stage!=.Blend || !erender.pass_distortion_begin(pass,"particle distortion") {return}
+    sprites_bind(pass,sync)
+    pipeline:=erender.pass_stage_pipeline(pass,DISTORT_PIPELINE)
+    for draw in draws {
+        desc:=&pool.slots[draw.slot].desc
+        if !emitter_distorts(desc) || pipeline==0 {continue}
+        erender.pass_pipeline(pass,pipeline)
+        params:=Params{emitter=draw.slot,pass=u32(pass.glass)}
+        erender.pass_params(pass,&params,size_of(params))
+        sprites_draw(pass,state,draw.slot,desc)
+    }
+    erender.pass_end(pass)
+}
+
+// What the passes of the sprites read: the pool, the rows of the frame and the depths of the view.
+@(private)
+sprites_bind :: proc(pass:^erender.Pass,sync:^Particle_Sync) -> (state:erender.Buffer_Desc) {
+    pool:=&sync.pool
+    erender.pass_indices(pass,.Quad)
+    erender.pass_buffer(pass,0,pool_buffer(pool,.Particles))
+    pool_bind_frame(pass,sync)
+    erender.pass_buffer(pass,3,pool_buffer(pool,.Lists))
+    erender.pass_buffer(pass,9,pool_buffer(pool,.Data))
+    erender.pass_surface_read(pass,7,.Linear_Depth)
+    erender.pass_surface_read(pass,8,.Glass_Depth)
+    state=pool_buffer(pool,.State)
+    erender.pass_buffer(pass,2,state)
+    return
+}
+
+@(private)
+DISTORT_PIPELINE :: erender.Stage_Pipeline_Desc{stage=.Blend,shader="particle_sprite",fragment="particle_distort",blend=.Additive,distortion=true,name="particles distorting"}
+
+// The quads of the sprites, ribbons or beams of an emitter, as its frame lists them.
+@(private)
+sprites_draw :: proc(pass:^erender.Pass,state:erender.Buffer_Desc,slot:u32,desc:^Emitter_Desc) {
+    offset:=u64(slot)*size_of(Gpu_State)+u64(offset_of(Gpu_State,draw))
+    if desc.info.cutout_count>=3 && desc.info.cutout_count<=effect.PARTICLE_CUTOUT_VERTICES &&
+       (desc.info.render==.Billboard || desc.info.render==.Velocity || desc.info.render==.Horizontal) {
+        erender.pass_draw_indirect(pass,state,offset)
+    } else {
+        erender.pass_draw_indexed_indirect(pass,state,offset)
+    }
 }
 
 // Mesh particles into the G-buffer after the scene: lit, shadowed and

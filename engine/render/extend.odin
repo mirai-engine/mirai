@@ -252,6 +252,7 @@ pass_material_program :: gpu.pass_material_program
 pass_stage_pipeline :: gpu.pass_stage_pipeline
 pass_mesh_programs :: gpu.pass_mesh_programs
 pass_blend_begin :: gpu.pass_blend_begin
+pass_distortion_begin :: gpu.pass_distortion_begin
 
 // Lets go of a buffer of the plugin in a world (pass_buffer): the world goes,
 // or will not be drawn again. False when the renderer had none of that name.

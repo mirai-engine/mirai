@@ -6,30 +6,9 @@
 struct Params_Block { uint emitter; uint pass; uint mesh; uint pad1; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 
-// What particle_sprite.frag reads (particle_sprite.vert gives the same).
-struct Stage_Output {
-    float4 position : SV_Position;
-    [[vk::location(0)]] float4 out_color : TEXCOORD0;
-    [[vk::location(1)]] float4 out_light : TEXCOORD1;
-    [[vk::location(2)]] float4 out_uv : TEXCOORD2;
-    [[vk::location(3)]] float3 out_blend_depth_life : TEXCOORD3;
-    [[vk::location(4)]] nointerpolation float out_seed : TEXCOORD4;
-    [[vk::location(5)]] float3 out_world : TEXCOORD5;
-    [[vk::location(6)]] nointerpolation float4 out_data0 : TEXCOORD6;
-    [[vk::location(7)]] nointerpolation float4 out_data1 : TEXCOORD7;
-    [[vk::location(8)]] nointerpolation float4 out_data2 : TEXCOORD8;
-    [[vk::location(9)]] nointerpolation float4 out_data3 : TEXCOORD9;
-    [[vk::location(10)]] nointerpolation uint out_given : TEXCOORD10;
-    [[vk::location(12)]] nointerpolation uint material : TEXCOORD12;
-    [[vk::location(11)]] nointerpolation float2 out_random_radius : TEXCOORD11;
-    [[vk::location(13)]] float3 out_normal : TEXCOORD13;
-    [[vk::location(14)]] float4 out_vertex_color : TEXCOORD14;
-    [[vk::location(15)]] nointerpolation float out_share : TEXCOORD15;
-};
-
 [shader("vertex")]
-Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_VulkanInstanceID) {
-    Stage_Output output = (Stage_Output)0;
+Particle_Varyings main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_VulkanInstanceID) {
+    Particle_Varyings output = (Particle_Varyings)0;
 
     Mesh mesh = meshes[params.mesh];
     // Indexed as particle_mesh.vert.
@@ -40,8 +19,8 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         return output;
     }
     uint override_material = particle_emitters[params.emitter].mesh.w;
-    output.material = override_material != 0u ? override_material : (cluster_material(mesh, c) & 0xffffffu);
-    Material row = material_row(output.material);
+    uint material = override_material != 0u ? override_material : (cluster_material(mesh, c) & 0xffffffu);
+    Material row = material_row(material);
     if (!material_blended(row) || (params.pad1 != INVALID && row.program_id != params.pad1)) {
         output.position = float4(2.0, 2.0, 2.0, 1.0);
         return output;
@@ -54,22 +33,23 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
     float3x3 rotation = particle_look_rotation(params.emitter, index, p, look);
     float3 scale = particle_look_scale(params.emitter, look);
     float3 world = particle_world(params.emitter, p.position) + particle_mesh_vector(params.emitter, rotation, v.position * look.size * scale, turned);
-    output.out_normal = particle_mesh_normal(params.emitter, rotation, v.normal, scale, turned);
+    output.normal = particle_mesh_normal(params.emitter, rotation, v.normal, scale, turned);
+    // The tangent goes as the surface stretches; a mirroring scale turns the side of its bitangent.
+    float3 along = particle_unit(particle_mesh_vector(params.emitter, rotation, v.tangent.xyz * scale, turned), float3(1.0, 0.0, 0.0));
+    output.tangent = float4(along, scale.x * scale.y * scale.z < 0.0 ? -v.tangent.w : v.tangent.w);
     output.position = view_clip(world);
     // The color of the particle, and that of the mesh apart: a material without a
     // program tints by both, as the G-buffer does; a program reads each.
-    output.out_color = look.color;
-    output.out_vertex_color = v.color;
-    output.out_share = 1.0;
+    output.color = look.color;
+    output.vertex_color = v.color;
     // Lit, the light around it, and the sun the fragment shades by its normal where it reaches it.
     bool lit = (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_LIT) != 0u;
-    output.out_light = lit ? float4(particle_light(p), float((p.flags >> SUN_SHIFT) & 1u)) : float4(emission_render_units(float3(1.0), (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_RELATIVE) != 0u), 0.0);
-    output.out_uv = float4(v.uv, v.uv1);
-    output.out_blend_depth_life = float3(0.0, dot(world - frame.camera_position.xyz, frame.camera_forward.xyz), particle_life(p));
-    output.out_seed = float(p.seed & 1023u) * 0.37;
-    output.out_world = world;
-    output.out_data0 = look.data[0]; output.out_data1 = look.data[1]; output.out_data2 = look.data[2]; output.out_data3 = look.data[3];
-    output.out_given = look.given;
-    output.out_random_radius = float2(look.random, look.size * 0.5);
+    output.light = lit ? float4(particle_light(p), float((p.flags >> SUN_SHIFT) & 1u)) : float4(emission_render_units(float3(1.0), (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_RELATIVE) != 0u), 0.0);
+    output.uv = float4(v.uv, v.uv1);
+    output.blend_depth_life = float3(0.0, dot(world - frame.camera_position.xyz, frame.camera_forward.xyz), particle_life(p));
+    output.particle = float4(float(p.seed & 1023u) * 0.37, look.random, look.size * 0.5, 1.0);
+    output.world = world;
+    output.data0 = look.data[0]; output.data1 = look.data[1]; output.data2 = look.data[2]; output.data3 = look.data[3];
+    output.given_material = uint2(look.given, material);
     return output;
 }

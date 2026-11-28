@@ -8,32 +8,14 @@
 // particle was born, its texture along the metres from its head. The scale of
 // the effect, by that the program of the emitter gives the particle, stretches
 // the x and y of a quad and the width of a ribbon or a beam. The program of
-// the emitter has the last word on what it shows.
+// the emitter has the last word on what it shows. Each gives the fragment its
+// normal and its tangent along u of its texture, which a normal map, a
+// Surface program and the sun of a lit one shade by.
 #define PARTICLE_STATES_READ
 #include "particle_programs.slang"
 
 struct Params_Block { uint emitter; uint pass; uint pad0; uint pad1; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
-
-struct Stage_Output {
-    float4 position : SV_Position;
-    [[vk::location(0)]] float4 out_color : TEXCOORD0;
-    [[vk::location(1)]] float4 out_light : TEXCOORD1; // w: the share of the sun the fragment shades by its normal
-    [[vk::location(2)]] float4 out_uv : TEXCOORD2;   // two frames of the flipbook
-    [[vk::location(3)]] float3 out_blend_depth_life : TEXCOORD3; // between them, the view depth, and the share of its life the particle lived
-    [[vk::location(4)]] nointerpolation float out_seed : TEXCOORD4;
-    [[vk::location(5)]] float3 out_world : TEXCOORD5;
-    [[vk::location(6)]] nointerpolation float4 out_data0 : TEXCOORD6; // what the particle gives its material
-    [[vk::location(7)]] nointerpolation float4 out_data1 : TEXCOORD7;
-    [[vk::location(8)]] nointerpolation float4 out_data2 : TEXCOORD8;
-    [[vk::location(9)]] nointerpolation float4 out_data3 : TEXCOORD9;
-    [[vk::location(10)]] nointerpolation uint out_given : TEXCOORD10;
-    [[vk::location(12)]] nointerpolation uint material : TEXCOORD12;
-    [[vk::location(11)]] nointerpolation float2 out_random_radius : TEXCOORD11;
-    [[vk::location(13)]] float3 out_normal : TEXCOORD13; // of a mesh; 0: the quad faces the eye
-    [[vk::location(14)]] float4 out_vertex_color : TEXCOORD14; // of a mesh; white
-    [[vk::location(15)]] nointerpolation float out_share : TEXCOORD15; // of what it draws, what the particle covers
-};
 
 float2 flipbook_uv(uint2 tiles, float2 corner, float frame_index) {
     float frames = float(tiles.x * tiles.y);
@@ -44,8 +26,8 @@ float2 flipbook_uv(uint2 tiles, float2 corner, float frame_index) {
 }
 
 [shader("vertex")]
-Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_VulkanInstanceID) {
-    Stage_Output output;
+Particle_Varyings main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_VulkanInstanceID) {
+    Particle_Varyings output;
 
     float2 corner = float2(float(vertex_id & 1u), float(vertex_id >> 1u));
     float2 c = corner * 2.0 - 1.0;
@@ -59,6 +41,8 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
     float3 light;
     float life;
     float share = 1.0;
+    float3 normal;
+    float4 tangent;
     if (ribbon) {
         // The segment of the instance: the last whose quads start at or before it.
         uint alive = particle_states[params.emitter].alive;
@@ -79,7 +63,7 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         uint id = particle_ribbon(p);
         // The last of a ribbon and the first of the next are not joined.
         if (particle_ribbon(q) != id) {
-            output = (Stage_Output)0;
+            output = (Particle_Varyings)0;
             output.position = float4(2.0, 2.0, 2.0, 1.0);
             return output;
         }
@@ -132,6 +116,10 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         if (tile > 0.0) v = from_head / tile;
         else v = trail_a.y > 1e-6 ? saturate(v) : 0.0;
         uv = float2(corner.x, v);
+        // v grows away from its head: up the texture is toward it.
+        float3 path = particle_unit(along, side);
+        normal = particle_unit(cross(side, path), to_eye(center));
+        tangent = particle_tangent(normal, side, trail_b.x >= trail_a.x ? -path : path);
         light = (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_LIT) != 0u ? lerp(particle_light(p), particle_light(q), along_t) : emission_render_units(float3(1.0), (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_RELATIVE) != 0u);
     } else if (particle_emitters[params.emitter].kinds.y == PARTICLE_RENDER_BEAM) {
         uint slot = params.emitter;
@@ -149,6 +137,9 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         half_size = look.size * 0.5 * particle_look_scale(slot, look).x;
         world = center + side * c.x * half_size;
         uv = float2(corner.x, t);
+        float3 path = particle_unit(end + 4.0 * (1.0 - 2.0 * t) * arc, side);
+        normal = particle_unit(cross(side, path), to_eye(center));
+        tangent = particle_tangent(normal, side, -path);
         light = (particle_emitters[slot].range.w & PARTICLE_FLAG_LIT) != 0u ? particle_light(p) : emission_render_units(float3(1.0), (particle_emitters[slot].range.w & PARTICLE_FLAG_RELATIVE) != 0u);
     } else {
         uint cutout_n = particle_emitters[params.emitter].light_limit.y;
@@ -199,23 +190,28 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         float3 r = right * co + up * s;
         float3 u = up * co - right * s;
         world = center + r * c.x * extent.x + u * c.y * extent.y;
+        // u of the texture along r and v down along u, each turned by the sign of
+        // its extent. One that faces the camera faces the eye from its centre.
+        normal = particle_unit(cross(r, u), to_camera);
+        if (particle_emitters[params.emitter].kinds.y == PARTICLE_RENDER_BILLBOARD) normal = particle_unit(to_camera, normal);
+        tangent = particle_tangent(normal, particle_unit(r - normal * dot(r, normal), r) * sign(extent.x), u * sign(extent.y));
         // Unlit, its color is a luminance in nits, or what the exposed image shows.
         light = (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_LIT) != 0u ? particle_light(p) : emission_render_units(float3(1.0), (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_RELATIVE) != 0u);
     }
     output.position = view_clip(world);
-    output.material = particle_emitters[params.emitter].mesh.w;
-    output.out_color = look.color;
-    output.out_light = float4(light, 0.0);
+    output.given_material = uint2(look.given, particle_emitters[params.emitter].mesh.w);
+    output.color = look.color;
+    // Lit and shaded where it is drawn, the sun where it reaches its centre: the fragment shades it.
+    bool lit = (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_LIT) != 0u;
+    output.light = float4(light, lit && particle_shaded(params.emitter) ? float((p.flags >> SUN_SHIFT) & 1u) : 0.0);
     float frame_index = floor(look.frame);
-    output.out_uv = float4(flipbook_uv(particle_emitters[params.emitter].flipbook.xy, uv, frame_index), flipbook_uv(particle_emitters[params.emitter].flipbook.xy, uv, frame_index + 1.0));
-    output.out_blend_depth_life = float3(look.frame - frame_index, dot(world - frame.camera_position.xyz, frame.camera_forward.xyz), life);
-    output.out_seed = float(p.seed & 1023u) * 0.37;
-    output.out_world = world;
-    output.out_data0 = look.data[0]; output.out_data1 = look.data[1]; output.out_data2 = look.data[2]; output.out_data3 = look.data[3];
-    output.out_given = look.given;
-    output.out_random_radius = float2(look.random, half_size);
-    output.out_normal = float3(0.0);
-    output.out_vertex_color = float4(1.0);
-    output.out_share = share;
+    output.uv = float4(flipbook_uv(particle_emitters[params.emitter].flipbook.xy, uv, frame_index), flipbook_uv(particle_emitters[params.emitter].flipbook.xy, uv, frame_index + 1.0));
+    output.blend_depth_life = float3(look.frame - frame_index, dot(world - frame.camera_position.xyz, frame.camera_forward.xyz), life);
+    output.particle = float4(float(p.seed & 1023u) * 0.37, look.random, half_size, share);
+    output.world = world;
+    output.data0 = look.data[0]; output.data1 = look.data[1]; output.data2 = look.data[2]; output.data3 = look.data[3];
+    output.normal = normal;
+    output.tangent = tangent;
+    output.vertex_color = float4(1.0);
     return output;
 }

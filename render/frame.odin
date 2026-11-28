@@ -95,10 +95,12 @@ Pass :: struct {
 	glass_material_layers: bool,
 	forward_material_layers: bool, // a forward blend in sight has material layers
 	forward_additive: bool,        // a forward blend in sight is additive and writes the reactive target
-	glass_rough: bool,          // some visible glass layer may sample blurred mips of glass_scene
+	glass_rough: bool,          // some visible glass layer may sample blurred mips of scene_copy
 	blend:   bool,       // the view runs the Blend stage of extensions
 	blended: bool,       // a pass of it drew in reactive (Blend stage, additive forward blends): TAA reads the coverage drawn
 	glass:   Glass_Side, // of the Lit or Blend stage being recorded
+	distorted: bool,        // the Blend stage of this side drew into the distortion target (pass_distortion_begin)
+	distortion_drawn: bool, // and that of some side of this frame
 	glass_layered: bool, // the layers of glass were drawn before the Lit stage, which runs on each side of them
 	glass_medium: u32, // instance plus one of the solid of glass the camera may be in (glass_layers), 0 none
 	glass_medium_row: u32, // the row of the material of its medium
@@ -1848,6 +1850,7 @@ lit_run :: proc(p: ^Pass) {
 @(private)
 pass_transparent :: proc(p: ^Pass) -> bool {
 	if p.draw_overlays {overlay_pass(p)}
+	distortion_targets_settle(p.r, p.t)
 	if p.draw_glass {
 		if !p.glass_layered {glass_layers(p)}
 		if p.blend {side_run(p, .Blend, .Behind)}
@@ -1860,6 +1863,7 @@ pass_transparent :: proc(p: ^Pass) -> bool {
 		translucent_forward(p, 0, 0)
 		if p.blend {side_run(p, .Blend, .All)}
 	}
+	p.t.distorted = p.distortion_drawn
 	// Without a Blend pass the mask of the frame is zero, as a pass that replaces the Resolve stage reads it.
 	if p.blended {p.t.reactive_drawn = true} else if p.t.reactive_drawn {
 		clear_textures(p.cmd, p.t.reactive)
@@ -1872,6 +1876,7 @@ pass_transparent :: proc(p: ^Pass) -> bool {
 side_run :: proc(p: ^Pass, stage: Frame_Stage, side: Glass_Side) {
 	p.glass = side
 	stage_run(p, stage)
+	if stage == .Blend {distortion_apply(p)}
 	p.glass = .All
 }
 
