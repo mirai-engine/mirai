@@ -303,8 +303,9 @@ reingesting_a_source_keeps_its_package_objects :: proc(t:^testing.T) {
     }
 }
 
-// Dev refresh takes a peer's Fast build without importing. Release refresh
-// needs Final and reports the package by name until the peer has it.
+// Release refresh needs Final and reports the package by name until the peer
+// has it: the Fast build the peer chose, which it asks for, is kept and never
+// cooked. Dev refresh takes that Fast build without importing.
 @(test)
 a_release_cook_never_takes_a_fast_build_a_source_holds :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
@@ -343,10 +344,12 @@ a_release_cook_never_takes_a_fast_build_a_source_holds :: proc(t:^testing.T) {
     _,asked:=store.ref_get(here,asset.REF_IMPORTS_FAST,key)
     testing.expect_value(t,asked,store.Error.Missing)
     lacking:=cook(peer,here,fmt.tprintf("%s/lacking",top))
-    testing.expectf(t,lacking.error==.Package_Missing && strings.contains(lacking.detail,p.name),"%v %s",lacking.error,lacking.detail)
+    testing.expectf(t,lacking.error==.Source_Failed && strings.contains(lacking.detail,p.name),"%v %s",lacking.error,lacking.detail)
 
     taken:=project_refresh(peer,{store=here,root=peer,source=from,fast_textures=true},context.temp_allocator)
-    testing.expectf(t,taken.fetched==1 && taken.ingested==0 && len(taken.missing)==0 && len(taken.failures)==0,"%v",taken)
+    testing.expectf(t,taken.fetched==0 && taken.ingested==0 && len(taken.missing)==0 && len(taken.failures)==0,"%v",taken)
+    _,mirrored:=store.ref_get(here,asset.REF_IMPORTS_FAST,key)
+    testing.expect_value(t,mirrored,store.Error.None)
     refused:=cook(peer,here,fmt.tprintf("%s/refused",top))
     testing.expectf(t,refused.error==.Source_Failed && strings.contains(refused.detail,p.name),"a Fast build taken is not shipped: %v %s",refused.error,refused.detail)
     still:=project_refresh(peer,{store=here,root=peer,source=from},context.temp_allocator)
