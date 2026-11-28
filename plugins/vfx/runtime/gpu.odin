@@ -975,7 +975,7 @@ emitter_lights :: proc "contextless" (d:^Emitter_Desc) -> bool {
 // asked again when the shaders are, or when the renderer takes another
 // variant of a stage (the one particle_simulate gives changes).
 Particle_Pipelines :: struct {
-    shift,data_copy,begin,emit,simulate,finish,sort,mesh_draws,surface,stage,volume_light,world_texture,additive,alpha,multiply,distort,volume:erender.Pipeline,
+    shift,data_copy,begin,emit,simulate,finish,sort,mesh_draws,surface,stage,volume_light,world_texture,additive,alpha,multiply,volume:erender.Pipeline,
     groups:[dynamic]Program_Group, // first: emitters without a program
     by_program:map[u32]int,
     reloads:u64,
@@ -1114,8 +1114,7 @@ particles_frame :: proc(sync:^Particle_Sync,app:^host.App,lights:=u32(PARTICLE_L
         p.additive=erender.stage_pipeline(app.renderer,{stage=.Blend,shader="particle_sprite",blend=.Additive,name="particles additive"})
         p.alpha=erender.stage_pipeline(app.renderer,{stage=.Blend,shader="particle_sprite",blend=.Premultiplied,name="particles blended"})
         p.multiply=erender.stage_pipeline(app.renderer,{stage=.Blend,shader="particle_sprite",blend=.Multiply,name="particles multiplied"})
-        p.distort=erender.stage_pipeline(app.renderer,DISTORT_PIPELINE)
-        if p.distort==0 || p.shift==0 || p.begin==0 || p.emit==0 || p.finish==0 || p.sort==0 || p.mesh_draws==0 || p.surface==0 || p.stage==0 || p.volume_light==0 || p.world_texture==0 || p.additive==0 || p.alpha==0 || p.multiply==0 || p.volume==0 {return false}
+        if p.shift==0 || p.begin==0 || p.emit==0 || p.finish==0 || p.sort==0 || p.mesh_draws==0 || p.surface==0 || p.stage==0 || p.volume_light==0 || p.world_texture==0 || p.additive==0 || p.alpha==0 || p.multiply==0 || p.volume==0 {return false}
         p.simulate=simulate
         pool.regroup=true
     }

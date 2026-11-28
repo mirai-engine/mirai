@@ -771,10 +771,12 @@ program_use_named :: proc(name:string) -> (use:Program_Use,ok:bool) {
 // the counts of the cost of a frame), whose stages a shipped game leaves out
 // (TOOL_STAGES); Glass: transmissive materials; Decals: decal materials and
 // the Decal stage of extensions; Nested: the nested views of extensions,
-// which a generation without them (Frame_Catalog.nested) never draws.
-Render_Feature :: enum u8 {Tools,Glass,Decals,Nested}
+// which a generation without them (Frame_Catalog.nested) never draws;
+// Distortion: what the Blend stage of extensions displaces, which no asset
+// declares, so every renderer leaves it for the first frame that distorts.
+Render_Feature :: enum u8 {Tools,Glass,Decals,Nested,Distortion}
 Render_Features :: bit_set[Render_Feature;u8]
-RENDER_FEATURE_NAMES :: [Render_Feature]string{.Tools="tools",.Glass="glass",.Decals="decals",.Nested="nested"}
+RENDER_FEATURE_NAMES :: [Render_Feature]string{.Tools="tools",.Glass="glass",.Decals="decals",.Nested="nested",.Distortion="distortion"}
 
 render_feature_named :: proc(name:string) -> (feature:Render_Feature,ok:bool) {
     for text,each in RENDER_FEATURE_NAMES {if text==name {return each,true}}

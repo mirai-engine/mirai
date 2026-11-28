@@ -25,7 +25,8 @@
 // A lit one shaded where it is drawn (particle_shaded) takes the sun by the
 // normal of its fragment, mapped by its material or given by its program,
 // and by the layers of its material: through one with diffuse transmission
-// the sun behind it shines (backlit smoke).
+// the sun behind it shines (backlit smoke); a stylized one takes the light
+// around it by its shade.
 #define MATERIAL_RASTER
 #define MIRAI_NO_INSTANCES
 #include "particle_fragment.slang"
@@ -123,16 +124,23 @@ Stage_Output main(Particle_Varyings input) {
     // An unlit particle shows its emission in the units of its emitter, as it
     // shows its color (particle_sprite.vert); a lit one, in those of its material.
     bool relative = (flags & PARTICLE_FLAG_LIT) != 0u ? m.emission_mode == EMISSION_RELATIVE : (flags & PARTICLE_FLAG_RELATIVE) != 0u;
-    float3 radiance = surface * input.light.rgb + emission_render_units(emission * tint.rgb, relative);
+    float3 radiance = emission_render_units(emission * tint.rgb, relative);
+    float3 around = input.light.rgb;
     // Shaded where it is drawn: the sun by its normal and the layers of its
-    // material, as the scene shades it, and through it from behind.
-    if (input.light.w > 0.0) {
+    // material, as the scene shades it, and through it from behind. A
+    // stylized one takes the light around it by its shade, as a stylized
+    // surface does, whether the sun reaches it or not.
+    if ((flags & PARTICLE_FLAG_LIT) != 0u && particle_shaded(params.emitter)) {
         if (!program) layers = material_layers(m, sprite_context(input, uv, normal, scene));
         Shading s = shading_surface(input.world, normal, eye, surface, metallic, roughness);
         shading_layers(s, layers, metallic);
-        radiance += sun_radiance(s, input.light.w);
-        if (shading_transmits(s)) radiance += sun_radiance(shading_back(s), input.light.w);
+        if ((layers.bits & MATERIAL_LAYER_STYLIZED) != 0u) around *= s.shade;
+        if (input.light.w > 0.0) {
+            radiance += sun_radiance(s, input.light.w);
+            if (shading_transmits(s)) radiance += sun_radiance(shading_back(s), input.light.w);
+        }
     }
+    radiance += surface * around;
     radiance = finite_or_zero(radiance);
     float4 medium = media_over(media, params.media, input.world);
     radiance = radiance * medium.a + (additive ? float3(0.0) : medium.rgb);

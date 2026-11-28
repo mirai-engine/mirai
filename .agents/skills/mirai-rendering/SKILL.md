@@ -235,9 +235,10 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   reserved for what frames request. With a window, startup compilation runs off the window
   thread while the UI pipeline, made first, draws progress, Cancel and the window buttons.
   Cancel or closing during a driver compile writes the cache and exits.
-- Optional features (`abi.Render_Feature`: Tools, Glass, Decals, Nested) are tagged by stage
-  (`pipeline_feature`). `Renderer_Desc.later` leaves some out of startup, with their program
-  stages and variants; Nested is left out whenever the generation has no nested views. The first
+- Optional features (`abi.Render_Feature`: Tools, Glass, Decals, Nested, Distortion) are tagged
+  by stage (`pipeline_feature`). `Renderer_Desc.later` leaves some out of startup, with their
+  program stages and variants; Nested is left out whenever the generation has no nested views,
+  and Distortion always until a frame distorts. The first
   frame or call that needs one waits for `renderer_feature`, which makes them; every pass of a
   feature asks it first, so none binds a pipeline that was never made, and one the device refuses
   skips with `r.error`. The editor starts with all; the player leaves Tools, and a shipped game

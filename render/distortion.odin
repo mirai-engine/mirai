@@ -34,11 +34,13 @@ scene_copy_target :: proc(r: ^Renderer, t: ^Targets) -> bool {
 // it (the depth its weights average); the coverage TAA reads grows with the
 // shift.
 // Ends with pass_end. False where there is no image to displace: in the
-// Effect stage, or without room for its targets.
+// Effect stage, without room for its targets or without the pipeline that
+// displaces it, which the first frame that distorts makes (renderer_feature).
 pass_distortion_begin :: proc(s: ^Stage_Pass, name := "distortion") -> bool {
 	p := s.pass
 	if s.stage != .Blend || p.view == nil {return false}
 	r, t := p.r, p.t
+	if !renderer_feature(r, .Distortion) {return false}
 	if !scene_copy_target(r, t) || !target(r, nil, &t.distortion, t.width, t.height, .RGBA16_Float, {.Color_Target, .Sampled}, "distortion", shared = true) {return false}
 	rhi.cmd_timestamp(p.cmd, name)
 	pass := rhi.Render_Pass_Desc{color_count = 1, name = name}

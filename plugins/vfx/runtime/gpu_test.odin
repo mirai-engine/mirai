@@ -3283,7 +3283,9 @@ particle_distortion_shifts_what_is_behind_once_by_what_overlaps :: proc(t: ^test
 		return
 	}
 	none := shown(t, f, {}, row, post_row, behind_row)
+	testing.expect(t, r.pipelines[.Distortion] == 0, "no pipeline of distortion before a frame distorts")
 	one := shown(t, f, {haze(1, 1)}, row, post_row, behind_row)
+	testing.expect(t, r.pipelines[.Distortion] != 0, "the first frame that distorts makes its pipeline")
 	two := shown(t, f, {haze(2, 0.5), haze(3, 0.5)}, row, post_row, behind_row)
 	// 1 m along u at 5 m with a slope of 0.6: some 6.6 of the 128 pixels across.
 	testing.expectf(t, none.edge > 0 && none.edge - one.edge >= 5 && none.edge - one.edge <= 8, "the edge at pixel %d shows at %d: shifted toward the left", none.edge, one.edge)
@@ -3353,6 +3355,41 @@ lit_particles_shade_the_sun_by_their_normal_map_and_transmit_it_from_behind :: p
 		dark := display_texel(t, f, project(r, c.camera, {-1.5, c.at, 0}))
 		testing.expectf(t, lit[1] > dark[1] * 1.5 + 0.02, "%s: %v the brighter by the sun than %v", c.name, lit, dark)
 	}
+	expect_clean(t, f.device)
+}
+
+// A lit sprite of a stylized material, shaded by its normal map, takes the
+// light around it by its shade, as a stylized surface does, also where the
+// sun does not reach it: under the sky alone it shows that share of what the
+// same sprite of a plain material shows.
+@(test)
+stylized_lit_particles_take_the_light_around_them_by_their_shade :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 128, 64, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	plain := gpu.DEFAULT_MATERIAL
+	plain.textures[.Base_Color] = solid_texture(t, r, {255, 255, 255, 255}, 4, 4)
+	plain.textures[.Normal] = solid_texture(t, r, {128, 128, 255, 255}, 4, 4, normal_map = true)
+	stylized := plain
+	stylized.stylized = {enabled = true, softness = 1, shade = {0.25, 0.25, 0.25}}
+	gpu.materials_set(r, {plain, stylized})
+	gpu.scene_set_environment(r, {}, {sky = {0.5, 0.5, 0.5}})
+	emitters: [2]Emitter_Desc
+	for &e, side in emitters {
+		e = test_emitter(u64(side + 1), {-1.5 if side == 0 else 1.5, 0, 0})
+		e.material, e.info.blend, e.info.lit = gpu.Material_Handle(side + 1), .Alpha, true
+		e.info.lifetime, e.info.size, e.info.soft, e.info.intensity = {10, 10}, {1.4, 1.4}, 0, 1
+	}
+	frames_of_one(t, f, emitters[:], 40, FRONT)
+	rhi.device_wait_idle(f.device)
+	whole := display_texel(t, f, project(r, FRONT, {-1.5, 0, 0}))
+	shaded := display_texel(t, f, project(r, FRONT, {1.5, 0, 0}))
+	ratio := shaded[1] / max(whole[1], 1e-6)
+	testing.expectf(t, whole[1] > 0.02 && ratio > 0.18 && ratio < 0.32, "the stylized sprite %v shows a quarter of the plain one %v under the sky: %f", shaded, whole, ratio)
 	expect_clean(t, f.device)
 }
 

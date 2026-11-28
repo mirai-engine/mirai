@@ -1565,17 +1565,19 @@ pipeline_feature :: proc "contextless" (id: Pipeline_Id) -> (feature: Render_Fea
 		return .Decals, true
 	case .Resolve_Nested, .Resolve_Nested_Plain, .Resolve_Nested_Layers, .Nested_Prime, .Nested_Reflectance:
 		return .Nested, true
+	case .Distortion:
+		return .Distortion, true
 	}
 	return {}, false
 }
 
 // Whether the pipelines of a stage wait for a frame that needs them: those
-// of a feature left for later, and those of the nested views where the
-// shaders in use have none.
+// of a feature left for later, those of the nested views where the shaders
+// in use have none, and those of distortion until a frame distorts.
 @(private)
 pipeline_later :: proc(r: ^Renderer, id: Pipeline_Id) -> bool {
 	feature, optional := pipeline_feature(id)
-	return optional && (feature in r.later || feature == .Nested && !r.frame_layout.nested)
+	return optional && (feature in r.later || feature == .Nested && !r.frame_layout.nested || feature == .Distortion && .Distortion not_in r.features_tried)
 }
 
 // Whether a feature can draw: the shaders in use have it and the device made
