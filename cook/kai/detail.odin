@@ -22,8 +22,19 @@ DETAIL_CONTEXT :: 3    // lines kept around what changed
 
 Detail_Kind :: enum u8 {Text,Asset,Binary,Oversized}
 
+Detail_Row_Kind :: enum u8 {
+    Fold,    // kept lines folded: skipped says how many
+    Kept,
+    Added,
+    Removed,
+    Changed, // a field of an asset
+}
+
+// The mark of each kind of row, as kai.log and the detail show it.
+DETAIL_MARKS :: [Detail_Row_Kind]string{.Fold="",.Kept=" ",.Added="+",.Removed="-",.Changed="~"}
+
 Detail_Row :: struct {
-    mark:u8,     // ' ' kept, '+' added, '-' removed, '~' changed (a field of an asset); 0 a fold of kept lines
+    kind:Detail_Row_Kind,
     old,new:i32, // of a text: its line on each side, from 1; 0 where it is not
     skipped:i32, // of a fold: the lines it stands for
     text:string, // the line, or the path in the asset and its values
@@ -94,9 +105,9 @@ file_detail :: proc(w:^vcs.Workspace,revision:vcs.Revision,path:string,out:^File
             continue
         }
         l:=lines[row.line]
-        marks:=[lines_diff.Op]u8{.Same=' ',.Add='+',.Remove='-'}
+        kinds:=[lines_diff.Op]Detail_Row_Kind{.Same=.Kept,.Add=.Added,.Remove=.Removed}
         text:=l.op==.Remove?old:new
-        out.rows[i]={mark=marks[l.op],old=l.old,new=l.new,text=detail_line(text[l.start:l.end],allocator)}
+        out.rows[i]={kind=kinds[l.op],old=l.old,new=l.new,text=detail_line(text[l.start:l.end],allocator)}
     }
     return .None
 }
@@ -133,13 +144,20 @@ detail_asset :: proc(sides:[2][]u8,out:^File_Detail,allocator:runtime.Allocator)
     i:=0
     for line in strings.split_lines_iterator(&text) {
         if len(line)<3 {continue}
+        kind:Detail_Row_Kind
         switch line[0] {
-        case '+': out.added+=1
-        case '-': out.removed+=1
-        case: out.changed+=1
+        case '+':
+            kind=.Added
+            out.added+=1
+        case '-':
+            kind=.Removed
+            out.removed+=1
+        case:
+            kind=.Changed
+            out.changed+=1
         }
         if i>=kept {continue}
-        row:=Detail_Row{mark=line[0],text=detail_line(line[2:],allocator)}
+        row:=Detail_Row{kind=kind,text=detail_line(line[2:],allocator)}
         if at:=strings.index(line,"[@0x");at>=0 && at+20<=len(line) {
             if key,ok:=strconv.parse_u64_of_base(line[at+4:at+20],16);ok {
                 row.key=key

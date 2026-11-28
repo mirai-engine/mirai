@@ -129,6 +129,9 @@ the assets.
   (`asset.import_key`) adds the writer, format, kind and texture builder versions, so any machine
   with the manifest finds a build without the source. A Final build is named under `imports`, a
   Fast one under `imports-fast`, and peers share both; `builds` names the one this machine chose.
+  A refresh that finds none by its key (another importer version or plugin code, or a machine
+  without a plugin's content) takes the choice for the pinned manifest, kept under `builds`
+  only; a source changed here is ingested again first, and an ingest with `rebuild` imports.
   The editor never imports by itself.
 - **A share serves what the host has; a refresh takes what its build accepts.** Editor, play,
   join and dev game refreshes accept Final or Fast from the store or a peer before importing.
@@ -269,7 +272,8 @@ the assets.
   package; refreshing from two empty stores writes nothing the second time) and
   `cook/import/sources/reimport_test.odin` (a refresh reads a source again with the formats of
   the plugins, ingests a whole source again when what it is built from changes, and finds the
-  build of a whole source by key without the source, missing it for another importer).
+  build of a whole source by key without the source, and for another importer the one a peer
+  chose).
 - Changed documents: `an_import_does_not_write_over_a_document_changed_since_it_wrote_it` and
   the edited case of `a_refresh_ingests_again_a_whole_source_when_what_it_is_built_from_changes`
   (reimport tests), the question of the editor in `editor/import_api_test.odin`.

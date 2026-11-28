@@ -47,7 +47,7 @@ kai_launcher_publish :: proc(s:^Session,folder:string) {
         notify(s,message)
         return
     }
-    change,e:=ka.project_publish_folder(&s.store,t,folder,kai_types(s))
+    change,ddc,e:=ka.project_publish_folder(&s.store,t,folder,kai_types(s))
     if e!=.None {
         notify(s,fmt.tprintf("Kai: %s",t.why!=""?t.why:vcs.error_text(e)))
         return
@@ -55,6 +55,7 @@ kai_launcher_publish :: proc(s:^Session,folder:string) {
     kai_team_wrote(s)
     if p:=s.projects;p!=nil && p.shown {projects_rows_read(s)}
     notify(s,fmt.tprintf("Published %s to %s",change[:min(len(change),8)],ka.BOOKMARK_DEFAULT))
+    if missing:=ka.ddc_missing_text(ddc);missing!="" {notify(s,fmt.tprintf("Kai: %s",missing))}
 }
 
 // The repositories of each org this machine has not pulled, grouped into one
@@ -84,7 +85,7 @@ projects_org_rows :: proc(s:^Session,busy:bool,needle:string) {
 // Whether a repository of an org is not on this machine: no workspace of it, or one being pulled.
 @(private="file")
 projects_unpulled :: proc(t:^Kai_Team,o:^ka.Org_View,x:^ka.Repo_View) -> bool {
-    pulling:=t.clone.stage!=.None && t.clone.org==o.id && t.clone.repo==x.id
+    pulling:=t.clone.state!=.Idle && t.clone.org==o.id && t.clone.repo==x.id
     return !x.linked || pulling
 }
 
@@ -109,7 +110,7 @@ projects_repository_row :: proc(s:^Session,r:^Kai_Repository,busy:bool) {
     o:=&t.view.orgs[r.org]
     x:=&o.repos[r.repo]
     c:=&t.clone
-    pulling:=c.stage!=.None && c.org==o.id && c.repo==x.id
+    pulling:=c.state!=.Idle && c.org==o.id && c.repo==x.id
     folder:=kai_clone_folder(s,o.id,x.id,x.name)
     pulled:=folder!="" && x.linked && os.is_file(project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator))
     fill,stroke:ui.Color
@@ -120,38 +121,38 @@ projects_repository_row :: proc(s:^Session,r:^Kai_Repository,busy:bool) {
             ui.label(ctx,x.name,ui.metric(ctx,"font"),ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
             kind:=x.public?"public":"org only"
             what:=""
+            size,sized:=x.size.?
             switch {
-            case pulling && c.stage==.Failed: what=fmt.tprintf("%s · pull failed",kind)
-            case pulling && c.stage==.Waiting:
+            case pulling && c.state==.Failed: what=fmt.tprintf("%s · pull failed",kind)
+            case pulling && c.state==.Pulling:
                 chunks,bytes:=kai_clone_progress(t)
-                if x.has_size && x.bytes>0 {
-                    what=fmt.tprintf("%s · %s / %s pulled",kind,base.bytes_text(bytes),base.bytes_text(x.bytes))
+                if sized && size>0 {
+                    what=fmt.tprintf("%s · %s / %s pulled",kind,base.bytes_text(bytes),base.bytes_text(size))
                 } else {
                     what=fmt.tprintf("%s · %d chunks, %s pulled",kind,chunks,base.bytes_text(bytes))
                 }
                 if speed:=kai_pull_speed(s,o.id,x.id);speed>0 {what=fmt.tprintf("%s · %s/s",what,base.bytes_text(i64(speed)))}
-            case !x.published: what=fmt.tprintf("%s · not published yet",kind)
+            case x.main_state==.Unpublished: what=fmt.tprintf("%s · not published yet",kind)
             case x.main=="": what=fmt.tprintf("%s · main is published, Pull takes it",kind)
-            case !x.here && !x.linked: what=fmt.tprintf("%s · main %s",kind,x.main)
-            case !x.here: what=fmt.tprintf("%s · main %s is on its way from your org's machines",kind,x.main)
+            case x.main_state==.Coming && x.linked: what=fmt.tprintf("%s · main %s is on its way from your org's machines",kind,x.main)
             case: what=fmt.tprintf("%s · main %s",kind,x.main)
             }
-            ui.label(ctx,what,ui.metric(ctx,"font_small"),pulling && c.stage==.Failed?ui.tone(ctx,"danger"):ui.tone(ctx,"text_faint"),0,fade=true)
+            ui.label(ctx,what,ui.metric(ctx,"font_small"),pulling && c.state==.Failed?ui.tone(ctx,"danger"):ui.tone(ctx,"text_faint"),0,fade=true)
         }
-        if pulling && c.stage==.Waiting {
+        if pulling && c.state==.Pulling {
             pulse_dot(ctx,MARK_ARM,true)
             ui.label(ctx,len(t.view.peers)>0?"Pulling":"Waiting for your org's machines",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
             if ui.button(ctx,ui.id(ctx,"repository_cancel"),{label="Cancel",variant="field",height=28,size=ui.metric(ctx,"font_small")}).clicked {kai_ask(s,"kai.clone",`{"cancel":true}`)}
             return
         }
-        if pulling && c.stage==.Failed && ui.button(ctx,ui.id(ctx,"repository_dismiss"),{label="Dismiss",variant="ghost",height=28,size=ui.metric(ctx,"font_small")}).clicked {kai_ask(s,"kai.clone",`{"cancel":true}`)}
-        if x.has_size {
+        if pulling && c.state==.Failed && ui.button(ctx,ui.id(ctx,"repository_dismiss"),{label="Dismiss",variant="ghost",height=28,size=ui.metric(ctx,"font_small")}).clicked {kai_ask(s,"kai.clone",`{"cancel":true}`)}
+        if size,sized:=x.size.?;sized {
             if ui.box(ctx,{width=ui.fixed(64),height=ui.FIT,align_x=.End}) {
-                ui.label(ctx,base.bytes_text(x.bytes),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
+                ui.label(ctx,base.bytes_text(size),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
             }
         }
-        another:=c.stage==.Waiting && !pulling // one pull at a time
-        if ui.button(ctx,ui.id(ctx,"repository_pull"),{label=pulled?"Open":"Pull",variant="accent",width=72,height=30,center=true,disabled=busy || another || !x.published}).clicked {
+        another:=c.state==.Pulling && !pulling // one pull at a time
+        if ui.button(ctx,ui.id(ctx,"repository_pull"),{label=pulled?"Open":"Pull",variant="accent",width=72,height=30,center=true,disabled=busy || another || x.main_state==.Unpublished}).clicked {
             if pulled {
                 if message:=projects_open(s,folder);message!="" {notify(s,message)}
             } else {
@@ -159,7 +160,7 @@ projects_repository_row :: proc(s:^Session,r:^Kai_Repository,busy:bool) {
             }
         }
     }
-    if pulling && c.stage==.Failed && c.why_length>0 {
+    if pulling && c.state==.Failed && c.why_length>0 {
         error_banner(ctx,ui.id(ctx,"repository_pull_error"),c.why[:],&c.why_length,&c.why_copied)
     }
 }

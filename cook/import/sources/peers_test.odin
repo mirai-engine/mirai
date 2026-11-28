@@ -86,8 +86,9 @@ a_cook_takes_derived_data_a_peer_built :: proc(t:^testing.T) {
     testing.expect(t,cache.put(early_build,"textures",KEY+5,VERSION,texture(t,&types,KEY+5)),"alice builds before the server joins")
     for x in ([]struct{m:^Peer_Machine,role:vcs.Role}{{&server,.Node},{&bob,.Writer}}) {
         text,_:=vcs.team_invite(&alice.team,org,x.role,"",{address},context.temp_allocator)
-        _,e:=vcs.agent_join(&x.m.agent,text)
-        if !testing.expectf(t,e==.None,"%s joins: %s",x.m.team.name,x.m.agent.team.why) {return}
+        why:string
+        _,e:=vcs.agent_join(&x.m.agent,text,&why)
+        if !testing.expectf(t,e==.None,"%s joins: %s",x.m.team.name,why) {return}
     }
     bob.mesh={team=&bob.team,agent=&bob.agent,org=org}
     built:=cache.Cache{store=&alice.s,source=ka.mesh_source(&alice.mesh)}

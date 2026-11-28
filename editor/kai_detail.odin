@@ -115,27 +115,26 @@ kai_detail_row :: proc(s:^Session,row:^ka.Detail_Row) {
     d:=&s.kai.state.detail
     size:=ui.metric(ctx,"font_small")
     tone:="text"
-    switch row.mark {
-    case '+': tone="success"
-    case '-': tone="danger"
-    case 0: tone="text_faint"
+    #partial switch row.kind {
+    case .Added: tone="success"
+    case .Removed: tone="danger"
+    case .Fold: tone="text_faint"
     }
+    marks:=ka.DETAIL_MARKS
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=6,align_y=.Center,padding={KAI_ROW_PAD,0,KAI_ROW_PAD,0}}) {
         text:[48]u8
         switch {
-        case row.mark==0:
+        case row.kind==.Fold:
             ui.label(ctx,fmt.bprintf(text[:],"%d lines",row.skipped),size,ui.tone(ctx,tone))
         case d.view.kind==.Text:
             for n in ([2]i32{row.old,row.new}) {
                 number:=n>0?fmt.bprintf(text[:],"%d",n):""
                 if ui.box(ctx,{width=ui.fixed(30),height=ui.FIT,align_x=.End}) {ui.label(ctx,number,size,ui.tone(ctx,"text_faint"))}
             }
-            mark:=[1]u8{row.mark}
-            ui.label(ctx,string(mark[:]),size,ui.tone(ctx,tone))
-            ui.text(ctx,row.text,{size=size,color=ui.tone(ctx,row.mark==' '?"text_muted":tone),align_y=.Center,ellipsis=true},ui.GROW,ui.fixed(size+6))
+            ui.label(ctx,marks[row.kind],size,ui.tone(ctx,tone))
+            ui.text(ctx,row.text,{size=size,color=ui.tone(ctx,row.kind==.Kept?"text_muted":tone),align_y=.Center,ellipsis=true},ui.GROW,ui.fixed(size+6))
         case:
-            mark:=[1]u8{row.mark}
-            ui.label(ctx,string(mark[:]),size,ui.tone(ctx,tone))
+            ui.label(ctx,marks[row.kind],size,ui.tone(ctx,tone))
             kai_row_names(ctx,row.name!=""?row.name:row.text,row.name!=""?row.text:"",ui.tone(ctx,tone))
         }
     }

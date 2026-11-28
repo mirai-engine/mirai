@@ -2490,6 +2490,39 @@ particle_sprites_thinner_than_a_pixel_show_as_a_line :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// A sprite with a UV cutout polygon draws only inside that polygon, leaving
+// the corners of its quad untouched.
+@(test)
+particle_sprites_with_cutout_polygon_clip_their_corners :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 96, 64, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	gpu.scene_set_environment(r, {}, {sky = {0.02, 0.02, 0.02}})
+	diamond := test_emitter(1, {0, 0, 0})
+	diamond.info.lifetime, diamond.info.size, diamond.info.soft, diamond.info.intensity = {10, 10}, {2, 2}, 0, 200
+	diamond.info.cutout_count = 4
+	diamond.info.cutout[0] = {0.5, 0.0}
+	diamond.info.cutout[1] = {1.0, 0.5}
+	diamond.info.cutout[2] = {0.5, 1.0}
+	diamond.info.cutout[3] = {0.0, 0.5}
+	emitters := [1]Emitter_Desc{diamond}
+	frames_of_one(t, f, emitters[:], 6, FRONT)
+	pixels, w, _, ok := gpu.renderer_capture(r)
+	testing.expect(t, ok, r.error)
+	if !ok {return}
+	defer delete(pixels)
+	sky := int(pixel(pixels, w, project(r, FRONT, {0, 1.5, 0}))[0])
+	center := int(pixel(pixels, w, project(r, FRONT, {0, 0, 0}))[0])
+	corner := int(pixel(pixels, w, project(r, FRONT, {0.75, 0.75, 0}))[0])
+	testing.expectf(t, center > sky + 40, "the cutout diamond lights its centre: %v over %v", center, sky)
+	testing.expectf(t, corner <= sky + 10, "the quad corner outside the cutout stays dark: %v over %v", corner, sky)
+	expect_clean(t, f.device)
+}
+
 // A trail that stops and starts again lays two ribbons: nothing between where
 // the first ended and where the second began.
 @(test)

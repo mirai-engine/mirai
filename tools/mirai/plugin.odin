@@ -8,7 +8,7 @@ import "mirai:std/base"
 
 // mirai plugin: the plugins of a project that come from git (cook/install).
 // add takes the address of a repository or the name of a plugin of the
-// catalog, which installs at the commit the catalog lists.
+// catalog, checking out its default branch (or --ref).
 
 PLUGIN_USAGE :: "plugin add <url|name> [--ref R] | plugin update [name] [--ref R] | plugin remove <name> | plugin sync | plugin list | plugin catalog [--refresh] | plugin check <folder> [--project P]"
 
@@ -40,9 +40,8 @@ cmd_plugin :: proc(root:string,args:[]string) -> int {
         url:=rest[0]
         // A name of the catalog: no address has neither ':' nor '/'.
         if !strings.contains_any(url,":/\\") {
-            if ref!="" {fmt.eprintln("mirai plugin: one of the catalog is installed at the commit it lists; --ref is for an address");return 2}
             if message:=install.catalog_refresh(root,context.temp_allocator);message!="" {fmt.eprintfln("mirai plugin: %s",message);return 1}
-            return plugin_report(install.add_from_catalog(folder,root,url,context.temp_allocator))
+            return plugin_report(install.add_from_catalog(folder,root,url,ref,context.temp_allocator))
         }
         return plugin_report(install.add(folder,root,url,ref,context.temp_allocator))
     case "update":
@@ -50,7 +49,6 @@ cmd_plugin :: proc(root:string,args:[]string) -> int {
         manifest,error:=project.manifest_read(project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator))
         if error.code!=.None {fmt.eprintfln("mirai plugin: %s",project_error_text(folder,error));return 1}
         if len(rest)==0 && ref!="" {fmt.eprintln("mirai plugin: --ref is for one plugin; name it");return 2}
-        _=install.catalog_refresh(root,context.temp_allocator)
         code:=0
         for &source in manifest.sources {
             name:=base.text_get(source.name[:])

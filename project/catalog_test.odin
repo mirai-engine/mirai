@@ -16,7 +16,7 @@ sources_round_trip_and_write_only_the_ones_there :: proc(t:^testing.T) {
     base.text_set(m.sources[0].url[:],"https://github.com/tomaszbk/mirai-unreal.git")
     base.text_set(m.sources[0].commit[:],COMMIT_A)
     text:=manifest_text(&m,context.temp_allocator)
-    testing.expect(t,strings.contains(text,"\"sources\": [\n    {\n      \"name\": \"unreal\",\n      \"url\": \"https://github.com/tomaszbk/mirai-unreal.git\",\n      \"commit\": \""+COMMIT_A+"\",\n      \"catalog\": false\n    }\n  ],"),text)
+    testing.expect(t,strings.contains(text,"\"sources\": [\n    {\n      \"name\": \"unreal\",\n      \"url\": \"https://github.com/tomaszbk/mirai-unreal.git\",\n      \"commit\": \""+COMMIT_A+"\"\n    }\n  ],"),text)
     back,error:=manifest_parse(text)
     testing.expect_value(t,error.code,Error_Code.None)
     testing.expect(t,back==m)
@@ -50,7 +50,7 @@ a_source_needs_a_url_and_a_full_commit :: proc(t:^testing.T) {
 }
 
 @(test)
-a_catalog_lists_a_file_for_each_plugin_at_a_reviewed_commit :: proc(t:^testing.T) {
+a_catalog_lists_a_file_for_each_plugin :: proc(t:^testing.T) {
     folder,error:=os.make_directory_temp("","mirai-catalog-*",context.temp_allocator)
     testing.expect(t,error==nil)
     defer base.remove_all(folder)
@@ -66,12 +66,11 @@ a_catalog_lists_a_file_for_each_plugin_at_a_reviewed_commit :: proc(t:^testing.T
     }
     weather:=`{
   "description": "",
-  "url": "https://github.com/someone/mirai-weather.git",
-  "commit": "` + COMMIT_A + `"
+  "url": "https://github.com/someone/mirai-weather.git"
 }
 `
     write(t,folder,"weather.json",weather)
-    write(t,folder,"unreal.json",`{"description": "Imports Unreal editor packages", "url": "https://github.com/tomaszbk/mirai-unreal.git", "commit": "` + COMMIT_A + `"}`)
+    write(t,folder,"unreal.json",`{"description": "Imports Unreal editor packages", "url": "https://github.com/tomaszbk/mirai-unreal.git"}`)
     write(t,folder,"README.md","Not a plugin")
     testing.expect_value(t,catalog_read(folder,c).code,Error_Code.None)
     testing.expect_value(t,catalog_count(c),2)
@@ -82,11 +81,11 @@ a_catalog_lists_a_file_for_each_plugin_at_a_reviewed_commit :: proc(t:^testing.T
     testing.expect_value(t,catalog_entry_text(entry,context.temp_allocator),weather)
 
     // The file that is wrong is the one named.
-    write(t,folder,"broken.json",`{"url": "u", "commit": "abc"}`)
+    write(t,folder,"broken.json",`{"url": ""}`)
     broken:=catalog_read(folder,c)
     testing.expect_value(t,broken.code,Error_Code.Source_Invalid)
     testing.expect_value(t,base.text_get(broken.subject[:]),"broken")
     os.remove(path(folder,CATALOG_PLUGINS,"broken.json",allocator=context.temp_allocator))
-    write(t,folder,"Upper.json",`{"url": "u", "commit": "` + COMMIT_A + `"}`)
+    write(t,folder,"Upper.json",`{"url": "u"}`)
     testing.expect_value(t,catalog_read(folder,c).code,Error_Code.Name_Invalid)
 }

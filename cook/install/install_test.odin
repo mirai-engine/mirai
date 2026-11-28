@@ -151,56 +151,40 @@ what_is_not_a_plugin_is_not_added :: proc(t:^testing.T) {
 }
 
 @(test)
-a_plugin_of_the_catalog_updates_only_to_what_the_catalog_lists :: proc(t:^testing.T) {
+a_plugin_of_the_catalog_updates_from_its_repository :: proc(t:^testing.T) {
     if _,failure:=git("","--version");failure!="" {return}
     folder:=base.test_folder(t,"install")
     repository:=project.path(folder,"hello",allocator=context.temp_allocator)
     url:=test_repository(t,repository,"hello")
     first,_:=git(repository,"rev-parse","HEAD")
-    second:=test_commit(t,repository,"runtime/two.odin","package hello\n")
     root:=project.path(folder,"game",allocator=context.temp_allocator)
     test_project(t,root)
     engine:=project.path(folder,"engine",allocator=context.temp_allocator)
-    catalog_at :: proc(t:^testing.T,engine,url,commit:string) {
-        write(t,catalog_folder(engine,context.temp_allocator),"plugins/hello.json",strings.concatenate({`{"url": "`,url,`", "commit": "`,commit,`"}`},context.temp_allocator))
-    }
-    catalog_at(t,engine,url,first)
+    write(t,catalog_folder(engine,context.temp_allocator),"plugins/hello.json",strings.concatenate({`{"url": "`,url,`"}`},context.temp_allocator))
     commit_of :: proc(t:^testing.T,root:string) -> string {
         m:=manifest_get(t,root)
         return strings.clone(base.text_get(project.source_find(&m,"hello").commit[:]),context.temp_allocator)
     }
 
-    // At the reviewed commit, not at the head of its repository.
-    added:=add_from_catalog(root,engine,"hello",context.temp_allocator)
+    // Installing from the catalog checks out the plugin's default branch.
+    added:=add_from_catalog(root,engine,"hello","",context.temp_allocator)
     testing.expect(t,added.ok,added.message)
     testing.expect_value(t,commit_of(t,root),first)
-    m:=manifest_get(t,root)
-    testing.expect(t,project.source_find(&m,"hello").catalog)
     same:=update(root,engine,"hello","",context.temp_allocator)
     testing.expect(t,same.ok && strings.contains(same.message,"already"),same.message)
     testing.expect_value(t,commit_of(t,root),first)
 
-    // A review moves it.
-    testing.expect(t,!has_commit(root,"hello",second))
-    catalog_at(t,engine,url,second)
+    // Pushing to the plugin repository updates projects without touching the catalog.
+    second:=test_commit(t,repository,"runtime/two.odin","package hello\n")
     moved:=update(root,engine,"hello","",context.temp_allocator)
     testing.expect(t,moved.ok,moved.message)
     testing.expect_value(t,commit_of(t,root),second)
 
-    // Past the catalog by a ref asked for, an update does not take it back.
+    // Updating needs no catalog checkout once the source is in project.mirai.
     third:=test_commit(t,repository,"runtime/three.odin","package hello\n")
-    asked:=update(root,engine,"hello","main",context.temp_allocator)
-    testing.expect(t,asked.ok,asked.message)
-    testing.expect_value(t,commit_of(t,root),third)
-    kept:=update(root,engine,"hello","",context.temp_allocator)
-    testing.expect(t,kept.ok && strings.contains(kept.message,"stays"),kept.message)
-    testing.expect(t,has_commit(root,"hello",second)) // the editor offers no update
-    testing.expect_value(t,commit_of(t,root),third)
-
-    // Without the catalog it does not update.
     testing.expect(t,base.remove_all(catalog_folder(engine,context.temp_allocator))==nil)
-    unread:=update(root,engine,"hello","",context.temp_allocator)
-    testing.expect(t,!unread.ok,unread.message)
+    direct:=update(root,engine,"hello","",context.temp_allocator)
+    testing.expect(t,direct.ok,direct.message)
     testing.expect_value(t,commit_of(t,root),third)
 }
 

@@ -98,7 +98,7 @@ escape_run :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,selection:^history.Select
     switch {
     case g.modal==.Confirm:   confirm_resolve(s,false)
     case g.modal!=.None:      modal_close(g)
-    case s.projects!=nil && s.projects.creating: s.projects.creating=false
+    case s.projects!=nil && s.projects.view==.New_Project: projects_view_set(s,s.projects.back)
     case s.projects!=nil && s.projects.shown:    projects_hide(s)
     case v.pick.active:       v.pick={}
     case s.edits.preview:     tools_release(s)

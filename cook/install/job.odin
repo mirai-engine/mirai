@@ -11,7 +11,7 @@ import "mirai:std/base"
 
 Step_Kind :: enum u8 {
     Add,     // text: the address of the repository; ref: what to check out, empty: its default branch
-    Install, // text: the name of a plugin of the catalog, at the commit it lists
+    Install, // text: the name of a plugin of the catalog; ref: what to check out, empty: its default branch
     Update,  // text: the name of the plugin; ref as update takes it
     Remove,  // text: the name of the plugin
     Sync,    // every plugin from git at the commit of the project
@@ -80,7 +80,7 @@ job_work :: proc(job:^Job) {
         result:Result
         switch step.kind {
         case .Add:     result=add(job.root,job.engine_root,step.text,step.ref,a)
-        case .Install: result=add_from_catalog(job.root,job.engine_root,step.text,a)
+        case .Install: result=add_from_catalog(job.root,job.engine_root,step.text,step.ref,a)
         case .Update:
             old,_:=head_read(project_plugin(job.root,step.text))
             old=strings.clone(old,a)

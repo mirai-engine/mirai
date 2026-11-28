@@ -35,11 +35,38 @@ Request :: struct {
     size:int, // bytes of the input the request takes, head and body
 }
 
-// What a parse found: Ready, Incomplete, or the status that refuses it.
+// How far the request at the start of a connection's input is.
+Parse_State :: enum u8 {
+    Head,    // its head is not whole yet
+    Body,    // its head is whole and its body is not: request holds the head
+    Ready,   // request is whole
+    Refused, // status says why
+}
+
 Parse :: struct {
-    status:int, // 0 Incomplete, 200 Ready, else the error status
-    head_done:bool,
+    state:Parse_State,
+    status:int, // Refused: the status that refuses it
     request:Request,
+}
+
+// The status a parse answers: 200 Ready, the refusing one, 0 while not whole.
+parse_status :: proc(p:^Parse) -> int {
+    #partial switch p.state {
+    case .Ready: return 200
+    case .Refused: return p.status
+    }
+    return 0
+}
+
+// Refuses a request the connection's input filled before it was whole: by
+// its head when that was not whole, else by its body.
+parse_overflow :: proc(p:^Parse) {
+    #partial switch p.state {
+    case .Head: p.status=431
+    case .Body: p.status=413
+    case: return
+    }
+    p.state=.Refused
 }
 
 request_header :: proc(r:^Request,name:string) -> (value:string,found:bool) {
@@ -71,28 +98,27 @@ request_parse :: proc(input:[]u8) -> (p:Parse) {
     if end<0 {
         // A head never holds a bare line break or a control byte: refuse it as soon as it shows.
         for c,i in input[:limit] {
-            if c=='\n' && (i==0 || input[i-1]!='\r') {return {status=400}}
-            if c=='\r' && i+1<limit && input[i+1]!='\n' {return {status=400}}
-            if c<0x20 && c!='\r' && c!='\n' && c!='\t' || c==0x7f {return {status=400}}
+            if c=='\n' && (i==0 || input[i-1]!='\r') {return {state=.Refused,status=400}}
+            if c=='\r' && i+1<limit && input[i+1]!='\n' {return {state=.Refused,status=400}}
+            if c<0x20 && c!='\r' && c!='\n' && c!='\t' || c==0x7f {return {state=.Refused,status=400}}
         }
-        if len(input)>=HEAD_MAX {return {status=431}}
+        if len(input)>=HEAD_MAX {return {state=.Refused,status=431}}
         return
     }
     head:=string(input[:end])
     for c,i in transmute([]u8)head {
-        if c=='\n' && (i==0 || head[i-1]!='\r') {return {status=400}}
-        if c=='\r' && (i+1>=len(head) || head[i+1]!='\n') {return {status=400}}
-        if c<0x20 && c!='\r' && c!='\n' && c!='\t' || c==0x7f {return {status=400}}
+        if c=='\n' && (i==0 || head[i-1]!='\r') {return {state=.Refused,status=400}}
+        if c=='\r' && (i+1>=len(head) || head[i+1]!='\n') {return {state=.Refused,status=400}}
+        if c<0x20 && c!='\r' && c!='\n' && c!='\t' || c==0x7f {return {state=.Refused,status=400}}
     }
-    p.head_done=true
     r:=&p.request
     line_end:=strings.index(head,"\r\n")
     line:=line_end<0?head:head[:line_end]
     rest:=line_end<0?"":head[line_end+2:]
     sp1:=strings.index_byte(line,' ')
-    if sp1<=0 {return {status=400}}
+    if sp1<=0 {return {state=.Refused,status=400}}
     sp2:=strings.index_byte(line[sp1+1:],' ')
-    if sp2<=0 {return {status=400}}
+    if sp2<=0 {return {state=.Refused,status=400}}
     method,target,version:=line[:sp1],line[sp1+1:][:sp2],line[sp1+1+sp2+1:]
     switch method {
     case "GET": r.method=.GET
@@ -100,22 +126,22 @@ request_parse :: proc(input:[]u8) -> (p:Parse) {
     case "POST": r.method=.POST
     case:
         for c in transmute([]u8)method {
-            if !token_char(c) {return {status=400}}
+            if !token_char(c) {return {state=.Refused,status=400}}
         }
-        return {status=501}
+        return {state=.Refused,status=501}
     }
     keep_alive:bool
     switch version {
     case "HTTP/1.1": keep_alive=true
     case "HTTP/1.0": keep_alive=false
     case:
-        if strings.has_prefix(version,"HTTP/") {return {status=505}}
-        return {status=400}
+        if strings.has_prefix(version,"HTTP/") {return {state=.Refused,status=505}}
+        return {state=.Refused,status=400}
     }
-    if len(target)>TARGET_MAX {return {status=414}}
-    if len(target)==0 || target[0]!='/' {return {status=400}}
+    if len(target)>TARGET_MAX {return {state=.Refused,status=414}}
+    if len(target)==0 || target[0]!='/' {return {state=.Refused,status=400}}
     for c in transmute([]u8)target {
-        if c<=0x20 || c>=0x7f || c=='#' {return {status=400}}
+        if c<=0x20 || c>=0x7f || c=='#' {return {state=.Refused,status=400}}
     }
     r.target=target
     r.path=target
@@ -126,29 +152,29 @@ request_parse :: proc(input:[]u8) -> (p:Parse) {
         e:=strings.index(rest,"\r\n")
         field:=e<0?rest:rest[:e]
         rest=e<0?"":rest[e+2:]
-        if len(field)==0 {return {status=400}}
-        if field[0]==' ' || field[0]=='\t' {return {status=400}} // obs-fold
+        if len(field)==0 {return {state=.Refused,status=400}}
+        if field[0]==' ' || field[0]=='\t' {return {state=.Refused,status=400}} // obs-fold
         colon:=strings.index_byte(field,':')
-        if colon<=0 {return {status=400}}
+        if colon<=0 {return {state=.Refused,status=400}}
         name:=field[:colon]
         for c in transmute([]u8)name {
-            if !token_char(c) {return {status=400}}
+            if !token_char(c) {return {state=.Refused,status=400}}
         }
         value:=strings.trim(field[colon+1:]," \t")
-        if r.header_count>=HEADERS_MAX {return {status=431}}
+        if r.header_count>=HEADERS_MAX {return {state=.Refused,status=431}}
         r.headers[r.header_count]={name,value}
         r.header_count+=1
         switch {
         case strings.equal_fold(name,"host"): hosts+=1
-        case strings.equal_fold(name,"transfer-encoding"): return {status=501}
+        case strings.equal_fold(name,"transfer-encoding"): return {state=.Refused,status=501}
         case strings.equal_fold(name,"content-length"):
             lengths+=1
-            if lengths>1 || len(value)==0 || len(value)>10 {return {status=400}}
+            if lengths>1 || len(value)==0 || len(value)>10 {return {state=.Refused,status=400}}
             for c in transmute([]u8)value {
-                if c<'0' || c>'9' {return {status=400}}
+                if c<'0' || c>'9' {return {state=.Refused,status=400}}
             }
             n,_:=strconv.parse_int(value,10)
-            if n>BODY_MAX {return {status=413}}
+            if n>BODY_MAX {return {state=.Refused,status=413}}
             content_length=n
         case strings.equal_fold(name,"connection"):
             for part in strings.split_iterator(&value,",") {
@@ -156,21 +182,24 @@ request_parse :: proc(input:[]u8) -> (p:Parse) {
                 if strings.equal_fold(option,"close") {keep_alive=false}
             }
         case strings.equal_fold(name,"expect"):
-            if !strings.equal_fold(value,"100-continue") {return {status=417}}
+            if !strings.equal_fold(value,"100-continue") {return {state=.Refused,status=417}}
             r.expect_continue=true
         }
     }
-    if version=="HTTP/1.1" && hosts!=1 {return {status=400}}
-    if hosts>1 {return {status=400}}
-    if r.method!=.POST && content_length>0 {return {status=400}}
-    if r.method==.POST && content_length<0 {return {status=411}}
+    if version=="HTTP/1.1" && hosts!=1 {return {state=.Refused,status=400}}
+    if hosts>1 {return {state=.Refused,status=400}}
+    if r.method!=.POST && content_length>0 {return {state=.Refused,status=400}}
+    if r.method==.POST && content_length<0 {return {state=.Refused,status=411}}
     r.keep_alive=keep_alive
     body_at:=end+4
     length:=max(content_length,0)
-    if len(input)-body_at<length {return {status=0,head_done=true,request=r^}}
+    if len(input)-body_at<length {
+        p.state=.Body
+        return
+    }
     r.body=input[body_at:][:length]
     r.size=body_at+length
-    p.status=200
+    p.state=.Ready
     return
 }
 

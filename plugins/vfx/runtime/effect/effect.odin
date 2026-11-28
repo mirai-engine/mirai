@@ -32,6 +32,7 @@ PARTICLE_NAME_BYTES :: 64
 PARTICLE_MAX_PARAMETERS :: 32 // of the program of a layer
 PARTICLE_EFFECT_PARAMETERS :: 256 // of all the layers of an effect
 PARTICLE_MESHES :: 4
+PARTICLE_CUTOUT_VERTICES :: 8 // max UV-space convex polygon vertices for a sprite cutout
 
 Particle_Shape :: enum u32 {Point,Sphere,Hemisphere,Cone,Box,Circle,Line,Surface}
 // Light: the particles draw nothing and give only their lights (light).
@@ -158,6 +159,8 @@ Particle_Info :: struct {
     sub_count:u32,                            // its particles per event
     beam_end:[3]f32 `mirai:"section=Look,unit=m"`, // endpoint offset in the emitter's axes
     beam_arc:f32 `mirai:"unit=m"`, // midpoint offset along the emitter's +Y
+    cutout:[PARTICLE_CUTOUT_VERTICES][2]f32 `mirai:"section=Look,min=0,max=1"`, // UV-space convex cutout polygon for sprites
+    cutout_count:u32 `mirai:"min=0,max=8"`, // 0: full quad; 3..8: cutout polygon vertex count
     light:Particle_Light `mirai:"section=Light"`, // a point light at each particle; intensity or range 0 disables
     program:[PARTICLE_NAME_BYTES]u8 `mirai:"section=Program,text"`, // a Vfx program of the shaders; "" for none
 }
@@ -318,6 +321,13 @@ particle_info_problem :: proc(p:^Particle_Info,coupled:bool) -> Particle_Problem
         return {"light","Use zero or more for light intensity, range, radius, indirect and scattering"}
     }
     if p.light.fraction<0 || p.light.fraction>1 {return {"light","Use a light fraction from 0 to 1; 0 gives every particle a light"}}
+    if p.cutout_count!=0 && (p.cutout_count<3 || p.cutout_count>PARTICLE_CUTOUT_VERTICES) {
+        return {"cutout_count","Use 0 for a full quad, or 3 to 8 cutout vertices"}
+    }
+    for i in 0..<min(int(p.cutout_count),PARTICLE_CUTOUT_VERTICES) {
+        pt:=p.cutout[i]
+        if pt.x-pt.x!=0 || pt.y-pt.y!=0 || pt.x<0 || pt.x>1 || pt.y<0 || pt.y>1 {return {"cutout","Use finite UV coordinates from 0 to 1 for sprite cutout vertices"}}
+    }
     return {}
 }
 
@@ -348,6 +358,7 @@ particle_field_applies :: proc(info:^Particle_Info,top:string) -> bool {
     case "lit","sort","material","soft","stretch","flipbook","flipbook_speed","scale": return info.render!=.Light
     case "ribbon_axis","ribbon_tile": return info.render==.Ribbon
     case "facing","meshes","mesh_weights": return info.render==.Mesh
+    case "cutout","cutout_count": return info.render==.Billboard || info.render==.Velocity || info.render==.Horizontal
     }
     return true
 }

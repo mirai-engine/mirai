@@ -279,10 +279,11 @@ cmd_kai :: proc(_:string,args:[]string) -> int {
         }
     case "publish":
         name:=len(positionals)==1?positionals[0]:ka.BOOKMARK_DEFAULT
-        revision,e:=ka.publish(p,&t,name,a.message,nil)
+        revision,ddc,e:=ka.publish(p,&t,name,a.message,nil)
         if e!=.None {return kai_why(verb,&t)}
         c,_:=vcs.change_get(w.repo.s,revision,context.temp_allocator)
         fmt.printfln("%s is %s for the whole org; a running agent (the editor, or mirai kai agent) sends it to the org's machines.",name,ka.change_text(c.id))
+        if missing:=ka.ddc_missing_text(ddc);missing!="" {fmt.eprintfln("mirai kai publish: warning: %s",missing)}
     }
     return 0
 }
@@ -324,8 +325,8 @@ kai_team :: proc(verb:string,t:^vcs.Team,a:^Kai_Args) -> int {
             agent:vcs.Agent
             if vcs.agent_start(&agent,t,{port=-1})==.None {
                 defer vcs.agent_stop(&agent)
-                text,via_server,e=vcs.agent_invite(&agent,org,role,name,addresses[:],context.temp_allocator)
-                if e!=.None {return kai_why(verb,&agent.team)}
+                text,via_server,e=vcs.agent_invite(&agent,org,role,name,addresses[:],context.temp_allocator,&t.why)
+                if e!=.None {return kai_why(verb,t)}
             } else {
                 text,e=vcs.team_invite(t,org,role,name,addresses[:],context.temp_allocator)
                 if e!=.None {return kai_why(verb,t)}
@@ -344,11 +345,8 @@ kai_team :: proc(verb:string,t:^vcs.Team,a:^Kai_Args) -> int {
         agent:vcs.Agent
         if vcs.agent_start(&agent,t,{port=-1})!=.None {return kai_why(verb,t)}
         defer vcs.agent_stop(&agent)
-        org,e:=vcs.agent_join(&agent,positionals[0])
-        if e!=.None {
-            fmt.eprintfln("mirai kai join: %s",agent.team.why)
-            return 1
-        }
+        org,e:=vcs.agent_join(&agent,positionals[0],&t.why)
+        if e!=.None {return kai_why(verb,t)}
         o,_,_:=vcs.team_org(t,org)
         fmt.printfln("This machine is in org %s: mirai kai pull takes a repository of it.",o.name)
     case "pull":
@@ -379,10 +377,7 @@ kai_team :: proc(verb:string,t:^vcs.Team,a:^Kai_Args) -> int {
         agent:vcs.Agent
         if vcs.agent_start(&agent,t,{port=-1})!=.None {return kai_why(verb,t)}
         defer vcs.agent_stop(&agent)
-        if vcs.agent_web_login(&agent,positionals[0],positionals[1],password)!=.None {
-            fmt.eprintfln("mirai kai web-login: %s",agent.team.why)
-            return 1
-        }
+        if vcs.agent_web_login(&agent,positionals[0],positionals[1],password,&t.why)!=.None {return kai_why(verb,t)}
         fmt.printfln("%s signs in on the server's web view, seeing what this machine's role in each org lets it see.",positionals[1])
     }
     return 0
@@ -412,10 +407,16 @@ kai_org :: proc(t:^vcs.Team,a:^Kai_Args) -> int {
         fmt.printfln("%s, version %d; you are %s",v.name,v.version,v.role)
         for m in v.members {
             key:=m.key
-            fmt.printfln("  %s %s (%s) %s%s",ka.hex(key[:4]),m.name,m.device,m.role,m.you?", this machine":"")
+            fmt.printfln("  %s %s (%s) %s%s",ka.hex(key[:4]),m.name,m.device,ka.role_text(m.role),m.you?", this machine":"")
         }
         for r in v.repos {
-            fmt.printfln("  repository %s%s, main %s%s",r.name,r.public?" (public)":"",r.main!=""?r.main:"not published",r.here?"":" (not all here)")
+            main:=r.main
+            switch r.main_state {
+            case .Unpublished: main="not published"
+            case .Coming: main=main!=""?fmt.tprintf("%s (not all here)",main):"published (not here yet)"
+            case .Here:
+            }
+            fmt.printfln("  repository %s%s, main %s",r.name,r.public?" (public)":"",main)
         }
     case "add":
         root:=project.path_absolute(a.folder,context.temp_allocator)

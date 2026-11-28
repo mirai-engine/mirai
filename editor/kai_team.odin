@@ -46,12 +46,19 @@ Kai_Line :: struct {name,rest:string}
 // A member row of an org, preformatted in the team's arena.
 Kai_Member_Line :: struct {
     name,rest,key_hex:string,
-    role_index:int, // 0=Reader, 1=Writer, 2=Admin, -1=Node (server)
-    you,is_node:bool,
+    role:vcs.Role,
+    you:bool,
 }
 
-// Which inline action card is open in the launcher's Team overview.
-Kai_Team_Panel_Mode :: enum u8 {Overview,New_Org,Join_Org}
+// What the launcher's Team view shows: the org cards, with the card of a new
+// org or of a join open, or one org.
+Kai_Team_Card :: enum u8 {None,New_Org,Join_Org}
+Kai_Team_Cards :: struct {open:Kai_Team_Card}
+Kai_Team_Org :: struct {
+    org:vcs.Org_Id,
+    web_login:bool, // its web view sign-in is unfolded
+}
+Kai_Team_Screen :: union #no_nil {Kai_Team_Cards,Kai_Team_Org}
 
 // What a view shows of an org, its texts made when it is read.
 Kai_Org_Lines :: struct {
@@ -109,20 +116,24 @@ Kai_Fields :: struct {
     public:bool,        // the first publish makes the repository public
 }
 
-Kai_Clone_Stage :: enum u8 {None,Waiting,Done,Failed}
-
 // What the agent does on a thread of its own, so the frames go on: a join,
 // which reaches another machine and waits for its record, a web sign-in, or
 // attaching an org to a central server. Its texts are copies, the password
 // zeroed once it ends.
 Kai_Task_Kind :: enum u8 {Join,Web_Login,Attach}
 
+Kai_Task_State :: enum u8 {
+    Idle,
+    Running, // its thread runs
+    Ended,   // its thread returned, setting it last (atomic): why holds its failure, empty when none
+    Done,
+    Failed,
+}
+
 Kai_Task :: struct {
     kind:Kai_Task_Kind,
-    stage:Kai_Clone_Stage,
+    state:Kai_Task_State,         // atomic while its thread runs, which alone writes Ended
     thread:^thread.Thread,
-    ended:bool,                   // atomic: its thread returned; what follows it wrote before
-    failed:bool,
     silent:bool,                  // auto-attach: do not toast if offline
     agent:^vcs.Agent,
     text:[1024]u8,                // the invite, or the server's host:port
@@ -132,17 +143,29 @@ Kai_Task :: struct {
     password:[256]u8,
     password_length:int,
     org:vcs.Org_Id,               // the join's or attach's
-    why:[KAI_TEXT]u8,
+    why:[KAI_TEXT]u8,             // its own failure, which its thread writes before Ended
     why_length:int,
+}
+
+// Whether a task's thread runs or ended unseen: another of its kind waits.
+kai_task_busy :: proc(x:^Kai_Task) -> bool {
+    state:=sync.atomic_load(&x.state)
+    return state==.Running || state==.Ended
+}
+
+Kai_Clone_State :: enum u8 {
+    Idle,
+    Pulling, // its workspace is open, its lock this editor's, until the files are written
+    Done,
+    Failed,
 }
 
 // A repository of an org coming into a folder of this machine.
 Kai_Clone :: struct {
-    stage:Kai_Clone_Stage,
+    state:Kai_Clone_State, // kai_clone_end leaves Pulling
     org:vcs.Org_Id,
     repo:vcs.Repo_Id,
-    project:ka.Project,
-    opened:bool,
+    project:ka.Project,    // open while Pulling
     folder:[1024]u8,
     folder_length:int,
     name:[vcs.NAME_MAX]u8,
@@ -152,12 +175,18 @@ Kai_Clone :: struct {
     why_copied:f64, // ui.Context.time its banner last copied why (error_banner)
 }
 
+// Whether the machine's Kai state opened and its agent runs.
+Kai_Team_Status :: enum u8 {
+    Closed,  // the Kai state of the store does not open (why): an action tries again
+    Open,    // no agent runs: the machine is in no org yet, or it did not start (why)
+    Running, // its agent runs in this process
+}
+
 Kai_Team :: struct {
     team:vcs.Team,
-    opened:bool,
+    status:Kai_Team_Status,
     agent:vcs.Agent,
-    running:bool,
-    why:[KAI_TEXT]u8, // why the agent does not run
+    why:[KAI_TEXT]u8, // why the state does not open or the agent does not run
     why_length:int,
     generation:u64,   // of the agent when the view was read
     read_at:time.Tick, // when it was
@@ -169,7 +198,6 @@ Kai_Team :: struct {
     clone:Kai_Clone,
     tasks:[Kai_Task_Kind]Kai_Task,
     invite_org:vcs.Org_Id,   // whose invite was offered last
-    invite_asked:bool,       // the Team view asked for the next invite: it goes to the clipboard
     invite_copied:bool,      // the invite offered last was copied to the clipboard
     invite_copied_at:time.Tick, // when it was copied, to show the green check briefly
     invite_local:bool,       // it carries no address another network reaches
@@ -180,26 +208,31 @@ Kai_Team :: struct {
     invite_meta:[160]u8,     // summary line shown under the invite field
     invite_meta_length:int,
     publish_org:int,         // of view.orgs, where a first publish goes
-    selected_org:vcs.Org_Id, // in the launcher's Team view: zero for the org cards overview
-    panel_mode:Kai_Team_Panel_Mode,
-    show_web_login:bool,
+    screen:Kai_Team_Screen,  // of the launcher's Team view
     scroll:[2]f32,
     width:f32,
 }
 
 // Opens the team of the editor's store, and starts its agent when the
-// machine is in an org.
-kai_team_open :: proc(s:^Session) {
+// machine is in an org. A team whose state did not open opens again only
+// when retry: what an action of the person asks, never a frame.
+kai_team_open :: proc(s:^Session,retry:=false) {
     k:=s.kai
-    if k==nil || k.team!=nil || s.store.root=="" {return}
-    t,e:=new(Kai_Team)
-    if e!=nil {return}
-    k.team=t
+    if k==nil || s.store.root=="" {return}
+    t:=k.team
+    if t!=nil && (t.status!=.Closed || !retry) {return}
+    if t==nil {
+        e:runtime.Allocator_Error
+        if t,e=new(Kai_Team);e!=nil {return}
+        k.team=t
+    }
+    t.team.why=""
     if vcs.team_open(&t.team,&s.store)!=.None {
+        t.why_length=copy(t.why[:],t.team.why)
         notify(s,fmt.tprintf("Kai: %s",t.team.why))
         return
     }
-    t.opened=true
+    t.status,t.why_length=.Open,0
     t.fields.role=.Writer
     if t.team.name=="" {
         host:[128]u8
@@ -217,11 +250,11 @@ kai_team_close :: proc(s:^Session) {
     k:=s.kai
     if k==nil || k.team==nil {return}
     t:=k.team
-    if t.clone.opened {ka.project_close(&t.clone.project)}
+    kai_clone_end(&t.clone,.Idle)
     // A task sees the agent stop: its dial is cancelled and its peer ends.
-    if t.running {vcs.agent_stop(&t.agent)}
+    if t.status==.Running {vcs.agent_stop(&t.agent)}
     for &x in t.tasks {kai_task_end(&x)}
-    if t.opened {vcs.team_close(&t.team)}
+    if t.status!=.Closed {vcs.team_close(&t.team)}
     vmem.arena_destroy(&t.arena)
     free(t)
     k.team=nil
@@ -231,16 +264,18 @@ kai_team_close :: proc(s:^Session) {
 // forward its port: "" or why it does not.
 kai_agent_start :: proc(s:^Session) -> string {
     t:=s.kai.team
-    if t==nil || !t.opened {return "The Kai state of the store is not open"}
-    if t.running {return ""}
+    if t==nil || t.status==.Closed {return "The Kai state of the store is not open"}
+    if t.status==.Running {return ""}
     options:=vcs.Agent_Options{port=0,beacon=true,portmap=true}
     if s.kai.mesh_loopback {options={port=0,host="127.0.0.1"}}
-    if vcs.agent_start(&t.agent,&t.team,options,runtime.heap_allocator())!=.None {
-        t.why_length=copy(t.why[:],t.team.why)
-        log.warnf("the Kai agent does not start: %s",t.team.why)
-        return fmt.tprintf("The Kai agent does not start: %s",t.team.why)
+    t.team.why=""
+    if e:=vcs.agent_start(&t.agent,&t.team,options,runtime.heap_allocator());e!=.None {
+        why:=t.team.why!=""?t.team.why:vcs.error_text(e)
+        t.why_length=copy(t.why[:],why)
+        log.warnf("the Kai agent does not start: %s",why)
+        return fmt.tprintf("The Kai agent does not start: %s",why)
     }
-    t.running,t.why_length=true,0
+    t.status,t.why_length=.Running,0
     return ""
 }
 
@@ -262,27 +297,27 @@ kai_default_server :: proc(s:^Session,allocator:=context.temp_allocator) -> stri
 kai_team_poll :: proc(s:^Session) {
     if s.kai==nil {return}
     t:=s.kai.team
-    if t==nil || !t.running {return}
+    if t==nil {return}
+    // A task is taken back once it ended, whether or not the agent still runs.
     for &x in t.tasks {
-        if x.stage!=.Waiting || !sync.atomic_load(&x.ended) {continue}
+        if sync.atomic_load(&x.state)!=.Ended {continue}
         kai_task_end(&x)
-        x.stage=x.failed?.Failed:.Done
+        x.state=x.why_length>0?.Failed:.Done
         why:=string(x.why[:x.why_length])
         switch x.kind {
         case .Join:
-            if x.stage==.Done {
+            if x.state==.Done {
                 t.fields.invite_length=0
-                t.panel_mode=.Overview
-                t.selected_org=x.org
+                t.screen=Kai_Team_Org{org=x.org}
                 kai_team_wrote(s)
                 o,_,_:=vcs.team_org(&t.team,x.org)
                 notify(s,fmt.tprintf("Kai: this machine joined %s",o.name))
             } else {
                 notify(s,fmt.tprintf("Kai: %s",why))
             }
-        case .Web_Login: notify(s,x.stage==.Done?"Kai: the web sign-in is set":fmt.tprintf("Kai: %s",why))
+        case .Web_Login: notify(s,x.state==.Done?"Kai: the web sign-in is set":fmt.tprintf("Kai: %s",why))
         case .Attach:
-            if x.stage==.Done {
+            if x.state==.Done {
                 kai_team_wrote(s)
                 if !x.silent {notify(s,"Kai: org synced to server")}
             } else if !x.silent {
@@ -290,7 +325,8 @@ kai_team_poll :: proc(s:^Session) {
             }
         }
     }
-    if c:=&t.clone;c.stage==.Waiting {
+    if t.status!=.Running {return}
+    if c:=&t.clone;c.state==.Pulling {
         if pull,ok:=vcs.agent_pull_of(&t.agent,c.org,c.repo);ok && pull.whole {
             kai_clone_step(s)
             t.generation,t.read_at=vcs.agent_generation(&t.agent),time.tick_now()
@@ -304,7 +340,7 @@ kai_team_poll :: proc(s:^Session) {
     if generation==t.generation || t.read_at!={} && time.tick_since(t.read_at)<KAI_READ_EVERY {return}
     t.generation,t.read_at=generation,time.tick_now()
     kai_team_read(s)
-    if c:=&t.clone;c.stage==.Waiting {
+    if c:=&t.clone;c.state==.Pulling {
         for p in t.view.pulls {
             if p.org==c.org && p.repo==c.repo && p.whole {kai_clone_step(s)}
         }
@@ -316,7 +352,7 @@ kai_team_poll :: proc(s:^Session) {
 kai_task_start :: proc(s:^Session,kind:Kai_Task_Kind,text:string,name:string="",password:string="",org:vcs.Org_Id={},silent:=false) -> string {
     t:=s.kai.team
     x:=&t.tasks[kind]
-    if x.stage==.Waiting {
+    if kai_task_busy(x) {
         switch kind {
         case .Join: return "A join runs: wait for it"
         case .Web_Login: return "A web sign-in runs: wait for it"
@@ -326,7 +362,7 @@ kai_task_start :: proc(s:^Session,kind:Kai_Task_Kind,text:string,name:string="",
     if len(text)>len(x.text) || len(name)>len(x.name) || len(password)>len(x.password) {return "That is longer than Kai takes"}
     if message:=kai_agent_start(s);message!="" {return message}
     kai_task_end(x)
-    x^={kind=kind,stage=.Waiting,silent=silent,agent=&t.agent,org=org}
+    x^={kind=kind,state=.Running,silent=silent,agent=&t.agent,org=org}
     x.text_length=copy(x.text[:],text)
     x.name_length=copy(x.name[:],name)
     x.password_length=copy(x.password[:],password)
@@ -335,20 +371,21 @@ kai_task_start :: proc(s:^Session,kind:Kai_Task_Kind,text:string,name:string="",
     x.thread=thread.create_and_start_with_poly_data(x,proc(x:^Kai_Task) {
         defer vcs.thread_end()
         e:vcs.Error
+        why:string // in this thread's temp allocator: copied before it ends
         switch x.kind {
-        case .Join: x.org,e=vcs.agent_join(x.agent,string(x.text[:x.text_length]))
-        case .Web_Login: e=vcs.agent_web_login(x.agent,string(x.text[:x.text_length]),string(x.name[:x.name_length]),string(x.password[:x.password_length]))
-        case .Attach: e=vcs.agent_server_attach(x.agent,x.org,string(x.text[:x.text_length]))
+        case .Join: x.org,e=vcs.agent_join(x.agent,string(x.text[:x.text_length]),&why)
+        case .Web_Login: e=vcs.agent_web_login(x.agent,string(x.text[:x.text_length]),string(x.name[:x.name_length]),string(x.password[:x.password_length]),&why)
+        case .Attach: e=vcs.agent_server_attach(x.agent,x.org,string(x.text[:x.text_length]),&why)
         }
         crypto.zero_explicit(&x.password,size_of(x.password))
-        x.failed=e!=.None
-        if e!=.None {x.why_length=copy(x.why[:],x.agent.team.why!=""?x.agent.team.why:vcs.error_text(e))}
-        sync.atomic_store(&x.ended,true)
+        if e!=.None {x.why_length=copy(x.why[:],why!=""?why:vcs.error_text(e))}
+        sync.atomic_store(&x.state,.Ended)
     },c)
     if x.thread==nil {
         crypto.zero_explicit(&x.password,size_of(x.password))
-        x.stage=.Failed
-        return "Kai could not start a thread"
+        x.why_length=copy(x.why[:],"Kai could not start a thread: memory ran out")
+        x.state=.Failed
+        return string(x.why[:x.why_length])
     }
     return ""
 }
@@ -357,10 +394,10 @@ kai_task_start :: proc(s:^Session,kind:Kai_Task_Kind,text:string,name:string="",
 // workspace, and project rows.
 kai_team_refresh :: proc(s:^Session) {
     if s.kai!=nil {
-        kai_team_open(s)
+        kai_team_open(s,retry=true)
         if t:=s.kai.team;t!=nil {
-            if t.running {vcs.agent_sync_now(&t.agent)}
-            t.generation=t.running?vcs.agent_generation(&t.agent):0
+            if t.status==.Running {vcs.agent_sync_now(&t.agent)}
+            t.generation=t.status==.Running?vcs.agent_generation(&t.agent):0
             t.read_at=time.tick_now()
             kai_team_read(s)
         }
@@ -381,9 +418,9 @@ kai_task_end :: proc(x:^Kai_Task) {
 // After a write of the team: its peers hear it now and the views follow.
 kai_team_wrote :: proc(s:^Session) {
     t:=s.kai.team
-    if t==nil {return}
-    if !t.running && len(vcs.team_org_ids(&t.team))>0 {kai_agent_start(s)}
-    if t.running {vcs.agent_changed(&t.agent)}
+    if t==nil || t.status==.Closed {return}
+    if t.status==.Open && len(vcs.team_org_ids(&t.team))>0 {kai_agent_start(s)}
+    if t.status==.Running {vcs.agent_changed(&t.agent)}
     kai_team_read(s)
     kai_read(s)
 }
@@ -394,7 +431,7 @@ kai_team_read :: proc(s:^Session) {
     if t==nil {return}
     vmem.arena_destroy(&t.arena)
     t.view={org=-1}
-    if !t.opened || vmem.arena_init_growing(&t.arena)!=nil {return}
+    if t.status==.Closed || vmem.arena_init_growing(&t.arena)!=nil {return}
     a:=vmem.arena_allocator(&t.arena)
     v:=&t.view
     ids:=vcs.team_org_ids(&t.team)
@@ -420,37 +457,34 @@ kai_team_read :: proc(s:^Session) {
         if o.server!="" {x.server=fmt.aprintf("Server synced · %s",o.server,allocator=a)}
         x.members=make([]Kai_Member_Line,len(o.members),a)
         for m,k in o.members {
-            is_node:=m.role=="node"
-            role:=is_node?"server":m.role
-            role_index:=-1
-            switch m.role {
-            case "reader": role_index=0
-            case "writer": role_index=1
-            case "admin":  role_index=2; x.admins+=1
-            }
+            role:=m.role==.Node?"server":ka.role_text(m.role)
+            if m.role==.Admin {x.admins+=1}
             key:=m.key
             x.members[k]={
                 name=fmt.aprintf("%s (%s)",m.name,m.device,allocator=a),
                 rest=m.you?fmt.aprintf("%s, this machine",role,allocator=a):role,
                 key_hex=ka.hex(key[:8],a),
-                role_index=role_index,
+                role=m.role,
                 you=m.you,
-                is_node=is_node,
             }
         }
         x.repos=make([]Kai_Line,len(o.repos),a)
         for r,k in o.repos {
             state:="not published yet"
-            if r.published {state=r.main!=""?fmt.aprintf("main %s%s",r.main,r.here?"":", on its way",allocator=a):"main published"}
+            switch r.main_state {
+            case .Unpublished:
+            case .Coming: state=r.main!=""?fmt.aprintf("main %s, on its way",r.main,allocator=a):"main published"
+            case .Here: state=fmt.aprintf("main %s",r.main,allocator=a)
+            }
             kind:=r.public?"public":"org only"
-            if r.has_size {
-                x.repos[k]={r.name,fmt.aprintf("%s · %s · %s",kind,base.bytes_text(r.bytes),state,allocator=a)}
+            if bytes,sized:=r.size.?;sized {
+                x.repos[k]={r.name,fmt.aprintf("%s · %s · %s",kind,base.bytes_text(bytes),state,allocator=a)}
             } else {
                 x.repos[k]={r.name,fmt.aprintf("%s, %s",kind,state,allocator=a)}
             }
         }
     }
-    if t.running {
+    if t.status==.Running {
         peers:=make([dynamic]vcs.Peer_Info,a)
         vcs.agent_peers(&t.agent,&peers,a)
         pulls:=make([dynamic]vcs.Pull,a)
@@ -491,9 +525,12 @@ kai_team_read :: proc(s:^Session) {
 // The team to act on, or why there is none; its why is cleared.
 kai_team_of :: proc(s:^Session) -> (t:^vcs.Team,message:string) {
     if s.kai==nil {return nil,kai_missing(s)}
-    kai_team_open(s)
+    kai_team_open(s,retry=true)
     k:=s.kai.team
-    if k==nil || !k.opened {return nil,"The Kai state of the store is not open: start the editor with a store this user may write"}
+    if k==nil || k.status==.Closed {
+        if k!=nil && k.why_length>0 {return nil,fmt.tprintf("The Kai state of the store is not open: %s",string(k.why[:k.why_length]))}
+        return nil,"The Kai state of the store is not open: start the editor with a store this user may write"
+    }
     k.team.why=""
     return &k.team,""
 }
@@ -505,19 +542,21 @@ kai_team_of :: proc(s:^Session) -> (t:^vcs.Team,message:string) {
 kai_clone_start :: proc(s:^Session,org:vcs.Org_Id,repo:vcs.Repo_Id,name,folder:string) -> string {
     t:=s.kai.team
     c:=&t.clone
-    if c.stage==.Waiting {return fmt.tprintf("%s is being pulled: wait for it, or cancel it",string(c.name[:c.name_length]))}
+    if c.state==.Pulling {return fmt.tprintf("%s is being pulled: wait for it, or cancel it",string(c.name[:c.name_length]))}
     if folder=="" {return "Choose where the project goes"}
     kai_clone_cancel(s)
     if message:=kai_agent_start(s);message!="" {return message}
     c.org,c.repo=org,repo
     c.folder_length=copy(c.folder[:],folder)
     c.name_length=copy(c.name[:],name)
+    t.team.why=""
     if ka.project_clone(&c.project,&t.team,folder,&s.store,org,repo,kai_types(s))!=.None {
-        c.stage=.Failed
+        // project_clone closed what it opened: no lock is held.
+        c.state=.Failed
         c.why_length=copy(c.why[:],t.team.why!=""?t.team.why:"the folder could not be made a workspace")
         return string(c.why[:c.why_length])
     }
-    c.opened,c.stage=true,.Waiting
+    c.state=.Pulling
     log.infof("pulling %s into %s",name,folder)
     vcs.agent_changed(&t.agent)
     kai_clone_step(s)
@@ -529,13 +568,12 @@ kai_clone_start :: proc(s:^Session,org:vcs.Org_Id,repo:vcs.Repo_Id,name,folder:s
 kai_clone_step :: proc(s:^Session) {
     t:=s.kai.team
     c:=&t.clone
-    if c.stage!=.Waiting {return}
+    if c.state!=.Pulling {return}
+    t.team.why=""
     _,e:=ka.clone_checkout(&c.project,&t.team)
     #partial switch e {
     case .None:
-        c.stage=.Done
-        ka.project_close(&c.project)
-        c.opened=false
+        kai_clone_end(c,.Done)
         folder:=string(c.folder[:c.folder_length])
         log.infof("pulled %s into %s",string(c.name[:c.name_length]),folder)
         if p:=s.projects;p!=nil && p.launcher {
@@ -546,24 +584,30 @@ kai_clone_step :: proc(s:^Session) {
     case .Missing:
         c.why_length=copy(c.why[:],t.team.why)
     case:
-        c.stage=.Failed
+        kai_clone_end(c,.Failed)
         c.why_length=copy(c.why[:],t.team.why!=""?t.team.why:vcs.error_text(e))
     }
+}
+
+// Leaves Pulling for state: the workspace closes and its lock goes, whatever
+// the pull came to.
+kai_clone_end :: proc(c:^Kai_Clone,state:Kai_Clone_State) {
+    if c.state==.Pulling {ka.project_close(&c.project)}
+    c.state=state
 }
 
 // Stops the pull: its folder stays a workspace a later pull goes on with.
 kai_clone_cancel :: proc(s:^Session) {
     t:=s.kai.team
     if t==nil {return}
-    c:=&t.clone
-    if c.opened {ka.project_close(&c.project)}
-    c^={}
+    kai_clone_end(&t.clone,.Idle)
+    t.clone={}
 }
 
 // How far the pull is: chunks and bytes the agent took for its repository,
 // read directly from the agent without rebuilding the team view.
 kai_clone_progress :: proc(t:^Kai_Team) -> (chunks:int,bytes:i64) {
-    if t.running {
+    if t.status==.Running {
         if p,ok:=vcs.agent_pull_of(&t.agent,t.clone.org,t.clone.repo);ok {return p.chunks,p.bytes}
     }
     for p in t.view.pulls {
@@ -577,7 +621,7 @@ kai_clone_progress :: proc(t:^Kai_Team) -> (chunks:int,bytes:i64) {
 // publish or derived data sends or takes, by peer, with its speed. None, and
 // nothing allocated, while no agent runs or nothing moves.
 kai_transfers :: proc(s:^Session,allocator:=context.temp_allocator) -> []vcs.Transfer {
-    if s.kai==nil || s.kai.team==nil || !s.kai.team.running {return nil}
+    if s.kai==nil || s.kai.team==nil || s.kai.team.status!=.Running {return nil}
     out:=make([dynamic]vcs.Transfer,allocator)
     vcs.agent_transfers(&s.kai.team.agent,&out,allocator)
     return out[:]
@@ -613,7 +657,7 @@ kai_clone_folder :: proc(s:^Session,org:vcs.Org_Id,repo:vcs.Repo_Id,name:string)
     location:=strings.trim_space(string(p.location[:p.location_length]))
     if location=="" || !vcs.repo_name_valid(name) {return ""}
     same_repo :: proc(s:^Session,folder:string,org:vcs.Org_Id,repo:vcs.Repo_Id) -> bool {
-        if !ka.project_exists(folder) || s.kai==nil || s.kai.team==nil || !s.kai.team.opened {return false}
+        if !ka.project_exists(folder) || s.kai==nil || s.kai.team==nil || s.kai.team.status==.Closed {return false}
         local,_,_,_,ok:=vcs.workspace_working_info(&s.store,folder)
         if !ok {return false}
         l,linked:=vcs.team_link_of(&s.kai.team.team,local)

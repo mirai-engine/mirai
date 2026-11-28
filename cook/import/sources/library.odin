@@ -69,9 +69,10 @@ Library_Options :: struct {
     store:^store.Store,
     // Asked for what the store does not have before building: a manifest by
     // (asset.REF_MANIFESTS, <hash its pin names>), a build by (asset.REF_IMPORTS, <key>) and,
-    // with Fast textures allowed, then by (asset.REF_IMPORTS_FAST, <key>), or
-    // for a package whose importer the library lacks by (asset.REF_BUILDS,
-    // <build_select>), with every object it lists, a result of cook/cache.
+    // with Fast textures allowed, then by (asset.REF_IMPORTS_FAST, <key>), and
+    // when it gives none, or for a package whose importer the library lacks, by
+    // (asset.REF_BUILDS, <build_select>), with every object it lists, a result
+    // of cook/cache.
     source:cache.Source,
     // Fast textures allowed: imports build them Fast unless the texture cache
     // has them Final, and a Fast build is taken, here or from the source; false:
@@ -672,6 +673,7 @@ Found :: struct {
     hash:store.Hash,
     final:bool,
     fast_here:bool, // a Fast build is here, which a Final one was required over
+    chosen:bool,    // the build this machine chose for the manifest (asset.REF_BUILDS), not one by key
 }
 
 // The build of p under key this store has whole and complete
@@ -694,49 +696,35 @@ build_here :: proc(l:^Library_State,p:^asset.Package,key:store.Hash) -> (f:Found
     return
 }
 
-// Whether this store keeps under key, in a namespace the library takes, a
-// build of p that is not complete (asset.build_complete): another ingest of
-// its source made it, and the build a peer chose for the manifest of p is
-// the one to take.
-@(private="file")
-build_stale :: proc(l:^Library_State,p:^asset.Package,key:store.Hash) -> bool {
-    s:=library_index(l)
-    digits:[64]u8
-    name:=store.hex(key,&digits)
-    for namespace,at in ([2]string{asset.REF_IMPORTS,asset.REF_IMPORTS_FAST}) {
-        if at==1 && !l.options.fast_textures {break}
-        hash,ref_error:=store.ref_get(s,namespace,name)
-        if ref_error!=.None {continue}
-        b,error:=asset.build_get(s,hash,context.temp_allocator)
-        if error==.None && b.package_id==p.id && b.key==key && !asset.build_complete(&b,p) {return true}
-    }
-    return false
-}
-
 // The build this machine chose for the manifest of p (asset.REF_BUILDS) when
-// it is whole and complete, and, keyed, of key: the one an engine without
-// the importer of p reads, and the one a peer gives when what it has under
-// the key is not a build of p.
+// it is whole and complete, of any import key: the manifest and the versions
+// of its kinds name it (asset.build_select), and a source here that changed is
+// ingested again before it is looked for.
 @(private="file")
-build_chosen :: proc(l:^Library_State,p:^asset.Package,manifest,key:store.Hash,keyed:bool) -> (f:Found,ok:bool) {
+build_chosen :: proc(l:^Library_State,p:^asset.Package,manifest:store.Hash) -> (f:Found,ok:bool) {
     s:=library_index(l)
     digits:[64]u8
     hash,ref_error:=store.ref_get(s,asset.REF_BUILDS,store.hex(asset.build_select(manifest,p),&digits))
     if ref_error!=.None {return}
     b,error:=asset.build_get(s,hash,context.temp_allocator)
-    if error!=.None || b.package_id!=p.id || (keyed && b.key!=key) {return}
+    if error!=.None || b.package_id!=p.id {return}
     if !asset.build_complete(&b,p) || !asset.build_whole(s,&b) {return}
-    if !b.final && !l.options.fast_textures {return {fast_here=true},false}
-    return {build=b,hash=hash,final=b.final},true
+    if !b.final && !l.options.fast_textures {return {fast_here=true,chosen=true},false}
+    return {build=b,hash=hash,final=b.final,chosen=true},true
 }
 
-// The build of p this engine reads here: by its key, or for a source whose
-// importer this library lacks (a plugin that imports it whole and is not
-// read), the one this machine chose for its manifest (build_chosen).
+// The build of p this engine reads here: by its key, else the one this
+// machine chose for its manifest (build_chosen), which is the only one for a
+// source whose importer this library lacks (a plugin that imports it whole and
+// is not read). Keyed, a miss tells of a Fast build under the key.
 @(private="file")
 build_found :: proc(l:^Library_State,p:^asset.Package,manifest,key:store.Hash,keyed:bool) -> (f:Found,ok:bool) {
-    if keyed {return build_here(l,p,key)}
-    return build_chosen(l,p,manifest,key,keyed)
+    if keyed {
+        if f,ok=build_here(l,p,key);ok {return}
+        if chosen,chosen_ok:=build_chosen(l,p,manifest);chosen_ok {return chosen,true}
+        return
+    }
+    return build_chosen(l,p,manifest)
 }
 
 // The files the build of p is made from, absolute, where the project at top
@@ -807,9 +795,8 @@ build_given :: proc(l:^Library_State,key:string) -> bool {
 // are refreshed in order, which then find it here: the manifests the store
 // does not keep, then the builds of the packages that have none here and no
 // changed source here to ingest again: by key, then the build a peer chose
-// for the manifest of one whose build under the key is not its own
-// (build_stale), and that build for one whose importer this library lacks. A
-// refresh asks for nothing else.
+// for the manifest of those still without one, and that build for one whose
+// importer this library lacks. A refresh asks for nothing else.
 @(private="file")
 refresh_prefetch :: proc(l:^Library_State,top:string,entries:[]asset.Project_Package) {
     if l.options.source.fetch==nil {return}
@@ -828,7 +815,7 @@ refresh_prefetch :: proc(l:^Library_State,top:string,entries:[]asset.Project_Pac
     }
     fetch_many(l,asset.REF_MANIFESTS,lacking[:])
     keys:=make([dynamic]string,l.temp)
-    keyed_choices:=make([dynamic]string,l.temp) // of the packages of keys: the build a peer chose, when what it gives by key is not theirs
+    keyed_choices:=make([dynamic]string,l.temp) // of the packages of keys: the build a peer chose, when it gives none by key
     keyed_entries:=make([dynamic]int,l.temp)
     choices:=make([dynamic]string,l.temp) // of the packages whose importer this library lacks: the build a peer chose
     for entry,at in entries {
@@ -862,8 +849,8 @@ refresh_prefetch :: proc(l:^Library_State,top:string,entries:[]asset.Project_Pac
         entry:=entries[at]
         p,error:=asset.package_load(s,top,&entry,context.temp_allocator)
         if error!=.None {continue}
-        key,_:=package_key(l,&p)
-        if _,found:=build_here(l,&p,key);!found && build_stale(l,&p,key) {append(&choices,keyed_choices[k])}
+        key,keyed:=package_key(l,&p)
+        if _,found:=build_found(l,&p,entry.manifest,key,keyed);!found {append(&choices,keyed_choices[k])}
     }
     fetch_many(l,asset.REF_BUILDS,choices[:])
 }
@@ -1000,37 +987,31 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
     key_digits,select_digits:[64]u8
     key_name:=store.hex(key,&key_digits)
     select:=store.hex(asset.build_select(entry.manifest,&p),&select_digits)
-    chosen_given:=false // the ref of this machine's choice is the one the source gave, not yet followed
-    switch {
-    case keyed && found && build_given(l,key_name):
-        // The source gave it before the refresh came to it.
-        report.fetched+=1
-    case keyed && found:
-        // Kept before the project shared its builds, or by another: the source hears it is here.
-        if here:=l.options.source.here;here!=nil {here(l.options.source.user,f.final?asset.REF_IMPORTS:asset.REF_IMPORTS_FAST,key_name,f.hash,made_from(&p,top))}
-    case keyed && !found:
+    if keyed && !found {
         names:=[1]string{key_name}
         fetch_builds(l,names[:])
-        if build_given(l,key_name) {
-            if f,found=build_here(l,&p,key);found {report.fetched+=1}
+        if build_given(l,key_name) {f,found=build_found(l,&p,entry.manifest,key,keyed)}
+    }
+    // Without its importer, or with none by its key, the build is the one a peer chose for its manifest.
+    if !found && fetch(l,asset.REF_BUILDS,select) {f,found=build_found(l,&p,entry.manifest,key,keyed)}
+    // The ref of this machine's choice is the one the source gave, not yet followed.
+    chosen_given:=found && f.chosen && l.asked[fmt.tprintf("%s/%s",asset.REF_BUILDS,select)]
+    switch {
+    case !found:
+    case chosen_given || (keyed && !f.chosen && build_given(l,key_name)):
+        // The source gave it before the refresh came to it, or now.
+        report.fetched+=1
+    case keyed && !f.chosen:
+        // Kept before the project shared its builds, or by another: the source hears it is here.
+        if here:=l.options.source.here;here!=nil {here(l.options.source.user,f.final?asset.REF_IMPORTS:asset.REF_IMPORTS_FAST,key_name,f.hash,made_from(&p,top))}
+    }
+    // A chosen build of this key is found by it from now on; one of another key stays a choice.
+    if found && keyed && f.chosen && f.build.key==key {
+        namespace:=f.final?asset.REF_IMPORTS:asset.REF_IMPORTS_FAST
+        if ref_error:=store.ref_set(s,namespace,key_name,f.hash);ref_error!=.None {
+            report_line(&report.failures,"package %s: the ref %s/%s could not be set in the store at %s: %v",p.name,namespace,key_name,s.root,ref_error)
+            return
         }
-        // What is under the key is not a build of p: the one a peer chose for its manifest is.
-        if !found && build_stale(l,&p,key) && fetch(l,asset.REF_BUILDS,select) {
-            if chosen,chosen_found:=build_chosen(l,&p,entry.manifest,key,keyed);chosen_found {
-                f,found=chosen,true
-                report.fetched+=1
-                namespace:=f.final?asset.REF_IMPORTS:asset.REF_IMPORTS_FAST
-                if ref_error:=store.ref_set(s,namespace,key_name,f.hash);ref_error!=.None {
-                    report_line(&report.failures,"package %s: the ref %s/%s could not be set in the store at %s: %v",p.name,namespace,key_name,s.root,ref_error)
-                    return
-                }
-            }
-        }
-    case !keyed:
-        // Without its importer the build is the one a peer chose for its manifest.
-        if !found && fetch(l,asset.REF_BUILDS,select) {f,found=build_found(l,&p,entry.manifest,key,keyed)}
-        chosen_given=found && l.asked[fmt.tprintf("%s/%s",asset.REF_BUILDS,select)]
-        if chosen_given {report.fetched+=1}
     }
     finalized:=false
     if !found && keyed && f.fast_here {

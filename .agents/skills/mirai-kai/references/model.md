@@ -135,11 +135,14 @@ bounds of every record are constants of `kai/types.odin`; past one is `Too_Large
   modified within `SETTLED_NANOSECONDS` of being read is racy and hashed again, because a second
   edit in the same tick of the file system's clock would not show.
 - An editor pushes the paths it changed (`workspace_touched`), so a snapshot stats only those and
-  never scans the folder; a watch that overflows makes the next snapshot read it whole.
+  never scans the folder; a watch that overflows makes the next snapshot read it whole
+  (`Touch_Mode.Full_Scan`, which no later report undoes until that snapshot).
 - A switch (checkout) writes only the files that differ, through a temporary file and a rename,
   and records its target first, so one cut midway is finished by the next status or snapshot
-  (`a_switch_cut_midway_recovers_on_status`). A file a sibling workspace's saved stat index says
-  it holds, settled and still of the row's size, time and inode, is cloned without reading it
+  (`a_switch_cut_midway_recovers_on_status`); the conflicts it writes become the state's only
+  once the state is saved, so one cut leaves the state in memory as on disk. A file a sibling
+  workspace's saved stat index says it holds, settled and still of the row's size, time and
+  inode, is cloned without reading it
   where the volume can (APFS `clonefile`, `FICLONE`) and copied where it cannot; any other comes
   from the store. A snapshot takes its new index into memory only once it is saved.
 - What a workspace tracks is a `Filter` its owner gives: for a project it is `tracked_path`

@@ -206,8 +206,13 @@ conn_dial :: proc(address:string,identity:Identity,expect:Key,secret:[32]u8={},c
         conn_free(c)
         return nil,.Unauthorized
     }
+    split:bool
+    c.send,c.receive,split=handshake_split(&hs)
+    if !split {
+        conn_free(c)
+        return nil,.Unauthorized
+    }
     c.peer=hs.peer
-    c.send,c.receive=handshake_split(&hs)
     net.set_option(socket,.Receive_Timeout,time.Duration(0))
     return c,.None
 }
@@ -237,9 +242,14 @@ conn_accept :: proc(socket:net.TCP_Socket,remote:net.Endpoint,identity:Identity)
         conn_release(c)
         return nil,.Unauthorized
     }
+    split:bool
+    c.send,c.receive,split=handshake_split(&hs)
+    if !split {
+        conn_release(c)
+        return nil,.Unauthorized
+    }
     c.peer=hs.peer
     c.proof,c.proved=hs.proof,hs.proved
-    c.send,c.receive=handshake_split(&hs)
     net.set_option(socket,.Receive_Timeout,time.Duration(0))
     return c,.None
 }

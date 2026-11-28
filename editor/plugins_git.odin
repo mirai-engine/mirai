@@ -95,23 +95,6 @@ plugins_git_catalog_read :: proc(s:^Session) {
     base.text_set(pg.catalog_message[:],install.catalog_load(s.engine_root,pg.catalog))
     base.text_set(pg.catalog_folder[:],s.engine_root=="" ? "" : install.catalog_folder(s.engine_root,context.temp_allocator))
     pg.catalog_icons={}
-    plugins_git_catalog_updates(s)
-}
-
-// Which plugins of the catalog it lists at a commit their checkout does not
-// have: not one they were moved past with a ref.
-@(private)
-plugins_git_catalog_updates :: proc(s:^Session) {
-    list:=&s.settings_plugins
-    catalog:=s.plugins_git.catalog
-    for i in 0..<list.count {
-        list.catalog_update[i]=false
-        if !list.source_catalog[i] || catalog==nil {continue}
-        name:=base.text_get(list.names[i][:])
-        if entry:=project.catalog_find(catalog,name);entry!=nil && entry.commit!=list.source_commit[i] {
-            list.catalog_update[i]=!install.has_commit(s.project_root,name,base.text_get(entry.commit[:]))
-        }
-    }
 }
 
 plugins_git_free :: proc(s:^Session) {
@@ -121,19 +104,16 @@ plugins_git_free :: proc(s:^Session) {
     pg^={}
 }
 
-// The row of a plugin from git besides its switch: update and remove. One of
-// the catalog updates only when the catalog lists another commit.
+// The row of a plugin from git besides its switch: update and remove.
 @(private)
 plugins_git_row_actions :: proc(s:^Session,index:int) {
     list:=&s.settings_plugins
     name:=base.text_get(list.names[index][:])
-    if list.source_catalog[index] && s.plugins_git.catalog==nil {plugins_git_catalog_read(s)}
-    available:=!list.source_catalog[index] || list.catalog_update[index]
     ctx:=s.gui.ctx
     ui.id_push(ctx,ui.id(ctx,fmt.tprintf("git %s",name)))
     defer ui.id_pop(ctx)
     busy:=plugins_git_busy(s) || s.build.phase==.Running
-    if available && ui.button(ctx,ui.id(ctx,"git_update"),{label=list.source_catalog[index]?"Update available":"Update",variant="ghost",height=20,size=ui.metric(ctx,"font_label"),disabled=busy}).clicked {
+    if ui.button(ctx,ui.id(ctx,"git_update"),{label="Update",variant="ghost",height=20,size=ui.metric(ctx,"font_label"),disabled=busy}).clicked {
         plugins_git_start(s,[]install.Step{{kind=.Update,text=name}},fmt.tprintf("Updating %s",name))
     }
     if ui.button(ctx,ui.id(ctx,"git_remove"),{label="Remove",variant="ghost",height=20,size=ui.metric(ctx,"font_label"),disabled=busy}).clicked {

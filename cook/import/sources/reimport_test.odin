@@ -644,11 +644,12 @@ the_documents_of_a_whole_source_go_to_its_own_folder :: proc(t:^testing.T) {
     testing.expect_value(t,state.releases,1)
 }
 
-// A store that holds the build of a source a plugin imports whole, and not
-// the source, takes it by key from another store, lists and loads it, and
-// imports nothing; another version or code of the importer misses that build.
-// Without the importer it takes the build the other store chose, and with no
-// store to ask it says why the importer was not read.
+// A store with no build of a source a plugin imports whole takes it by key
+// from another store, lists and loads it, and imports nothing. Another version
+// or code of the importer, also with the unchanged source here, or no importer
+// at all, takes the build the other store chose for the manifest, keeps it as
+// that choice and not under its own key, and finds it here on the next refresh
+// without asking. With no store to ask it says why the importer was not read.
 @(test)
 a_whole_source_build_is_found_by_key_without_its_source :: proc(t:^testing.T) {
     root,assets:=test_project(t,"whole-by-key")
@@ -671,28 +672,44 @@ a_whole_source_build_is_found_by_key_without_its_source :: proc(t:^testing.T) {
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
     added:=project_add(root,first.manifest,"",nil,{store=s,root=root,plugins=leveling},context.temp_allocator)
     if !testing.expectf(t,len(added.failures)==0 && len(added.missing)==0,"%v",added) {return}
-    peer:=fmt.tprintf("%s-peer",root)
+    peer,sourced:=fmt.tprintf("%s-peer",root),fmt.tprintf("%s-sourced",root)
     folder_copy(root,peer)
+    folder_copy(root,sourced)
     testing.expect(t,os.remove(fmt.tprintf("%s/assets/hall.level",peer))==nil)
     runs:=state.runs
     UNBUILT :: "the editor could not be built"
     unbuilt :: proc(root:string,s:^store.Store,allocator:mem.Allocator) -> Library_Imports {return {problem=UNBUILT}}
-    Case :: struct {version:u16,code:u64,importer,asked,found:bool}
-    for c,k in ([]Case{{1,0,true,true,true},{2,0,true,true,false},{1,5,true,true,false},{1,0,false,true,true},{1,0,false,false,false}}) {
+    Case :: struct {version:u16,code:u64,importer,source,asked,found:bool}
+    for c,k in ([]Case{
+        {1,0,true,false,true,true},
+        {2,0,true,false,true,true},
+        {1,5,true,false,true,true},
+        {2,0,true,true,true,true},
+        {1,0,false,false,true,true},
+        {1,0,false,false,false,false},
+    }) {
         state.version,state.code=c.version,c.code
         here:=test_store(t,fmt.tprintf("%s-store-%d",root,k))
         if here==nil {return}
-        options:=Library_Options{store=here,root=peer,plugins=leveling if c.importer else unbuilt}
+        project:=sourced if c.source else peer
+        options:=Library_Options{store=here,root=project,plugins=leveling if c.importer else unbuilt}
         if c.asked {options.source=cache.store_source(s)}
-        refreshed:=project_refresh(peer,options,context.temp_allocator)
-        testing.expect(t,state.runs==runs && refreshed.ingested==0,"nothing is imported")
+        refreshed:=project_refresh(project,options,context.temp_allocator)
+        testing.expectf(t,state.runs==runs && refreshed.ingested==0,"%v: nothing is imported",c)
         if !c.found {
-            testing.expectf(t,refreshed.fetched==0 && len(refreshed.missing)==1,"%v: another importer misses the build: %v",c,refreshed)
+            testing.expectf(t,refreshed.fetched==0 && len(refreshed.missing)==1,"%v: no build is found: %v",c,refreshed)
             if !c.importer && len(refreshed.missing)==1 {testing.expectf(t,strings.contains(refreshed.missing[0],UNBUILT),"it says why: %s",refreshed.missing[0])}
             continue
         }
-        testing.expectf(t,refreshed.fetched==1 && len(refreshed.missing)==0 && len(refreshed.failures)==0,"%v",refreshed)
-        listed,list_error:=asset.root_packages_in(here,peer,context.temp_allocator)
+        testing.expectf(t,refreshed.fetched==1 && len(refreshed.missing)==0 && len(refreshed.failures)==0,"%v: %v",c,refreshed)
+        imports,_:=store.ref_list(here,asset.REF_IMPORTS,context.temp_allocator)
+        fast,_:=store.ref_list(here,asset.REF_IMPORTS_FAST,context.temp_allocator)
+        by_key:=c.importer && c.version==1 && c.code==0
+        testing.expectf(t,len(imports)+len(fast)==(1 if by_key else 0),"%v: a build of another key is kept only as the choice: %v %v",c,imports,fast)
+        options.source={}
+        again:=project_refresh(project,options,context.temp_allocator)
+        testing.expectf(t,state.runs==runs && again.ingested==0 && again.fetched==0 && len(again.missing)==0 && len(again.failures)==0,"%v: found here without asking: %v",c,again)
+        listed,list_error:=asset.root_packages_in(here,project,context.temp_allocator)
         testing.expectf(t,list_error==.None && len(listed.problems)==0 && len(listed.listed)>0,"%v",listed)
         for l in listed.listed {
             a:asset.Asset
