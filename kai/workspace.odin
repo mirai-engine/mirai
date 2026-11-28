@@ -199,14 +199,22 @@ Workspace_Options :: struct {
     sibling:string,         // a workspace of the same repository whose clean files a switch clones
 }
 
+// What the next snapshot knows of the changes since the last one
+// (workspace_touched); a snapshot goes back to Clean.
+Touch_Mode :: enum u8 {
+    Clean,     // nothing reported: the snapshot scans the folder, as it knows of no change
+    Paths,     // every change was reported, in touched: the snapshot stats only those
+    Full_Scan, // a change went unreported: the snapshot scans the folder, whatever is reported after
+}
+
 Workspace :: struct {
     repo:Repo,
     root:string,
     lock:Lock,
     state:Workspace_State,
     index:Stat_Index,
-    touched:[dynamic]string,  // paths the editor reported changed since the last snapshot
-    touched_all:bool,         // the touched set is complete: a snapshot stats only those
+    touched:[dynamic]string,  // paths reported changed since the last snapshot
+    touch:Touch_Mode,
     options:Workspace_Options,
     cut_after:[TEST_ONLY]int, // cuts a checkout after this many files; 0 never
     allocator:runtime.Allocator,
@@ -329,18 +337,25 @@ workspace_close :: proc(w:^Workspace) {
     w^={}
 }
 
-// Records paths an editor changed, so the next snapshot with complete set
-// stats only those: O(changed paths), no scan.
+// Records paths an editor changed. complete: every change since the last
+// snapshot is reported, so the next one stats only those (O(changed paths),
+// no scan) until a call that is not complete makes it scan the folder.
 workspace_touched :: proc(w:^Workspace,paths:[]string,complete:=true) -> Error {
+    if !complete {w.touch=.Full_Scan}
+    if w.touch==.Full_Scan {return .None} // the scan finds them
     for p in paths {
         cloned,e:=strings.clone(p,w.allocator)
-        if e!=nil {return .Out_Of_Memory}
+        if e!=nil {
+            w.touch=.Full_Scan
+            return .Out_Of_Memory
+        }
         if _,f:=append(&w.touched,cloned);f!=nil {
             delete(cloned,w.allocator)
+            w.touch=.Full_Scan
             return .Out_Of_Memory
         }
     }
-    w.touched_all=complete
+    w.touch=.Paths
     return .None
 }
 
@@ -406,14 +421,14 @@ workspace_snapshot :: proc(w:^Workspace) -> (report:Snapshot_Report,error:Error)
     repo_refresh(&w.repo) or_return
     found:=make([dynamic]Found,context.temp_allocator)
     now:=time.now()._nsec
-    if w.touched_all && len(w.index.rows)>0 {
+    if w.touch==.Paths && len(w.index.rows)>0 {
         touched_scan(w,&found,&report) or_return
     } else {
         folder_scan(w,"",0,&found,&report) or_return
     }
     for p in w.touched {delete(p,w.allocator)}
     clear(&w.touched)
-    w.touched_all=false
+    w.touch=.Clean
     slice.sort_by(found[:],proc(a,b:Found) -> bool {return a.path<b.path})
     // Reuse what the index knows; hash the rest, in parallel when a worker is given.
     changed:=make([dynamic]^Found,context.temp_allocator)
@@ -464,7 +479,15 @@ workspace_snapshot :: proc(w:^Workspace) -> (report:Snapshot_Report,error:Error)
         append(&w.index.rows,..next.rows[:])
         append(&w.index.pool,..next.pool[:])
     }
-    // The conflicts kept are some of the state's: the others' paths are freed.
+    state_commit(w,&st)
+    return report,.None
+}
+
+// Makes st, saved, the workspace's state in memory. Its conflicts are some of
+// the state's and new ones whose paths are in the workspace's allocator: the
+// paths of the state's that st dropped are freed.
+@(private)
+state_commit :: proc(w:^Workspace,st:^Workspace_State) {
     for m in w.state.conflicts {
         kept:=false
         for x in st.conflicts {kept||=raw_data(x.path)==raw_data(m.path)}
@@ -473,9 +496,9 @@ workspace_snapshot :: proc(w:^Workspace) -> (report:Snapshot_Report,error:Error)
     conflicts:=w.state.conflicts
     clear(&conflicts)
     append(&conflicts,..st.conflicts[:])
-    st.conflicts=conflicts
-    w.state=st
-    return report,.None
+    next:=st^
+    next.conflicts=conflicts
+    w.state=next
 }
 
 // Keeps each conflict of st whose path still holds what the checkout wrote;
@@ -741,13 +764,22 @@ recover :: proc(w:^Workspace) -> (recovered:bool,error:Error) {
 }
 
 // Writes the files that differ from the tree on disk to target: the target is
-// saved first, so a cut midway is finished by recover.
+// saved first, so a cut midway is finished by recover. The conflicts it
+// writes are staged and become the state's only once it is saved: one cut
+// midway leaves the state in memory as on disk.
 @(private)
-checkout :: proc(w:^Workspace,target:store.Hash) -> Error {
+checkout :: proc(w:^Workspace,target:store.Hash) -> (error:Error) {
     w.state.target=target
     state_save(w,&w.state) or_return
     changes:=make([dynamic]Diff,context.temp_allocator)
     tree_diff(w.repo.s,w.state.tree,target,&changes,context.temp_allocator) or_return
+    staged:=w.state
+    staged.conflicts=make([dynamic]Materialized,0,len(w.state.conflicts),context.temp_allocator)
+    append(&staged.conflicts,..w.state.conflicts[:])
+    made:=make([dynamic]string,context.temp_allocator) // paths cloned for new conflicts, freed when it fails
+    defer if error!=.None {
+        for p in made {delete(p,w.allocator)}
+    }
     content:=make([dynamic]u8,context.temp_allocator)
     updates:=make([dynamic]Index_Update,context.temp_allocator)
     sibling:Stat_Index
@@ -759,10 +791,9 @@ checkout :: proc(w:^Workspace,target:store.Hash) -> Error {
         }
         path:=path_join(w.root,d.path)
         // A conflict this path held is replaced.
-        for m,k in w.state.conflicts {
+        for m,k in staged.conflicts {
             if m.path!=d.path {continue}
-            delete(m.path,w.allocator)
-            ordered_remove(&w.state.conflicts,k)
+            ordered_remove(&staged.conflicts,k)
             break
         }
         address:=d.after.address
@@ -790,11 +821,12 @@ checkout :: proc(w:^Workspace,target:store.Hash) -> Error {
             }
             cloned,f:=strings.clone(d.path,w.allocator)
             if f!=nil {return .Out_Of_Memory}
-            m.path=cloned
-            if _,g:=append(&w.state.conflicts,m);g!=nil {
+            if _,g:=append(&made,cloned);g!=nil {
                 delete(cloned,w.allocator)
                 return .Out_Of_Memory
             }
+            m.path=cloned
+            if _,g:=append(&staged.conflicts,m);g!=nil {return .Out_Of_Memory}
         case:
             if here && found==.Directory {
                 if os.remove_all(path)!=nil {return .Io}
@@ -813,9 +845,11 @@ checkout :: proc(w:^Workspace,target:store.Hash) -> Error {
         if _,e:=append(&updates,u);e!=nil {return .Out_Of_Memory}
     }
     index_merge(&w.index,updates[:]) or_return
-    w.state.tree,w.state.target,w.state.op=target,{},w.repo.op
+    staged.tree,staged.target,staged.op=target,{},w.repo.op
     index_save(w,&w.index) or_return
-    return state_save(w,&w.state)
+    state_save(w,&staged) or_return
+    state_commit(w,&staged)
+    return .None
 }
 
 // What a checkout finds at relative before it writes there, when here: a

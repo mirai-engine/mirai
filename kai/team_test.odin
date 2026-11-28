@@ -120,8 +120,8 @@ noise_pq_handshake_proves_both_keys_and_refuses_tampering :: proc(t:^testing.T) 
             other:=secret
             other[0]~=1
             testing.expect(t,!handshake_invited(r.proof,r.proved,other),"and under no other")
-            is,ir:=handshake_split(&i)
-            rs,rr:=handshake_split(&r)
+            is,ir,_:=handshake_split(&i)
+            rs,rr,_:=handshake_split(&r)
             plain:=[]u8{1,2,3,4,5}
             sealed:[5+NOISE_TAG]u8
             opened:[5]u8
@@ -156,6 +156,67 @@ noise_pq_handshake_proves_both_keys_and_refuses_tampering :: proc(t:^testing.T) 
     testing.expect(t,!handshake_read_2(&i,m2[:],m3[:],{}),"the other end's proof does not open on this transcript")
     _=n3
     for h in ([]^Handshake{&i,&ma,&mb,&r}) {handshake_destroy(h)}
+}
+
+// A handshake takes each message once, in its order and on its own side: a
+// repeated, early or wrong-side step fails it for good, and a failed or
+// unfinished one gives no session.
+@(test)
+noise_handshake_refuses_steps_out_of_order :: proc(t:^testing.T) {
+    alice,bob:=identity_make(),identity_make()
+    Step :: enum u8 {Write_1,Read_1,Read_2,Read_3,Responder_Writes_1,Initiator_Reads_1}
+    Case :: struct {name:string,steps:[]Step}
+    cases:=[]Case{
+        {"message 1 written twice",{.Write_1,.Write_1}},
+        {"message 1 read twice",{.Write_1,.Read_1,.Read_1}},
+        {"message 2 read twice",{.Write_1,.Read_1,.Read_2,.Read_2}},
+        {"message 3 read twice",{.Write_1,.Read_1,.Read_2,.Read_3,.Read_3}},
+        {"message 2 read before message 1 is written",{.Read_2}},
+        {"message 3 read before message 1",{.Read_3}},
+        {"message 3 read before message 2 is",{.Write_1,.Read_3}},
+        {"the responder writes message 1",{.Responder_Writes_1}},
+        {"the initiator reads message 1",{.Write_1,.Initiator_Reads_1}},
+    }
+    for c in cases {
+        i,r:Handshake
+        handshake_init(&i,true,alice)
+        handshake_init(&r,false,bob)
+        m1:[NOISE_MSG1]u8
+        m2:[NOISE_MSG2]u8
+        m3:[NOISE_MSG3]u8
+        last:^Handshake
+        for step,k in c.steps {
+            ok:bool
+            switch step {
+            case .Write_1: ok,last=handshake_write_1(&i,m1[:]),&i
+            case .Read_1: ok,last=handshake_read_1(&r,m1[:],m2[:]),&r
+            case .Read_2: ok,last=handshake_read_2(&i,m2[:],m3[:],{}),&i
+            case .Read_3: ok,last=handshake_read_3(&r,m3[:]),&r
+            case .Responder_Writes_1: ok,last=handshake_write_1(&r,m1[:]),&r
+            case .Initiator_Reads_1: ok,last=handshake_read_1(&i,m1[:],m2[:]),&i
+            }
+            testing.expectf(t,ok==(k<len(c.steps)-1),"%s: step %d (%v) %v",c.name,k,step,ok?"held":"failed")
+        }
+        testing.expectf(t,last.phase==.Failed,"%s: the handshake failed for good, not %v",c.name,last.phase)
+        _,_,split:=handshake_split(last)
+        testing.expectf(t,!split,"%s: a failed handshake gives no session",c.name)
+        handshake_destroy(&i)
+        handshake_destroy(&r)
+    }
+    // Once failed, the step that would have come next fails too.
+    i,r:Handshake
+    handshake_init(&i,true,alice)
+    handshake_init(&r,false,bob)
+    defer handshake_destroy(&i)
+    defer handshake_destroy(&r)
+    m1:[NOISE_MSG1]u8
+    m2:[NOISE_MSG2]u8
+    m3:[NOISE_MSG3]u8
+    _,_,early:=handshake_split(&i)
+    testing.expect(t,!early,"an unfinished handshake gives no session")
+    testing.expect(t,handshake_write_1(&i,m1[:]) && !handshake_read_3(&i,m3[:]),"the initiator refuses message 3")
+    testing.expect(t,handshake_read_1(&r,m1[:],m2[:]),"the responder still takes message 1")
+    testing.expect(t,!handshake_read_2(&i,m2[:],m3[:],{}),"the failed initiator refuses message 2 after it")
 }
 
 // An org's record holds only when signed by who may: the first by an admin it
@@ -426,8 +487,9 @@ two_machines_pair_by_invite_and_sync_over_tcp :: proc(t:^testing.T) {
     address:=fmt.tprintf("127.0.0.1:%d",agent_port(&mac.agent))
     text,ie:=team_invite(&mac.team,org,.Writer,"",{address},context.temp_allocator)
     if !testing.expect_value(t,ie,Error.None) {return}
-    joined,je:=agent_join(&pc.agent,text)
-    if !testing.expectf(t,je==.None && joined==org,"the invite joins: %v %s",je,pc.agent.team.why) {return}
+    why:string
+    joined,je:=agent_join(&pc.agent,text,&why)
+    if !testing.expectf(t,je==.None && joined==org,"the invite joins: %v %s",je,why) {return}
     o,_,_:=team_org(&pc.team,org)
     role,member:=org_role(&o,pc.team.identity.key)
     testing.expect(t,member && role==.Writer && o.members[org_member(&o,pc.team.identity.key)].name=="Ben","the joined device is a writer under its own name")
@@ -446,6 +508,14 @@ two_machines_pair_by_invite_and_sync_over_tcp :: proc(t:^testing.T) {
     testing.expect(t,whole,"the pulled repository is whole")
     refs,_,re:=repo_refs_head(&pc.s,org,repo,context.temp_allocator)
     testing.expect(t,re==.None && len(refs.bookmarks)==1 && refs.bookmarks[0].target==revision,"the shared bookmarks came")
+    // The pass that brought the objects says the pull is whole as it ends.
+    Pulled :: struct {a:^Agent}
+    pulled:=Pulled{&pc.agent}
+    until(5,&pulled,proc(data:rawptr) -> bool {
+        pulls:=make([dynamic]Pull,context.temp_allocator)
+        agent_pulls((^Pulled)(data).a,&pulls)
+        return len(pulls)==1 && pulls[0].whole
+    })
     pulls:=make([dynamic]Pull,context.temp_allocator)
     agent_pulls(&pc.agent,&pulls)
     testing.expect(t,len(pulls)==1 && pulls[0].whole && pulls[0].chunks>0 && pulls[0].bytes>0,"the pull says how far it is")
@@ -514,7 +584,8 @@ a_transfer_measures_its_window_and_leaves_once_quiet :: proc(t:^testing.T) {
     org,_:=team_org_create(&mac.team,"studio")
     if !machine_start(t,&mac,0) || !machine_start(t,&pc,-1) {return}
     text,_:=team_invite(&mac.team,org,.Node,"",{fmt.tprintf("127.0.0.1:%d",agent_port(&mac.agent))},context.temp_allocator)
-    if _,e:=agent_join(&pc.agent,text);!testing.expectf(t,e==.None,"join: %s",pc.agent.team.why) {return}
+    why:string
+    if _,e:=agent_join(&pc.agent,text,&why);!testing.expectf(t,e==.None,"join: %s",why) {return}
     started=time.tick_now()
     sync.atomic_store(&pc.agent.asked,transfer_now())
     agent_drain(&pc.agent,300*time.Millisecond,10*time.Second)
@@ -701,13 +772,23 @@ an_agent_stops_while_a_dial_hangs :: proc(t:^testing.T) {
         a:=(^Dialing)(data).a
         sync.mutex_lock(&a.lock)
         defer sync.mutex_unlock(&a.lock)
-        return a.dials>0
+        return agent_dials_running(a)
     }),"the dial runs")
+    // A sync asked while it runs begins no second dial of that address.
+    throttle:=options_key("192.0.2.1:7350")
+    sync.mutex_lock(&m.agent.lock)
+    first:=m.agent.dialing[throttle]
+    sync.mutex_unlock(&m.agent.lock)
+    agent_sync_now(&m.agent)
+    time.sleep(300*time.Millisecond)
+    sync.mutex_lock(&m.agent.lock)
+    now:=m.agent.dialing[throttle]
+    sync.mutex_unlock(&m.agent.lock)
+    testing.expectf(t,now.phase==.Running && now.began==first.began,"the running dial stays the one: %v, then %v",first,now)
     started:=time.tick_now()
     agent_stop(&m.agent)
     m.running=false
     testing.expectf(t,time.tick_since(started)<time.Second,"the agent stops in %v",time.tick_since(started))
-    testing.expect_value(t,m.agent.dials,0)
 }
 
 // A peer that asks and never reads is cut off once what it asked passes
@@ -779,8 +860,9 @@ a_bad_join_does_not_spend_the_invite :: proc(t:^testing.T) {
         }
     }
     conn_free(c)
-    joined,je:=agent_join(&pc.agent,invite)
-    testing.expectf(t,je==.None && joined==org,"the invite still joins: %v %s",je,pc.agent.team.why)
+    why:string
+    joined,je:=agent_join(&pc.agent,invite,&why)
+    testing.expectf(t,je==.None && joined==org,"the invite still joins: %v %s",je,why)
 }
 
 @(private="file")
@@ -985,11 +1067,12 @@ a_joined_peer_reconnects_after_the_inviter_restarts :: proc(t:^testing.T) {
     box_addr:=fmt.tprintf("127.0.0.1:%d",agent_port(&box.agent))
 
     inv_pc,_:=team_invite(&mac.team,org,.Writer,"",{mac_addr},context.temp_allocator)
-    if _,je:=agent_join(&pc.agent,inv_pc);!testing.expectf(t,je==.None,"pc joins: %v %s",je,pc.agent.team.why) {return}
+    why:string
+    if _,je:=agent_join(&pc.agent,inv_pc,&why);!testing.expectf(t,je==.None,"pc joins: %v %s",je,why) {return}
     testing.expect(t,slice.contains(team_peer_addresses(&pc.team,mac.team.identity.key),mac_addr),"joiner saves the inviter's dialed address")
 
     inv_box,_:=team_invite(&mac.team,org,.Writer,"",{mac_addr},context.temp_allocator)
-    if _,je:=agent_join(&box.agent,inv_box);!testing.expectf(t,je==.None,"box joins: %v %s",je,box.agent.team.why) {return}
+    if _,je:=agent_join(&box.agent,inv_box,&why);!testing.expectf(t,je==.None,"box joins: %v %s",je,why) {return}
     testing.expect(t,slice.contains(team_peer_addresses(&mac.team,box.team.identity.key),box_addr),"inviter saves a listening joiner's address")
     agent_stop(&box.agent)
     box.running=false
@@ -1103,7 +1186,8 @@ a_pull_splits_among_peers_and_takes_what_one_lacks_from_another :: proc(t:^testi
     mac_address:=fmt.tprintf("127.0.0.1:%d",agent_port(&mac.agent))
     for m in ([]^Machine{&half,&whole,&puller}) {
         invite,_:=team_invite(&mac.team,org,.Writer,"",{mac_address},context.temp_allocator)
-        if _,e:=agent_join(&m.agent,invite);!testing.expectf(t,e==.None,"%s joins: %v %s",m.team.name,e,m.agent.team.why) {return}
+        why:string
+        if _,e:=agent_join(&m.agent,invite,&why);!testing.expectf(t,e==.None,"%s joins: %v %s",m.team.name,e,why) {return}
     }
     team_link(&whole.team,{local=random_id(Repo_Id),org=org,repo=repo})
     agent_changed(&whole.agent)
@@ -1181,10 +1265,11 @@ members_that_know_only_the_server_meet_through_it :: proc(t:^testing.T) {
     server.running=testing.expect_value(t,agent_start(&server.agent,&server.team,{port=0,host="127.0.0.1",node=true,max_orgs=4}),Error.None)
     if !server.running || !machine_start(t,&mac,0) || !machine_start(t,&pc,0) {return}
     org,_:=vcs_org(t,&mac)
-    if !testing.expectf(t,agent_server_attach(&mac.agent,org,fmt.tprintf("127.0.0.1:%d",agent_port(&server.agent)))==.None,"the admin attaches the server: %s",mac.agent.team.why) {return}
-    invite,via_server,ie:=agent_invite(&mac.agent,org,.Writer,"",{},context.temp_allocator)
-    if !testing.expectf(t,ie==.None && via_server,"an invite through the server: %v %s",ie,mac.agent.team.why) {return}
-    if _,e:=agent_join(&pc.agent,invite);!testing.expectf(t,e==.None,"the member joins through the server: %v %s",e,pc.agent.team.why) {return}
+    why:string
+    if !testing.expectf(t,agent_server_attach(&mac.agent,org,fmt.tprintf("127.0.0.1:%d",agent_port(&server.agent)),&why)==.None,"the admin attaches the server: %s",why) {return}
+    invite,via_server,ie:=agent_invite(&mac.agent,org,.Writer,"",{},context.temp_allocator,&why)
+    if !testing.expectf(t,ie==.None && via_server,"an invite through the server: %v %s",ie,why) {return}
+    if _,e:=agent_join(&pc.agent,invite,&why);!testing.expectf(t,e==.None,"the member joins through the server: %v %s",e,why) {return}
     o,_,_:=team_org(&mac.team,org)
     for m in o.members {testing.expectf(t,m.role==.Node || m.address=="","the org lists where the server listens alone, not %s",m.name)}
     Pair :: struct {a,b:^Machine,org:Org_Id}
@@ -1298,4 +1383,33 @@ a_malformed_peers_message_ends_the_connection :: proc(t:^testing.T) {
         for x in slice.reinterpret([]Tell_Entry,body[2:]) {answered||=x.kind==.Ddc && x.id==key}
     }
     testing.expect(t,answered,"a good Peers keeps the connection")
+}
+
+// An ask of derived data hears each peer it asked once: a peer that tells of
+// the key twice does not stand for one that has not answered, a peer it did
+// not ask is not heard, and the first that names a set is the one it takes
+// the set from.
+@(test)
+a_ddc_ask_waits_for_every_peer_it_asked :: proc(t:^testing.T) {
+    a,b,stranger:Peer
+    asked:=[]^Peer{&a,&b}
+    set:=store.Hash{0=1}
+    answered:[2]bool
+    w:=Ddc_Wait{asked=asked,answered=answered[:]}
+    ddc_wait_answer(&w,&a,{})
+    ddc_wait_answer(&w,&a,{})
+    testing.expect(t,!ddc_wait_done(&w),"a peer that answers twice is one answer")
+    ddc_wait_answer(&w,&stranger,set)
+    testing.expect(t,!ddc_wait_done(&w) && w.hit==nil,"a peer not asked is not heard")
+    ddc_wait_answer(&w,&b,{})
+    testing.expect(t,ddc_wait_done(&w) && w.hit==nil,"every peer asked answered, none with the set")
+
+    answered={}
+    w=Ddc_Wait{asked=asked,answered=answered[:]}
+    ddc_wait_answer(&w,&b,set)
+    hit,ok:=w.hit.?
+    testing.expect(t,ddc_wait_done(&w) && ok && hit.from==&b && hit.address==set,"the first that names the set ends the wait")
+    ddc_wait_answer(&w,&a,store.Hash{0=2})
+    hit,_=w.hit.?
+    testing.expect(t,hit.from==&b,"a later one does not take its place")
 }

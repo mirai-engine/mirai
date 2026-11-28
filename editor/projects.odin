@@ -79,11 +79,9 @@ Projects_Row :: struct {
     name:[64]u8,
     missing:bool,       // the folder or its project.mirai is gone
     kai:[64]u8,         // what its workspace is on: a bookmark or the working change
-    linked:bool,        // its Kai workspace is linked to an org repository
-    needs_publish:bool, // the working copy has what shared main lacks
+    sync:ka.Workspace_Sync, // its Kai workspace against its org's shared main
     can_publish:bool,   // this machine has write permission in its linked org
-    behind_main:bool,   // shared main has what the working copy lacks: Update takes it
-    main_here:bool,     // every object of shared main is in the store, so Update can start
+    main_here:bool,     // when behind: every object of shared main is in the store, so Update can start
     opened:[32]u8,      // when an editor last opened it, as the list says it
     bytes:i64,          // project content bytes (excluding .mirai and .git)
     has_size:bool,      // bytes is ready (immediately for Kai projects, off-thread otherwise)
@@ -105,12 +103,27 @@ Projects_Size_Task :: struct {
     thread:^thread.Thread,
 }
 
+// What the screen shows beside its sidebar.
+Projects_View :: enum u8 {
+    Recent,      // the projects opened on this machine
+    All,         // every project discovered on this machine, then the org repositories not pulled
+    Team,        // the Team view in place of the list (kai_launcher.odin)
+    New_Project, // the form of a new project
+}
+
+// The confirmation Remove local copy asks.
+Projects_Removal :: struct {
+    folder:[project.RECENT_PATH]u8,
+    kai:bool,         // it is a Kai workspace, snapshotted before the question
+    unpublished:bool, // no org has all it holds
+}
+
 @(storage)
 Projects :: struct {
     shown:bool,     // the screen covers the editor: always in a launcher
     launcher:bool,  // this editor only chooses a project
-    show_all:bool,  // false: recent projects; true: all projects discovered on this machine
-    team:bool,      // Team in place of the list (kai_launcher.odin)
+    view:Projects_View,
+    back:Projects_View, // the list, Recent or All, that Team and New project go back to
     recent:project.Recent_Projects,
     rows:[PROJECTS_ALL_CAPACITY]Projects_Row, // shown list, read when the screen opens or switches view
     row_count:int,
@@ -122,7 +135,6 @@ Projects :: struct {
     search_length:int,
     scroll:[2]f32,
     refreshed_at:time.Tick, // last click on Refresh, to disable it for PROJECTS_REFRESH_COOLDOWN
-    creating:bool,  // the dialog of a new project
     name:[64]u8,
     name_length:int,
     location:[project.RECENT_PATH]u8,
@@ -146,6 +158,7 @@ Projects :: struct {
     run:^Build_Run,       // the editor build, package refresh and shaders running off the UI thread
     size_task:^Projects_Size_Task, // off-thread folder size scan for non-Kai local projects
     cancelling:bool,      // user asked to cancel; projects_poll cleans up without blocking a frame
+    // What the opening said when it failed (projects_error_clear empties all of it).
     error:[1024]u8,
     error_length:int,
     error_copied:f64,   // ui.Context.time its banner last copied it (error_banner)
@@ -153,9 +166,7 @@ Projects :: struct {
     error_packages_dirty:bool, // its Kai working copy changed packages.mirai or packages/*.mirai
     error_plugin:project.Name, // a plugin from git whose file the failure named, to update and retry
     menu:[project.RECENT_PATH]u8,     // the folder of the row whose right-click menu is open
-    removing:[project.RECENT_PATH]u8, // the folder Remove local copy asks to confirm; empty: none
-    removing_kai:bool,         // it is a Kai workspace, snapshotted before the question
-    removing_unpublished:bool, // no org has all it holds
+    removing:Maybe(Projects_Removal),
     next:bool,          // built: this editor starts it when it ends
     next_launcher:bool, // next starts the standalone launcher (--launcher) instead of a project
     started:subprocess.Process, // the editor started on it, which this process waits for once it closes
@@ -168,7 +179,8 @@ Projects :: struct {
 projects_show :: proc(s:^Session) {
     p:=s.projects
     if p==nil {return}
-    p.shown,p.creating,p.scroll=true,false,0
+    p.shown,p.scroll=true,0
+    if p.view==.New_Project {p.view=p.back}
     if error:=project.recent_read(s.engine_root,&p.recent);error.code!=.None {notify(s,settings_file_error_text(project.recent_file(s.engine_root,context.temp_allocator),error))}
     kai_team_open(s)
     projects_rows_read(s)
@@ -187,7 +199,33 @@ projects_show :: proc(s:^Session) {
 projects_hide :: proc(s:^Session) {
     p:=s.projects
     if p==nil || p.launcher || projects_opening(p) {return}
-    p.shown,p.creating=false,false
+    p.shown=false
+    if p.view==.New_Project {p.view=p.back}
+}
+
+// The list the screen reads: Recent or All, the one Team and New project go back to.
+projects_list :: proc(p:^Projects) -> Projects_View {
+    return p.view==.Recent || p.view==.All?p.view:p.back
+}
+
+// Shows view: the rows are read again when the list changes, and Team opens
+// on its org cards.
+projects_view_set :: proc(s:^Session,view:Projects_View) {
+    p:=s.projects
+    if p==nil || p.view==view {return}
+    list:=projects_list(p)
+    if p.view==.Recent || p.view==.All {p.back=p.view}
+    p.view,p.scroll=view,0
+    if projects_list(p)!=list {projects_rows_read(s)}
+    if view==.Team {
+        kai_team_open(s)
+        if s.kai!=nil && s.kai.team!=nil {s.kai.team.screen=Kai_Team_Cards{}}
+    }
+}
+
+// Forgets what an opening that failed said, and which project it was.
+projects_error_clear :: proc(p:^Projects) {
+    p.error_length,p.failed_opening[0],p.error_packages_dirty,p.error_plugin=0,0,false,{}
 }
 
 // What the screen says of each project and the image of its tile, and how many All projects
@@ -206,6 +244,7 @@ projects_rows_read :: proc(s:^Session) {
     }
     p.selected=0
     p.row_count=0
+    all:=projects_list(p)==.All
     if s.kai!=nil && s.kai.team==nil && s.store.root!="" {kai_team_open(s)}
     region,has_region:=timezone.region_load("local",context.temp_allocator)
     now:=time.now()
@@ -220,13 +259,13 @@ projects_rows_read :: proc(s:^Session) {
         folder:=base.text_get(entry.path[:])
         row:=projects_row_fill(s,folder,entry.opened,i,now,tz,images,level,sides)
         if !row.missing {kept+=1}
-        if p.show_all && row.missing {continue}
+        if all && row.missing {continue}
         p.rows[p.row_count]=row
         p.row_count+=1
     }
     found:=projects_discover(p,s.engine_root,PROJECTS_ALL_CAPACITY-kept)
     p.all_count=kept+len(found)
-    if p.show_all {
+    if all {
         for folder in found {
             p.rows[p.row_count]=projects_row_fill(s,folder,0,-1,now,tz,images,level,sides)
             p.row_count+=1
@@ -318,13 +357,12 @@ projects_row_fill :: proc(s:^Session,folder:string,opened:i64,recent_index:int,n
     base.text_set(row.name[:],name)
     if !row.missing {
         team:^vcs.Team
-        if s.kai!=nil && s.kai.team!=nil && s.kai.team.opened {team=&s.kai.team.team}
-        sync:=ka.project_sync_state(&s.store,team,folder)
-        base.text_set(row.kai[:],sync.kai)
-        row.linked,row.needs_publish,row.can_publish=sync.linked,sync.needs_publish,sync.can_publish
-        row.behind_main,row.main_here=sync.behind_main,sync.main_here
-        if sync.has_size {
-            row.bytes,row.has_size=sync.bytes,true
+        if s.kai!=nil && s.kai.team!=nil && s.kai.team.status!=.Closed {team=&s.kai.team.team}
+        state:=ka.project_sync_state(&s.store,team,folder)
+        base.text_set(row.kai[:],state.kai)
+        row.sync,row.can_publish,row.main_here=state.sync,state.can_publish,state.main_here
+        if bytes,sized:=state.size.?;sized {
+            row.bytes,row.has_size=bytes,true
             base.text_set(row.size[:],base.bytes_text(row.bytes))
         }
     }
@@ -599,7 +637,7 @@ projects_open :: proc(s:^Session,folder:string,steps:[]install.Step={}) -> strin
     }
     if !os.is_file(project.path(absolute,project.PROJECT_FILE,allocator=context.temp_allocator)) {return fmt.tprintf("%s is not a project: it has no %s",absolute,project.PROJECT_FILE)}
     base.text_set(p.opening[:],absolute)
-    p.error_length,p.failed_opening[0],p.error_packages_dirty,p.error_plugin=0,0,false,{}
+    projects_error_clear(p)
     p.cancelling=false
     p.from_git=len(steps)>0 || install.sync_needed(absolute)
     if p.from_git {
@@ -762,12 +800,14 @@ projects_start :: proc(s:^Session) -> bool {
     turn:=gpu_turn_pass(s,&command)
     preferences_save(s)
     // Release the Kai agent's :7350 listener before spawning the project editor so
-    // the new process binds :7350 cleanly on both macOS and Windows.
+    // the new process binds :7350 cleanly on both macOS and Windows; when it
+    // does not start, this editor keeps the team.
     kai_team_close(s)
     started,error:=subprocess.start({command=command[:],stdin=os.stdin,stdout=os.stdout,stderr=os.stderr},inherit=turn)
     if error!=nil {
         log.errorf("%s could not be started: %v",exe,error)
         notify(s,"The editor could not be started on the project")
+        kai_team_open(s)
         return false
     }
     p.started=started
@@ -857,7 +897,7 @@ projects_create :: proc(s:^Session) -> string {
     p:=s.projects
     folder,message:=projects_make(s)
     if message!="" {return message}
-    p.creating=false
+    p.view=p.back
     if p.plugin_count>0 {
         file:=project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator)
         m,error:=project.manifest_read(file)
@@ -917,7 +957,7 @@ projects_make :: proc(s:^Session) -> (folder,message:string) {
 @(private)
 projects_new_start :: proc(s:^Session,template:int) {
     p:=s.projects
-    p.creating=true
+    projects_view_set(s,.New_Project)
     p.name_length=copy(p.name[:],"new_project")
     p.template=0
     p.kai=true
@@ -1024,8 +1064,9 @@ projects_body :: proc(s:^Session,popup:bool) {
             ui.label(ctx,fmt.tprintf("Engine on %s",branch),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0,fade=true)
         }
         ui.spacer(ctx,0,28)
-        new:=ui.button(ctx,ui.id(ctx,"projects_new"),{label="New project",icon=.Plus,variant="toggle" if p.creating else "accent",active=p.creating,width=-1,height=34,disabled=busy || p.template_count==0})
-        if new.clicked && !p.creating {projects_new_start(s,-1)}
+        creating:=p.view==.New_Project
+        new:=ui.button(ctx,ui.id(ctx,"projects_new"),{label="New project",icon=.Plus,variant="toggle" if creating else "accent",active=creating,width=-1,height=34,disabled=busy || p.template_count==0})
+        if new.clicked && !creating {projects_new_start(s,-1)}
         ui.spacer(ctx,0,8)
         if ui.button(ctx,ui.id(ctx,"projects_folder"),{label="Open folder",icon=ui.icon_user(u8(User_Icon.Folder)),variant="field",width=-1,height=34,disabled=busy}).clicked {
             if !platform.dialog_show(s.app.platform,{kind=.Open_Folder,tag=DIALOG_PROJECT_FOLDER}) {notify(s,"A file dialog is already open")}
@@ -1046,7 +1087,7 @@ projects_body :: proc(s:^Session,popup:bool) {
     // Below the bar that drags the window, where no click reaches a control.
     head:=ui.metric(ctx,"bar_height") if !popup && !s.headless else 18
     if ui.box(ctx,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=14,padding={20,head,20,20}}) {
-        if p.creating {projects_new_build(s)} else {projects_content(s,popup)}
+        if p.view==.New_Project {projects_new_build(s)} else {projects_content(s,popup)}
     }
 }
 
@@ -1123,31 +1164,14 @@ projects_content :: proc(s:^Session,popup:bool) {
     count:=p.row_count
     typing:=ctx.edit.id!=0
     open:=false
-    if p.show_all {kai_team_open(s)}
+    if p.view==.All {kai_team_open(s)}
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(32),gap=8,align_y=.Center}) {
-        list:=!p.team
-        if ui.button(ctx,ui.id(ctx,"projects_tab_recent"),{label="Recent",variant="toggle",active=list && !p.show_all,height=30,disabled=busy}).clicked && (p.show_all || !list) {
-            p.show_all,p.team=false,false
-            p.scroll=0
-            projects_rows_read(s)
-        }
+        list:=p.view!=.Team
+        if ui.button(ctx,ui.id(ctx,"projects_tab_recent"),{label="Recent",variant="toggle",active=p.view==.Recent,height=30,disabled=busy}).clicked {projects_view_set(s,.Recent)}
         // A tab's count goes inside it, after its title: the projects here and those of the orgs not pulled.
-        if ui.button(ctx,ui.id(ctx,"projects_tab_all"),{label="All projects",detail=projects_count_text(p.all_count+projects_unpulled_count(s)),variant="toggle",active=list && p.show_all,height=30,disabled=busy}).clicked && (!p.show_all || !list) {
-            p.show_all,p.team=true,false
-            p.scroll=0
-            projects_rows_read(s)
-        }
-        if ui.button(ctx,ui.id(ctx,"projects_team"),{label="Team",icon=ui.icon_user(u8(User_Icon.Users)),variant="toggle",active=p.team,height=30}).clicked {
-            p.team=!p.team
-            p.scroll=0
-            if p.team {
-                kai_team_open(s)
-                if s.kai!=nil && s.kai.team!=nil {
-                    s.kai.team.selected_org={}
-                    s.kai.team.panel_mode=.Overview
-                    s.kai.team.show_web_login=false
-                }
-            }
+        if ui.button(ctx,ui.id(ctx,"projects_tab_all"),{label="All projects",detail=projects_count_text(p.all_count+projects_unpulled_count(s)),variant="toggle",active=p.view==.All,height=30,disabled=busy}).clicked {projects_view_set(s,.All)}
+        if ui.button(ctx,ui.id(ctx,"projects_team"),{label="Team",icon=ui.icon_user(u8(User_Icon.Users)),variant="toggle",active=p.view==.Team,height=30}).clicked {
+            projects_view_set(s,p.view==.Team?p.back:.Team)
         }
         ui.spacer(ctx)
         cooling:=projects_refresh_cooling(p)
@@ -1163,7 +1187,7 @@ projects_content :: proc(s:^Session,popup:bool) {
         if list && ui.button(ctx,ui.id(ctx,"projects_open"),{label="Open",variant="accent",width=72,height=30,center=true,disabled=busy || projects_chosen(p)<0}).clicked {open=true}
         if popup && ui.icon_button(ctx,ui.id(ctx,"projects_close"),.Cross,28).clicked {projects_hide(s)}
     }
-    if p.team {
+    if p.view==.Team {
         projects_team_build(s,projects_content_width(s,popup))
         projects_error_build(s)
         return
@@ -1178,7 +1202,7 @@ projects_content :: proc(s:^Session,popup:bool) {
             row:=&p.rows[i]
             folder:=base.text_get(row.path[:])
             if needle!="" && !strings.contains(strings.to_lower(base.text_get(row.name[:]),context.temp_allocator),needle) && !strings.contains(strings.to_lower(folder,context.temp_allocator),needle) {continue}
-            if p.show_all && !local_head {
+            if p.view==.All && !local_head {
                 local_head=true
                 projects_section_head(ctx,"LOCAL")
             }
@@ -1193,9 +1217,9 @@ projects_content :: proc(s:^Session,popup:bool) {
             projects_recent_save(s)
             projects_rows_read(s)
         }
-        if p.show_all {projects_org_rows(s,busy,needle)}
-        if count==0 && (!p.show_all || projects_unpulled_count(s)==0) {
-            empty:="No projects found on this machine" if p.show_all else "No project was opened on this machine yet"
+        if p.view==.All {projects_org_rows(s,busy,needle)}
+        if count==0 && (p.view!=.All || projects_unpulled_count(s)==0) {
+            empty:="No projects found on this machine" if p.view==.All else "No project was opened on this machine yet"
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(PROJECTS_ROW),align_x=.Center,align_y=.Center}) {
                 ui.label(ctx,empty,ui.metric(ctx,"font"),ui.tone(ctx,"text_muted"))
             }
@@ -1235,7 +1259,7 @@ projects_error_build :: proc(s:^Session) {
     ctx:=s.gui.ctx
     if p.error_length<=0 {return}
     if error_banner(ctx,ui.id(ctx,"projects_error"),p.error[:],&p.error_length,&p.error_copied,dismiss=true) {
-        p.error_length,p.failed_opening[0],p.error_packages_dirty,p.error_plugin=0,0,false,{}
+        projects_error_clear(p)
         return
     }
     failed:=base.text_get(p.failed_opening[:])
@@ -1317,7 +1341,7 @@ projects_row :: proc(s:^Session,index:int,row:^Projects_Row,folder:string,busy,o
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=3}) {
             ui.label(ctx,name,ui.metric(ctx,"font"),row.missing?ui.tone(ctx,"text_muted"):ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,align_y=.Center}) {
-                if row.linked && row.behind_main && !row.missing {
+                if ka.sync_behind(row.sync) && !row.missing {
                     ui.label(ctx,row.main_here?"Update available":"Update on its way",ui.metric(ctx,"font_small"),ui.tone(ctx,"accent"),font=ui.FONT_SEMIBOLD)
                 }
                 ui.label(ctx,projects_path_shown(s.projects,folder),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0,fade=true)
@@ -1337,21 +1361,22 @@ projects_row :: proc(s:^Session,index:int,row:^Projects_Row,folder:string,busy,o
                     ui.icon(ctx,ui.icon_user(u8(User_Icon.Branch)),ui.tone(ctx,"text_muted"),12)
                     ui.label(ctx,on,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
                 }
-                if row.linked {
-                    if row.behind_main {
-                        if row.main_here && ui.button(ctx,ui.id(ctx,"project_update",index),{label="Update",icon=ui.icon_user(u8(User_Icon.Down)),icon_size=12,variant="field",height=24,size=ui.metric(ctx,"font_small"),disabled=busy,tip="Takes main into this copy; local edits and commits stay"}).clicked {
-                            projects_update(s,folder)
-                        }
-                    } else if row.needs_publish && row.can_publish {
+                switch row.sync {
+                case .Unlinked:
+                case .Behind,.Diverged:
+                    if row.main_here && ui.button(ctx,ui.id(ctx,"project_update",index),{label="Update",icon=ui.icon_user(u8(User_Icon.Down)),icon_size=12,variant="field",height=24,size=ui.metric(ctx,"font_small"),disabled=busy,tip="Takes main into this copy; local edits and commits stay"}).clicked {
+                        projects_update(s,folder)
+                    }
+                case .Unpublished,.Ahead:
+                    if row.can_publish {
                         if ui.button(ctx,ui.id(ctx,"project_publish",index),{label="Publish",variant="field",height=24,size=ui.metric(ctx,"font_small"),disabled=busy}).clicked {
                             kai_launcher_publish(s,folder)
                         }
-                    } else if !row.needs_publish {
-                        if ui.box(ctx,{width=ui.FIT,height=ui.fixed(22),gap=4,padding={8,0,8,0},align_y=.Center,fill=ui.tone(ctx,"card"),radius=11}) {
-                            ui.icon(ctx,.Check,ui.tone(ctx,"success"),11)
-                            ui.label(ctx,"Synced",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
-                        }
+                    } else {
+                        // A reader keeps its changes here: nothing it may publish.
+                        projects_badge(ctx,"Local changes",.Edit,"text_muted")
                     }
+                case .Synced: projects_badge(ctx,"Synced",.Check,"success")
                 }
             }
             if row.missing && ui.button(ctx,ui.id(ctx,"project_remove",index),{label="Remove",variant="ghost",height=24,size=ui.metric(ctx,"font_small"),disabled=busy}).clicked {remove=true}
@@ -1366,6 +1391,15 @@ projects_row :: proc(s:^Session,index:int,row:^Projects_Row,folder:string,busy,o
         }
     }
     return
+}
+
+// A pill beside a row's branch that says where its workspace is.
+@(private)
+projects_badge :: proc(ctx:^ui.Context,text:string,icon:ui.Icon,tone:string) {
+    if ui.box(ctx,{width=ui.FIT,height=ui.fixed(22),gap=4,padding={8,0,8,0},align_y=.Center,fill=ui.tone(ctx,"card"),radius=11}) {
+        ui.icon(ctx,icon,ui.tone(ctx,tone),11)
+        ui.label(ctx,text,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
+    }
 }
 
 // A template to start a project from: a row of the list, or a tall card of the new project.
@@ -1458,7 +1492,7 @@ projects_new_build :: proc(s:^Session) {
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(32),gap=10,align_y=.Center}) {
         back:=ui.id(ctx,"new_project_back")
         named_add(g,back)
-        if ui.icon_button(ctx,back,ui.icon_user(u8(User_Icon.Back)),28,"field").clicked {p.creating=false}
+        if ui.icon_button(ctx,back,ui.icon_user(u8(User_Icon.Back)),28,"field").clicked {projects_view_set(s,p.back)}
         ui.label(ctx,"New project",ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
     }
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(108),gap=10}) {
@@ -1486,7 +1520,7 @@ projects_new_build :: proc(s:^Session) {
         projects_new_plugins(s)
     }
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(32),gap=8,align_x=.End,align_y=.Center}) {
-        if ui.button(ctx,ui.id(ctx,"new_project_cancel"),{label="Cancel",variant="field",width=90,height=32,center=true}).clicked {p.creating=false}
+        if ui.button(ctx,ui.id(ctx,"new_project_cancel"),{label="Cancel",variant="field",width=90,height=32,center=true}).clicked {projects_view_set(s,p.back)}
         if ui.button(ctx,ui.id(ctx,"new_project_create"),{label="Create",variant="accent",width=90,height=32,center=true,disabled=busy}).clicked {
             if message:=projects_create(s);message!="" {notify(s,message)}
         }

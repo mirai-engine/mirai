@@ -265,19 +265,37 @@ all_projects_discovers_siblings_and_skips_temporary_copies :: proc(t:^testing.T)
 
     // Recent view shows only what is in recent; its count beside the tabs is that of All projects,
     // without the recent projects that are gone.
-    p.show_all=false
+    p.view=.Recent
     projects_rows_read(&s)
     testing.expect_value(t,p.row_count,2)
     testing.expect_value(t,base.text_get(p.rows[0].name[:]),"Zeta")
     testing.expect_value(t,p.all_count,4)
 
     // All projects keeps recent first, then adds siblings & engine demo alphabetically without duplicates.
-    p.show_all=true
+    p.view=.All
     projects_rows_read(&s)
     testing.expect_value(t,p.row_count,4)
     testing.expect_value(t,p.all_count,4)
     testing.expect_value(t,base.text_get(p.rows[0].name[:]),"Zeta")
     testing.expect_value(t,base.text_get(p.rows[1].name[:]),"Alpha")
+
+    // Team and New project keep the list they go back to; the rows are read
+    // again only when the list changes.
+    projects_view_set(&s,.Team)
+    testing.expect(t,p.view==.Team && projects_list(p)==.All && p.row_count==4,"Team keeps the All list")
+    projects_view_set(&s,p.back)
+    testing.expect_value(t,p.view,Projects_View.All)
+    projects_view_set(&s,.New_Project)
+    testing.expect(t,p.view==.New_Project && projects_list(p)==.All && p.row_count==4,"New project keeps the All list")
+    projects_view_set(&s,.Recent)
+    testing.expect(t,p.view==.Recent && p.row_count==2,"Recent reads its rows again")
+    projects_view_set(&s,.All)
+    // A failed opening's error, project and package state go as one.
+    p.error_length=copy(p.error[:],"the build failed")
+    base.text_set(p.failed_opening[:],p_zeta)
+    p.error_packages_dirty=true
+    projects_error_clear(p)
+    testing.expect(t,p.error_length==0 && base.text_get(p.failed_opening[:])=="" && !p.error_packages_dirty,"the error clears whole")
     testing.expect_value(t,base.text_get(p.rows[2].name[:]),"Beta")
     testing.expect_value(t,base.text_get(p.rows[3].name[:]),"Demo")
 }
@@ -370,7 +388,7 @@ projects_list_refreshes_and_publishes_linked_workspaces :: proc(t:^testing.T) {
     defer projects_cancel(&s)
     defer kai_team_close(&s)
     kai_team_open(&s)
-    if !testing.expect(t,s.kai.team!=nil && s.kai.team.opened) {return}
+    if !testing.expect(t,s.kai.team!=nil && s.kai.team.status!=.Closed) {return}
     team:=&s.kai.team.team
     testing.expect_value(t,vcs.team_profile_set(team,"ana","mac"),vcs.Error.None)
     org,oe:=vcs.team_org_create(team,"studio")
@@ -384,11 +402,11 @@ projects_list_refreshes_and_publishes_linked_workspaces :: proc(t:^testing.T) {
 
     projects_rows_read(&s)
     if !testing.expect_value(t,p.row_count,1) {return}
-    testing.expect(t,p.rows[0].linked && p.rows[0].needs_publish && p.rows[0].can_publish,"linked unpublished workspace offers Publish")
+    testing.expect(t,p.rows[0].sync==.Unpublished && p.rows[0].can_publish,"linked unpublished workspace offers Publish")
     testing.expectf(t,p.rows[0].bytes>0 && base.text_get(p.rows[0].size[:])!="","local Kai project reports its size: %d (%q)",p.rows[0].bytes,base.text_get(p.rows[0].size[:]))
 
     kai_launcher_publish(&s,proj)
-    testing.expect(t,p.rows[0].linked && !p.rows[0].needs_publish,"after direct publish the workspace shows Synced")
+    testing.expect(t,p.rows[0].sync==.Synced,"after direct publish the workspace shows Synced")
 
     // Edit and snapshot the workspace externally; explicit Refresh picks up Publish again.
     testing.expect(t,os.write_entire_file(project.path(proj,"notes.txt",allocator=context.temp_allocator),transmute([]u8)string("updated\n"))==nil)
@@ -398,7 +416,7 @@ projects_list_refreshes_and_publishes_linked_workspaces :: proc(t:^testing.T) {
     testing.expect_value(t,snap_err,vcs.Error.None)
 
     kai_team_refresh(&s)
-    testing.expect(t,p.rows[0].linked && p.rows[0].needs_publish && p.rows[0].can_publish,"Refresh reflects new unpublished changes")
+    testing.expect(t,p.rows[0].sync==.Ahead && p.rows[0].can_publish,"Refresh reflects new unpublished changes")
 
     // A non-Kai local project is scanned off-thread so projects_rows_read never blocks the UI thread.
     plain:=project.path(root,"plain",allocator=context.temp_allocator)
@@ -445,7 +463,7 @@ the_launcher_team_view_scrolls_with_the_wheel :: proc(t:^testing.T) {
     s.kai=&k
     defer kai_team_close(s)
     kai_team_open(s)
-    if !testing.expect(t,s.kai.team!=nil && s.kai.team.opened) {return}
+    if !testing.expect(t,s.kai.team!=nil && s.kai.team.status!=.Closed) {return}
     team:=&s.kai.team.team
     testing.expect_value(t,vcs.team_profile_set(team,"ana","mac"),vcs.Error.None)
     for i in 0..<10 {
@@ -459,7 +477,7 @@ the_launcher_team_view_scrolls_with_the_wheel :: proc(t:^testing.T) {
     defer ui.context_destroy(&ctx)
     f.gui.ctx,f.gui.begun=&ctx,true
     p:=new(Projects);defer free(p)
-    p.shown,p.team=true,true
+    p.shown,p.view=true,.Team
     s.projects=p
     s.headless=true
     defer s.projects=nil
@@ -494,8 +512,7 @@ the_launcher_team_view_scrolls_with_the_wheel :: proc(t:^testing.T) {
 
     // Long launcher errors wrap onto multiple lines of a read-only field instead of truncating,
     // and can be copied and dismissed.
-    p.team=false
-    p.show_all=true
+    p.view=.All
     long_err:="C:/Users/espar/source/repos/mirai/Dreamscape/plugins/unreal/editor/scene/lights.odin(218:16): Undeclared name in render package when building editor library for project"
     p.error_length=copy(p.error[:],long_err)
     for _ in 0..<2 {
@@ -549,7 +566,7 @@ removing_a_local_copy_snapshots_it_and_refuses_unsafe_folders :: proc(t:^testing
     defer projects_cancel(&s)
     defer kai_team_close(&s)
     kai_team_open(&s)
-    if !testing.expect(t,s.kai.team!=nil && s.kai.team.opened) {return}
+    if !testing.expect(t,s.kai.team!=nil && s.kai.team.status!=.Closed) {return}
     team:=&s.kai.team.team
     testing.expect_value(t,vcs.team_profile_set(team,"ana","mac"),vcs.Error.None)
     org,oe:=vcs.team_org_create(team,"studio")
@@ -558,7 +575,7 @@ removing_a_local_copy_snapshots_it_and_refuses_unsafe_folders :: proc(t:^testing
     if !testing.expect_value(t,ka.project_create(&kp,proj,&s.store),vcs.Error.None) {return}
     _,je:=ka.project_join(&kp,team,org,false)
     testing.expect_value(t,je,vcs.Error.None)
-    _,pe:=ka.publish(&kp,team,ka.BOOKMARK_DEFAULT,"first",nil)
+    _,_,pe:=ka.publish(&kp,team,ka.BOOKMARK_DEFAULT,"first",nil)
     testing.expectf(t,pe==.None,"publish: %s",team.why)
     ka.project_close(&kp)
     testing.expect(t,os.write_entire_file(join(proj,"notes.txt"),transmute([]u8)string("not published\n"))==nil)
@@ -579,7 +596,8 @@ removing_a_local_copy_snapshots_it_and_refuses_unsafe_folders :: proc(t:^testing
     testing.expect_value(t,projects_remove_refusal(&s,proj),"")
 
     projects_remove_ask(&s,proj)
-    testing.expect(t,project.path_same(base.text_get(p.removing[:]),proj) && p.removing_kai && p.removing_unpublished,"the question names the folder and warns of what no org has")
+    removal,asked:=p.removing.?
+    testing.expect(t,asked && project.path_same(base.text_get(removal.folder[:]),proj) && removal.kai && removal.unpublished,"the question names the folder and warns of what no org has")
     _,working,_,_,ok:=vcs.workspace_working_info(&s.store,proj)
     if !testing.expect(t,ok,"the workspace is read") {return}
     held :: proc(s:^store.Store,working:vcs.Revision) -> string {
@@ -599,7 +617,7 @@ removing_a_local_copy_snapshots_it_and_refuses_unsafe_folders :: proc(t:^testing
     testing.expect_value(t,projects_remove_local(&s,proj),"")
     testing.expect(t,!os.exists(proj),"the folder is gone")
     testing.expect_value(t,project.recent_count(&p.recent),0)
-    testing.expect_value(t,base.text_get(p.removing[:]),"")
+    testing.expect(t,p.removing==nil,"the question went")
     testing.expect_value(t,held(&s.store,working),"not published\n")
     testing.expect_value(t,projects_unpulled_count(&s),1)
     testing.expect(t,strings.contains(projects_remove_refusal(&s,proj),"not a folder"),"a folder removed is not removed twice")
@@ -624,7 +642,7 @@ the_launcher_offers_update_recovery_and_a_row_menu :: proc(t:^testing.T) {
     s.kai=&k
     defer kai_team_close(s)
     kai_team_open(s)
-    if !testing.expect(t,s.kai.team!=nil && s.kai.team.opened) {return}
+    if !testing.expect(t,s.kai.team!=nil && s.kai.team.status!=.Closed) {return}
     team:=&s.kai.team.team
     testing.expect_value(t,vcs.team_profile_set(team,"ana","mac"),vcs.Error.None)
     org,_:=vcs.team_org_create(team,"studio")
@@ -638,7 +656,7 @@ the_launcher_offers_update_recovery_and_a_row_menu :: proc(t:^testing.T) {
     if !testing.expect_value(t,ka.project_create(&a,first,&s.store),vcs.Error.None) {return}
     defer ka.project_close(&a)
     link,_:=ka.project_join(&a,team,org,false)
-    _,pe:=ka.publish(&a,team,ka.BOOKMARK_DEFAULT,"first",nil)
+    _,_,pe:=ka.publish(&a,team,ka.BOOKMARK_DEFAULT,"first",nil)
     testing.expectf(t,pe==.None,"publish: %s",team.why)
     b:ka.Project
     if !testing.expect_value(t,ka.project_clone(&b,team,second,&s.store,org,link.repo),vcs.Error.None) {return}
@@ -646,7 +664,7 @@ the_launcher_offers_update_recovery_and_a_row_menu :: proc(t:^testing.T) {
     ka.project_close(&b)
     testing.expectf(t,ce==.None,"checkout: %s",team.why)
     testing.expect(t,os.write_entire_file(project.path(first,"notes.txt",allocator=context.temp_allocator),transmute([]u8)string("from main\n"))==nil)
-    _,pe=ka.publish(&a,team,ka.BOOKMARK_DEFAULT,"second",nil)
+    _,_,pe=ka.publish(&a,team,ka.BOOKMARK_DEFAULT,"second",nil)
     testing.expectf(t,pe==.None,"publish: %s",team.why)
 
     ctx:ui.Context
@@ -662,7 +680,7 @@ the_launcher_offers_update_recovery_and_a_row_menu :: proc(t:^testing.T) {
     project.recent_add(&p.recent,second,100)
     projects_rows_read(s)
     if !testing.expect_value(t,p.row_count,1) {return}
-    testing.expect(t,p.rows[0].behind_main && p.rows[0].main_here,"the row is behind main, which is here")
+    testing.expect(t,p.rows[0].sync==.Behind && p.rows[0].main_here,"the row is behind main, which is here")
     size:=[2]f32{f32(PROJECTS_WINDOW.x),f32(PROJECTS_WINDOW.y)}
     frame :: proc(t:^testing.T,ctx:^ui.Context,s:^Session,input:ui.Input) {
         ui.frame_begin(ctx,input)
@@ -677,7 +695,7 @@ the_launcher_offers_update_recovery_and_a_row_menu :: proc(t:^testing.T) {
     frame(t,&ctx,s,{size=size,pointer=ui.rect_center(update),released={.Left}})
     text,read_error:=os.read_entire_file(project.path(second,"notes.txt",allocator=context.temp_allocator),context.temp_allocator)
     testing.expect(t,read_error==nil && string(text)=="from main\n","Update wrote main's files")
-    testing.expect(t,!p.rows[0].behind_main && !p.rows[0].needs_publish,"the row is synced after Update")
+    testing.expect(t,p.rows[0].sync==.Synced,"the row is synced after Update")
 
     // An opening that failed with changed pins or a git plugin error offers the matching retries.
     p.error_length=copy(p.error[:],"The build failed: packages")
@@ -722,9 +740,10 @@ the_launcher_offers_update_recovery_and_a_row_menu :: proc(t:^testing.T) {
     frame(t,&ctx,s,{size=size,pointer=ui.rect_center(row),released={.Right}})
     testing.expect(t,ui.popup_is_open(&ctx,projects_menu_id(s)),"the right click opens the row menu")
     projects_remove_ask(s,second)
-    testing.expect(t,project.path_same(base.text_get(p.removing[:]),second) && p.removing_kai && !p.removing_unpublished,"a synced workspace asks without the warning")
+    second_removal,second_asked:=p.removing.?
+    testing.expect(t,second_asked && project.path_same(base.text_get(second_removal.folder[:]),second) && second_removal.kai && !second_removal.unpublished,"a synced workspace asks without the warning")
     for _ in 0..<2 {frame(t,&ctx,s,{size=size,pointer_absent=true})}
     _,has_confirm:=ui.widget_rect(&ctx,shell_id(s.gui,"projects_remove_confirm"))
     testing.expect(t,has_confirm,"the confirmation shows")
-    p.removing[0]=0
+    p.removing=nil
 }

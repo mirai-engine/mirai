@@ -129,16 +129,22 @@ project_clone :: proc(p:^Project,t:^vcs.Team,root:string,s:^store.Store,org:vcs.
         }
         project_create(p,root,s,types,allocator) or_return
     }
-    return project_link(p,t,org,repo)
+    // The workspace stays open, its lock this caller's, only when it holds.
+    if e:=project_link(p,t,org,repo);e!=.None {
+        project_close(p)
+        return e
+    }
+    return .None
 }
 
 // Writes the files of the repository's default bookmark in the workspace, as
-// a new working change on it; a workspace that has the project's files
-// already keeps them. Missing, with t.why, while nobody published a bookmark
-// or its objects are not all here yet. bookmark: the one written, in the temp
-// allocator.
+// a new working change on it; a workspace whose working copy has files
+// already (a pull that wrote them, or the project it was made of) keeps them.
+// Missing, with t.why, while nobody published a bookmark or its objects are
+// not all here yet. bookmark: the one written, in the temp allocator.
 clone_checkout :: proc(p:^Project,t:^vcs.Team) -> (bookmark:string,error:vcs.Error) {
-    if os.is_file(project.path(p.workspace.root,project.PROJECT_FILE,allocator=context.temp_allocator)) {return "",.None}
+    empty:=vcs.tree_empty(p.workspace.repo.s) or_return
+    if p.workspace.state.tree!=empty {return "",.None}
     list:=make([dynamic]Shared_Bookmark,context.temp_allocator)
     bookmarks_shared(p,t,&list) or_return
     i:=bookmark_default(list[:])
@@ -162,12 +168,13 @@ clone_checkout :: proc(p:^Project,t:^vcs.Team) -> (bookmark:string,error:vcs.Err
 // the whole org: the working change closes first when it changed a file or
 // has a description (closing describes it), and the bookmark moves to what it
 // closed, or to the working copy's parent when there was nothing to close.
-// A change with a file in conflict is refused.
-publish :: proc(p:^Project,t:^vcs.Team,name:string,closing:string,changed:^[dynamic]string) -> (revision:vcs.Revision,error:vcs.Error) {
+// A change with a file in conflict is refused. ddc: what of the builds the
+// project pins it shared in the org's derived data (project_ddc_publish).
+publish :: proc(p:^Project,t:^vcs.Team,name:string,closing:string,changed:^[dynamic]string) -> (revision:vcs.Revision,ddc:Ddc_Published,error:vcs.Error) {
     project_of(p,t) or_return
     if !vcs.bookmark_name_valid(name) {
         t.why=fmt.tprintf("%q is no bookmark name: letters, digits, - _ . and / of at most %d bytes",name,vcs.BOOKMARK_NAME_MAX)
-        return {},.Invalid_Argument
+        return {},{},.Invalid_Argument
     }
     w:=&p.workspace
     snapshot(w) or_return
@@ -183,7 +190,7 @@ publish :: proc(p:^Project,t:^vcs.Team,name:string,closing:string,changed:^[dyna
     } else {
         if len(c.parents)==0 {
             t.why="the project has no change to publish yet: change a file first"
-            return {},.Invalid_Argument
+            return {},{},.Invalid_Argument
         }
         revision=c.parents[0]
     }
@@ -191,12 +198,25 @@ publish :: proc(p:^Project,t:^vcs.Team,name:string,closing:string,changed:^[dyna
     if published,e:=vcs.change_get(w.repo.s,revision,context.temp_allocator);e==.None {
         if totals,te:=vcs.tree_totals(w.repo.s,published.tree);te==.None && totals.conflicts>0 {
             t.why=fmt.tprintf("%d files of the change are in conflict: resolve them in the Kai tab, then publish",totals.conflicts)
-            return {},.Invalid_Argument
+            return {},{},.Invalid_Argument
         }
     }
     bookmark_move(p,t,name,revision) or_return
-    project_ddc_publish(p,t)
-    return revision,.None
+    ddc=project_ddc_publish(p,t)
+    return revision,ddc,.None
+}
+
+// What a publish shared of the builds of the packages the project pins.
+Ddc_Published :: struct {
+    published:int, // keys whose records it added to the org's derived data
+    missing:int,   // pinned packages with no whole build in this store: the machines that pull the project build them themselves
+}
+
+// What a publish says of the builds it could not share, in the temp
+// allocator: "" when every pinned package had one.
+ddc_missing_text :: proc(ddc:Ddc_Published) -> string {
+    if ddc.missing==0 {return ""}
+    return fmt.tprintf("%d pinned %s no whole build in this store to share in the org's derived data: the machines that pull the project build %s themselves. Refresh the project's packages here, then publish again.",ddc.missing,ddc.missing==1?"package has":"packages have",ddc.missing==1?"it":"them")
 }
 
 // Publishes in the org's derived data the builds of the packages the project
@@ -205,8 +225,9 @@ publish :: proc(p:^Project,t:^vcs.Team,name:string,closing:string,changed:^[dyna
 // asset.REF_IMPORTS_FAST), so a machine that pulls the project takes the
 // exact builds it was published with. A key the org has a record of this
 // output for is left as it is; the org's nodes hear of the rest from the
-// agent. published: the keys whose records were added.
-project_ddc_publish :: proc(p:^Project,t:^vcs.Team) -> (published:int) {
+// agent. A pinned package whose build by manifest is not here whole is
+// missing.
+project_ddc_publish :: proc(p:^Project,t:^vcs.Team) -> (ddc:Ddc_Published) {
     l,e:=project_of(p,t)
     if e!=.None {return}
     s,se:=vcs.team_store(t,l.org)
@@ -216,19 +237,28 @@ project_ddc_publish :: proc(p:^Project,t:^vcs.Team) -> (published:int) {
     if le!=.None {return}
     for &entry in list.packages {
         x,pe:=asset.package_load(s,root,&entry,context.temp_allocator)
-        if pe!=.None {continue}
+        if pe!=.None {
+            ddc.missing+=1
+            continue
+        }
         select_digits,key_digits:[64]u8
         select:=store.hex(asset.build_select(entry.manifest,&x),&select_digits)
         address,re:=store.ref_get(s,asset.REF_BUILDS,select)
-        if re!=.None {continue}
+        if re!=.None {
+            ddc.missing+=1
+            continue
+        }
         b,be:=asset.build_get(s,address,context.temp_allocator)
-        if be!=.None || b.package_id!=entry.id || !asset.build_whole(s,&b) {continue}
-        if _,_,ok:=ddc_share(t,l.org,s,asset.REF_BUILDS,select,address,true);ok {published+=1}
+        if be!=.None || b.package_id!=entry.id || !asset.build_whole(s,&b) {
+            ddc.missing+=1
+            continue
+        }
+        if _,_,ok:=ddc_share(t,l.org,s,asset.REF_BUILDS,select,address,true);ok {ddc.published+=1}
         if b.key=={} {continue}
         namespace:=b.final?asset.REF_IMPORTS:asset.REF_IMPORTS_FAST
         key:=store.hex(b.key,&key_digits)
         if held,he:=store.ref_get(s,namespace,key);he!=.None || held!=address {continue}
-        if _,_,ok:=ddc_share(t,l.org,s,namespace,key,address,true);ok {published+=1}
+        if _,_,ok:=ddc_share(t,l.org,s,namespace,key,address,true);ok {ddc.published+=1}
     }
     return
 }
@@ -310,20 +340,26 @@ role_text :: proc(role:vcs.Role) -> string {
 
 Member_View :: struct {
     key:vcs.Key,
-    name,device,role:string,
+    name,device:string,
+    role:vcs.Role,
     you:bool,
+}
+
+// Where a repository's shared main is, as this machine holds it.
+Repo_Main_State :: enum u8 {
+    Unpublished, // nobody published main
+    Coming,      // published: not every object it reaches is here yet
+    Here,        // every object main reaches is here
 }
 
 Repo_View :: struct {
     id:vcs.Repo_Id,
     name:string,
     public:bool,
-    main:string,    // the change id main names, "" while its change is not here
-    published:bool, // someone published main
-    here:bool,      // every object main reaches is here
-    linked:bool,    // a workspace of this machine is one of it
-    bytes:i64,      // total file bytes of main's tree when its root folder meta is here
-    has_size:bool,
+    main_state:Repo_Main_State,
+    main:string,      // the change id main names, "" while its change is not here
+    linked:bool,      // a workspace of this machine is one of it
+    size:Maybe(i64),  // total file bytes of main's tree, once its root folder meta is here
 }
 
 Org_View :: struct {
@@ -350,7 +386,7 @@ org_view :: proc(t:^vcs.Team,id:vcs.Org_Id,v:^Org_View,allocator:=context.temp_a
     v.members,v.repos=members,repos
     for m,i in o.members {
         x:=&v.members[i]
-        x.key,x.role,x.you=m.key,role_text(m.role),m.key==t.identity.key
+        x.key,x.role,x.you=m.key,m.role,m.key==t.identity.key
         x.name=clone(m.name,allocator) or_return
         x.device=clone(m.device,allocator) or_return
     }
@@ -362,17 +398,14 @@ org_view :: proc(t:^vcs.Team,id:vcs.Org_Id,v:^Org_View,allocator:=context.temp_a
         if refs,_,e:=vcs.repo_refs_head(s,id,r.id,context.temp_allocator);e==.None {
             for b in refs.bookmarks {
                 if b.name!=BOOKMARK_DEFAULT {continue}
-                x.published=true
+                x.main_state=.Coming
                 c,ce:=vcs.change_get(s,b.target,context.temp_allocator)
-                if ce==.None {
-                    x.main=change_text(c.id,allocator)
-                    if totals,te:=vcs.tree_totals(s,c.tree);te==.None {
-                        x.bytes,x.has_size=i64(totals.size),true
-                    }
-                }
+                if ce!=.None {continue}
+                x.main=change_text(c.id,allocator)
+                if totals,te:=vcs.tree_totals(s,c.tree);te==.None {x.size=i64(totals.size)}
                 missing:=make([dynamic]store.Hash,context.temp_allocator)
                 vcs.closure_walk(s,{b.target},nil,&missing)
-                x.here=ce==.None && len(missing)==0
+                if len(missing)==0 {x.main_state=.Here}
             }
         }
         for l in links {x.linked||=l.org==id && l.repo==r.id}
@@ -380,17 +413,30 @@ org_view :: proc(t:^vcs.Team,id:vcs.Org_Id,v:^Org_View,allocator:=context.temp_a
     return .None
 }
 
+// Where a workspace's working copy is against its repository's shared main.
+Workspace_Sync :: enum u8 {
+    Unlinked,    // in no org of this machine
+    Unpublished, // nobody published main
+    Synced,      // the working copy is main
+    Ahead,       // it has what main lacks: a publish shares it
+    Behind,      // main has what it lacks: update_from_main takes it
+    Diverged,    // both: an update merges main, then a publish shares the rest
+}
+
+// Whether the working copy has what main lacks.
+sync_ahead :: proc(sync:Workspace_Sync) -> bool {return sync==.Unpublished || sync==.Ahead || sync==.Diverged}
+
+// Whether main has what the working copy lacks.
+sync_behind :: proc(sync:Workspace_Sync) -> bool {return sync==.Behind || sync==.Diverged}
+
 // What a project list row shows of a local Kai workspace's org link and
 // publish state, read without taking the workspace lock or hashing files.
 Project_Sync_State :: struct {
-    kai:string,
-    linked:bool,
-    needs_publish:bool, // the working copy has what main lacks, or nobody published main
-    can_publish:bool,
-    behind_main:bool,   // main has what the working copy lacks: update_from_main takes it
-    main_here:bool,     // every object main reaches is here, so an update can start
-    bytes:i64,
-    has_size:bool,
+    kai:string,         // what the workspace is on: a bookmark or the working change
+    sync:Workspace_Sync,
+    can_publish:bool,   // this machine writes in the linked org
+    main_here:bool,     // when behind: every object main reaches is here, so an update can start
+    size:Maybe(i64),    // total file bytes of the working copy
 }
 
 // Changes a list of projects walks from a working copy or main to tell which
@@ -405,17 +451,16 @@ project_sync_state :: proc(s:^store.Store,t:^vcs.Team,root:string,allocator:=con
     state.kai=bookmark!=""?strings.clone(bookmark,allocator):change_text(change_id,allocator)
     c,ce:=vcs.change_get(s,working,context.temp_allocator)
     if ce==.None {
-        if totals,te:=vcs.tree_totals(s,c.tree);te==.None {
-            state.bytes,state.has_size=i64(totals.size),true
-        }
+        if totals,te:=vcs.tree_totals(s,c.tree);te==.None {state.size=i64(totals.size)}
     }
     if t==nil {return}
     l,linked:=vcs.team_link_of(t,repo)
     if !linked {return}
-    state.linked=true
     if o,_,oe:=vcs.team_org(t,l.org);oe==.None {
         if role,member:=vcs.org_role(&o,t.identity.key);member && role>=.Writer {state.can_publish=true}
     }
+    // A working change that does not read is published by nobody this machine can tell.
+    state.sync=.Unpublished
     if ce!=.None {return}
     main_target:vcs.Revision
     has_main:=false
@@ -430,18 +475,17 @@ project_sync_state :: proc(s:^store.Store,t:^vcs.Team,root:string,allocator:=con
             }
         }
     }
-    if !has_main {
-        state.needs_publish=true
-        return
-    }
+    if !has_main {return}
     ours:=working_ours(s,working,&c)
-    state.behind_main=!reaches(s,ours,main_target)
-    if !state.behind_main {
+    ahead:=false
+    if reaches(s,ours,main_target) {
         // What holds main and is not main is ahead of it.
-        for o in ours {state.needs_publish||=o!=main_target}
+        for o in ours {ahead||=o!=main_target}
+        state.sync=ahead?.Ahead:.Synced
         return
     }
-    for o in ours {state.needs_publish||=!reaches(s,{main_target},o)}
+    for o in ours {ahead||=!reaches(s,{main_target},o)}
+    state.sync=ahead?.Diverged:.Behind
     missing:=make([dynamic]store.Hash,context.temp_allocator)
     vcs.closure_walk(org_s,{main_target},nil,&missing)
     state.main_here=len(missing)==0
@@ -577,24 +621,26 @@ project_set_aside :: proc(s:^store.Store,t:^vcs.Team,root:string,types:^asset.Ty
     project_close(p)
     if se!=.None {return aside,se}
     state:=project_sync_state(s,t,root)
-    aside.linked=state.linked
-    aside.unpublished=!state.linked || state.needs_publish
+    aside.linked=state.sync!=.Unlinked
+    aside.unpublished=state.sync==.Unlinked || sync_ahead(state.sync)
     return aside,.None
 }
 
 // Opens the workspace at root, snapshots and publishes to main, then closes it:
-// used from the Launcher so a project can be published without opening the 3D editor.
-project_publish_folder :: proc(s:^store.Store,t:^vcs.Team,root:string,types:^asset.Types=nil,allocator:=context.temp_allocator) -> (change:string,error:vcs.Error) {
+// used from the Launcher so a project can be published without opening the 3D
+// editor. ddc: publish's.
+project_publish_folder :: proc(s:^store.Store,t:^vcs.Team,root:string,types:^asset.Types=nil,allocator:=context.temp_allocator) -> (change:string,ddc:Ddc_Published,error:vcs.Error) {
     p:=new(Project,context.temp_allocator)
-    if p==nil {return "",.Out_Of_Memory}
+    if p==nil {return "",{},.Out_Of_Memory}
     if e:=project_open(p,root,s,types);e!=.None {
         if e==.Locked {t.why="another editor holds this project: publish from that editor"}
-        return "",e
+        return "",{},e
     }
     defer project_close(p)
-    revision:=publish(p,t,BOOKMARK_DEFAULT,"",nil) or_return
+    revision:vcs.Revision
+    revision,ddc=publish(p,t,BOOKMARK_DEFAULT,"",nil) or_return
     c:=vcs.change_get(s,revision,context.temp_allocator) or_return
-    return change_text(c.id,allocator),.None
+    return change_text(c.id,allocator),ddc,.None
 }
 
 @(private)

@@ -335,11 +335,8 @@ api_kai_detail :: proc(s:^Session,call:^api.Call,revision:vcs.Revision,path:stri
     out.rows=make([]Api_Kai_Detail_Row,len(d.rows),a)
     for row,i in d.rows {
         x:=&out.rows[i]
-        x^={old=int(row.old),new=int(row.new),skipped=int(row.skipped),text=row.text,entity=row.key,name=row.name}
-        if row.mark!=0 {
-            m:=[1]u8{row.mark}
-            x.mark=strings.clone(string(m[:]),a)
-        }
+        marks:=ka.DETAIL_MARKS
+        x^={mark=marks[row.kind],old=int(row.old),new=int(row.new),skipped=int(row.skipped),text=row.text,entity=row.key,name=row.name}
     }
     return true
 }
@@ -417,6 +414,16 @@ api_kai_resolve :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_kai_bookmarks :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Kai_Bookmarks_Params)
+    // One verb per call: set, move or remove, or none to list.
+    verbs:=int(p.set!="")+int(p.move!="")+int(p.remove!="")
+    if verbs>1 {
+        api.call_fail(call,api.INVALID_PARAMS,"set, move and remove are given together: give one per call")
+        return
+    }
+    if p.change!="" && p.set=="" && p.move=="" {
+        api.call_fail(call,api.INVALID_PARAMS,"change goes with set or move")
+        return
+    }
     w:=api_kai_workspace(s,call)
     if w==nil {return}
     if p.set!="" {

@@ -2,6 +2,7 @@ package editor
 
 import "core:fmt"
 import "core:strings"
+import "core:sync"
 import ka "mirai:cook/kai"
 import "mirai:editor/api"
 import vcs "mirai:kai"
@@ -80,6 +81,7 @@ Api_Kai_Published :: struct {
     change:string,
     bookmark:string,
     secrets:[]string `mirai:"label=Files named like secrets that a public repository now shows: remove them and publish again"`,
+    missing_builds:int `mirai:"optional,label=Pinned packages with no whole build in this store to share in the org's derived data: the machines that pull build them"`,
 }
 Api_Kai_Clone_Params :: struct {
     org:string `mirai:"optional,label=The org, by its name or a prefix of its id"`,
@@ -191,12 +193,12 @@ api_kai_orgs_fill :: proc(s:^Session,call:^api.Call,t:^vcs.Team) {
         o.members=make([]Api_Kai_Member,len(v.members),call.allocator)
         for m,i in v.members {
             key:=m.key
-            o.members[i]={ka.hex(key[:4],call.allocator),m.name,m.device,m.role,m.you}
+            o.members[i]={ka.hex(key[:4],call.allocator),m.name,m.device,ka.role_text(m.role),m.you}
         }
         o.repositories=make([]Api_Kai_Repository,len(v.repos),call.allocator)
         for x,i in v.repos {
             id:=x.id
-            o.repositories[i]={ka.hex(id[:],call.allocator),x.name,x.public,x.main,x.bytes,x.here,x.linked}
+            o.repositories[i]={ka.hex(id[:],call.allocator),x.name,x.public,x.main,x.size.? or_else 0,x.main_state==.Here,x.linked}
         }
         append(&orgs,o)
     }
@@ -304,9 +306,6 @@ api_kai_invite :: proc(s:^Session,call:^api.Call) {
     if t==nil {return}
     org,ok:=api_kai_org_find(s,call,t,p.org)
     if !ok {return}
-    k:=s.kai.team
-    asked:=k.invite_asked
-    k.invite_asked=false
     role:=vcs.Role.Writer
     if p.role!="" {
         known:bool
@@ -315,53 +314,59 @@ api_kai_invite :: proc(s:^Session,call:^api.Call) {
             return
         }
     }
-    if message:=kai_agent_start(s);message!="" {
-        api.call_fail(call,api.SERVER_ERROR,message)
+    text,addresses,message,e:=kai_invite_make(s,org,role,p.mine,p.at,call.allocator)
+    if message!="" {
+        api.call_fail(call,e==.Invalid_Argument?api.INVALID_PARAMS:api.SERVER_ERROR,message)
         return
     }
-    addresses:=make([dynamic]string,call.allocator)
-    at:=strings.trim_space(p.at)
+    r:=api.call_result(call,Api_Kai_Invite)
+    r.invite,r.addresses=text,addresses
+}
+
+// Makes a one-time invite to org for role and offers it in the Team view:
+// what kai.invite and Make invite give. at: where a machine on another
+// network reaches this one, "" for its LAN's addresses (or the org's server).
+// message is why it failed, e what failed.
+kai_invite_make :: proc(s:^Session,org:vcs.Org_Id,role:vcs.Role,mine:bool,at:string,allocator:=context.temp_allocator) -> (text:string,addresses:[]string,message:string,e:vcs.Error) {
+    t,why:=kai_team_of(s)
+    if t==nil {return "",nil,why,.Missing}
+    k:=s.kai.team
+    if message=kai_agent_start(s);message!="" {return "",nil,message,.Unreachable}
+    list:=make([dynamic]string,allocator)
+    public:=strings.trim_space(at)
     reach:vcs.Reach
     via_server:=false
-    text:string
-    e:vcs.Error
-    if at!="" {
-        append(&addresses,strings.clone(at,call.allocator))
-        append(&addresses,..vcs.agent_addresses(&k.agent,call.allocator))
-        text,e=vcs.team_invite(t,org,role,p.mine?t.name:"",addresses[:],call.allocator)
+    if public!="" {
+        append(&list,strings.clone(public,allocator))
+        append(&list,..vcs.agent_addresses(&k.agent,allocator))
+        text,e=vcs.team_invite(t,org,role,mine?t.name:"",list[:],allocator)
     } else {
         _,srv_addr,has_server:=vcs.team_org_server(t,org)
         if !has_server {
             // Asked as the agent starts, a direct invite waits for the router's address.
             reach=vcs.agent_reach_wait(&k.agent,KAI_REACH_WAIT)
         }
-        append(&addresses,..vcs.agent_addresses(&k.agent,call.allocator))
-        text,via_server,e=vcs.agent_invite(&k.agent,org,role,p.mine?t.name:"",addresses[:],call.allocator)
-        if e!=.None && t.why=="" {t.why=k.agent.team.why}
+        append(&list,..vcs.agent_addresses(&k.agent,allocator))
+        text,via_server,e=vcs.agent_invite(&k.agent,org,role,mine?t.name:"",list[:],allocator,&t.why)
         if via_server {
-            clear(&addresses)
-            append(&addresses,strings.clone(srv_addr,call.allocator))
+            clear(&list)
+            append(&list,strings.clone(srv_addr,allocator))
         } else if has_server && e==.None {
             reach,_=vcs.agent_reach(&k.agent,context.temp_allocator)
         }
     }
-    if e!=.None {
-        api_kai_why(call,t,e)
-        return
-    }
+    if e!=.None {return "",nil,t.why!=""?t.why:vcs.error_text(e),e}
     k.invite_length=copy(k.invite[:],text)
-    k.invite_org,k.invite_local,k.invite_via_server,k.invite_copied=org,!via_server && at=="" && reach!=.Online,via_server,false
-    k.invite_role,k.invite_mine=role,p.mine
+    k.invite_org,k.invite_local,k.invite_via_server,k.invite_copied=org,!via_server && public=="" && reach!=.Online,via_server,false
+    k.invite_role,k.invite_mine=role,mine
     k.invite_seq+=1
     role_title:=role==.Admin?"Admin":role==.Reader?"Reader":"Writer"
-    mine_note:=p.mine?" (your machine)":""
+    mine_note:=mine?" (your machine)":""
     #assert(vcs.INVITE_HOURS==72)
     tail:="valid 3 days — works even while Mirai is closed." if k.invite_via_server else ("local network only — add a public host:port above to invite over the internet." if k.invite_local else "valid 3 days while Mirai is open.")
     meta:=fmt.tprintf("%s invite%s · #%d · %s",role_title,mine_note,k.invite_seq,tail)
     k.invite_meta_length=copy(k.invite_meta[:],meta)
-    if asked && kai_invite_copy(s) {notify(s,fmt.tprintf("%s invite%s copied to clipboard",role_title,mine_note))}
-    r:=api.call_result(call,Api_Kai_Invite)
-    r.invite,r.addresses=text,addresses[:]
+    return text,list[:],"",.None
 }
 
 @(private)
@@ -387,20 +392,22 @@ api_kai_join :: proc(s:^Session,call:^api.Call) {
     x:=&k.tasks[.Join]
     r:=api.call_result(call,Api_Kai_Joined)
     r.stage,r.why=api_kai_task_state(x,call)
-    if x.stage==.Done {
+    if x.state==.Done {
         o,_,_:=vcs.team_org(t,x.org)
         r.org=strings.clone(org_hex(x.org),call.allocator)
         r.name=strings.clone(o.name,call.allocator)
     }
 }
 
-// A task's stage and why, as its methods say them.
+// A task's stage and why, as its methods say them: one whose thread ended
+// is waiting until the frame takes it back.
 @(private)
 api_kai_task_state :: proc(x:^Kai_Task,call:^api.Call) -> (stage,why:string) {
-    STAGES :: [Kai_Clone_Stage]string{.None="none",.Waiting="waiting",.Done="done",.Failed="failed"}
+    STAGES :: [Kai_Task_State]string{.Idle="none",.Running="waiting",.Ended="waiting",.Done="done",.Failed="failed"}
     stages:=STAGES
-    if x.stage==.Failed {why=strings.clone(string(x.why[:x.why_length]),call.allocator)}
-    return stages[x.stage],why
+    state:=sync.atomic_load(&x.state)
+    if state==.Failed {why=strings.clone(string(x.why[:x.why_length]),call.allocator)}
+    return stages[state],why
 }
 
 @(private)
@@ -454,7 +461,7 @@ api_kai_publish :: proc(s:^Session,call:^api.Call) {
         }
     }
     changed:=make([dynamic]string,context.temp_allocator)
-    revision,e:=ka.publish(&st.project,t,bookmark,strings.trim_space(p.description),&changed)
+    revision,ddc,e:=ka.publish(&st.project,t,bookmark,strings.trim_space(p.description),&changed)
     kai_wrote(s,changed[:])
     if e!=.None {
         kai_team_wrote(s)
@@ -467,6 +474,8 @@ api_kai_publish :: proc(s:^Session,call:^api.Call) {
     r:=api.call_result(call,Api_Kai_Published)
     r.change=api_kai_text(&st.project.workspace,revision,call)
     r.bookmark=strings.clone(bookmark,call.allocator)
+    r.missing_builds=ddc.missing
+    if missing:=ka.ddc_missing_text(ddc);missing!="" {notify(s,fmt.tprintf("Kai: %s",missing))}
     l,_:=vcs.team_link_of(t,st.project.workspace.repo.id)
     warned:=false
     if o,_,oe:=vcs.team_org(t,l.org);oe==.None {
@@ -489,6 +498,14 @@ api_kai_clone :: proc(s:^Session,call:^api.Call) {
     t:=api_kai_team(s,call)
     if t==nil {return}
     k:=s.kai.team
+    if p.cancel && (p.org!="" || p.repository!="" || p.folder!="") {
+        api.call_fail(call,api.INVALID_PARAMS,"cancel stops the pull that runs: give it alone, or org and repository to start one")
+        return
+    }
+    if p.folder!="" && p.org=="" && p.repository=="" {
+        api.call_fail(call,api.INVALID_PARAMS,"folder goes with org and repository")
+        return
+    }
     if p.cancel {
         kai_clone_cancel(s)
     } else if p.org!="" || p.repository!="" {
@@ -512,9 +529,9 @@ api_kai_clone :: proc(s:^Session,call:^api.Call) {
     }
     r:=api.call_result(call,Api_Kai_Clone)
     c:=&k.clone
-    STAGES :: [Kai_Clone_Stage]string{.None="none",.Waiting="waiting",.Done="done",.Failed="failed"}
+    STAGES :: [Kai_Clone_State]string{.Idle="none",.Pulling="waiting",.Done="done",.Failed="failed"}
     stages:=STAGES
-    r.stage=stages[c.stage]
+    r.stage=stages[c.state]
     r.why=strings.clone(string(c.why[:c.why_length]),call.allocator)
     r.folder=strings.clone(string(c.folder[:c.folder_length]),call.allocator)
     r.chunks,r.bytes=kai_clone_progress(k)
@@ -526,8 +543,8 @@ api_kai_peers :: proc(s:^Session,call:^api.Call) {
     k:=s.kai.team
     kai_team_read(s)
     r:=api.call_result(call,Api_Kai_Peers)
-    r.running=k.running
-    if k.running {r.port=vcs.agent_port(&k.agent)}
+    r.running=k.status==.Running
+    if r.running {r.port=vcs.agent_port(&k.agent)}
     r.addresses=make([]string,len(k.view.addresses),call.allocator)
     for a,i in k.view.addresses {r.addresses[i]=strings.clone(a,call.allocator)}
     r.peers=make([]Api_Kai_Peer,len(k.view.peers),call.allocator)

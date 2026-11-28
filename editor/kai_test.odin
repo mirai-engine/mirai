@@ -481,12 +481,12 @@ editor_kai_publishes_to_main_and_a_launcher_pulls_it :: proc(t:^testing.T) {
     testing.expect_value(t,projects_unpulled_count(b),1)
     // Before pulling, the agent fetches main's Change and root Folder meta so the Launcher knows its size.
     sized:=time.tick_now()
-    for !b.kai.team.view.orgs[0].repos[0].has_size {
+    for b.kai.team.view.orgs[0].repos[0].size==nil {
         if !testing.expect(t,kai_tick(a,b,sized),"unpulled repository learns main's size") {return}
         kai_team_read(b)
     }
     remote_repo:=b.kai.team.view.orgs[0].repos[0]
-    testing.expectf(t,remote_repo.has_size && remote_repo.bytes>0 && !remote_repo.here && remote_repo.main!="","unpulled repo reports size before Pull: %v",remote_repo)
+    testing.expectf(t,(remote_repo.size.? or_else 0)>0 && remote_repo.main_state==.Coming && remote_repo.main!="","unpulled repo reports size before Pull: %v",remote_repo)
     // An unrelated existing folder with the same name in the pull location does not collide: kai_clone_folder picks <name>-2.
     pull_parent:=base.test_folder(t,"kai-team-pull-collision")
     if pull_parent!="" {
@@ -550,7 +550,7 @@ editor_kai_team_view_reads_only_when_the_agent_moves :: proc(t:^testing.T) {
     o:=Api_Kai_Org_Params{new="studio"}
     kai_call(s,api_kai_org,&o,Api_Kai_Orgs)
     team:=s.kai.team
-    testing.expect(t,team.running && len(team.view.orgs)==1,"the agent runs once the machine is in an org")
+    testing.expect(t,team.status==.Running && len(team.view.orgs)==1,"the agent runs once the machine is in an org")
     started:=time.tick_now()
     for team.generation!=vcs.agent_generation(&team.agent) {
         kai_poll(s)
@@ -597,7 +597,8 @@ editor_kai_team_view_reads_only_when_the_agent_moves :: proc(t:^testing.T) {
     launcher_frame=launcher_frame_run(&ctx,s,{size={900,900},pointer_absent=true})
     testing.expect(t,!launcher_frame.overflow && ctx.stats.layout_errors==0,"launcher Team org detail lays out")
     _,has_back:=ui.widget_rect(&ctx,ui.id(&ctx,"kai_org_back"))
-    testing.expect(t,has_back && team.selected_org==team.view.orgs[0].id,"clicking org card opens org detail with Back")
+    shown,on_org:=team.screen.(Kai_Team_Org)
+    testing.expect(t,has_back && on_org && shown.org==team.view.orgs[0].id,"clicking org card opens org detail with Back")
 
     other_idx:=-1
     for m,k in team.view.lines[0].members {if !m.you {other_idx=k;break}}
@@ -618,7 +619,7 @@ editor_kai_team_view_reads_only_when_the_agent_moves :: proc(t:^testing.T) {
     launcher_frame_run(&ctx,s,{size={900,900},pointer=rm_at,released={.Left}})
     method,params=kai_panel_asked(s)
     testing.expectf(t,method=="kai.org" && strings.contains(params,"\"remove\":true") && strings.contains(params,"abcd"),"Remove asks kai.org remove: %s %s",method,params)
-    team.selected_org={}
+    team.screen=Kai_Team_Cards{}
     testing.expect_value(t,vcs.team_member_remove(&team.team,team.view.orgs[0].id,other_key),vcs.Error.None)
     kai_team_wrote(s)
 
@@ -646,13 +647,16 @@ editor_kai_team_view_reads_only_when_the_agent_moves :: proc(t:^testing.T) {
     testing.expect(t,team.fields.mine && team.fields.role==.Admin,"checking 'For another machine of mine' defaults role to Admin")
     team.fields.mine,team.fields.role=false,.Writer
     kai_panel_still(t,s)
+    // Make invite makes it here, asking no method: what kai.invite makes for
+    // another caller never goes to the clipboard in its place.
+    api_state(s).commands.asked_count=0
     if !kai_panel_click(t,s,make_invite) {return}
-    method,params=kai_panel_asked(s)
-    testing.expectf(t,method=="kai.invite" && team.invite_asked,"Make invite asks kai.invite: %s %s",method,params)
+    testing.expect_value(t,api_state(s).commands.asked_count,0)
+    testing.expect(t,team.invite_length>0 && team.invite_seq==1 && strings.contains(string(team.invite_meta[:team.invite_meta_length]),"Writer invite · #1"),"Make invite makes the invite")
     x:=Api_Kai_Invite_Params{org="studio",role="writer"}
     call,_=kai_call(s,api_kai_invite,&x,Api_Kai_Invite)
     if !kai_ok(t,call,"invite") {return}
-    testing.expect(t,!team.invite_asked && team.invite_local && team.invite_length>0 && !team.invite_copied && team.invite_seq==1 && strings.contains(string(team.invite_meta[:team.invite_meta_length]),"Writer invite · #1"),"a loopback agent's invite reaches no other network and records its meta")
+    testing.expect(t,team.invite_local && team.invite_length>0 && !team.invite_copied && team.invite_seq==2 && strings.contains(string(team.invite_meta[:team.invite_meta_length]),"Writer invite · #2"),"a loopback agent's invite reaches no other network and records its meta")
     kai_panel_still(t,s);kai_panel_still(t,s)
     field,has_field:=ui.widget_rect(&ctx,invite_text)
     copied,has_copy:=ui.widget_rect(&ctx,invite_copy)
@@ -751,10 +755,67 @@ editor_kai_team_methods_refuse_hostile_params :: proc(t:^testing.T) {
         call,_=kai_call(s,api_kai_publish,&x,Api_Kai_Published)
         testing.expectf(t,call.failed,"%v",x)
     }
-    clones:=[]Api_Kai_Clone_Params{{org="studio",repository="nothing"},{org="nowhere",repository="game"}}
+    clones:=[]Api_Kai_Clone_Params{{org="studio",repository="nothing"},{org="nowhere",repository="game"},{cancel=true,org="studio",repository="game"},{cancel=true,folder="elsewhere"},{folder="elsewhere"}}
     for &x in clones {
         call,_=kai_call(s,api_kai_clone,&x,Api_Kai_Clone)
         testing.expectf(t,call.failed,"%v",x)
+    }
+    // One verb of kai.bookmarks per call.
+    bookmarks:=[]Api_Kai_Bookmarks_Params{{set="a",remove="b"},{set="a",move="b"},{move="a",remove="b"},{change="@"}}
+    for &x in bookmarks {
+        call,_=kai_call(s,api_kai_bookmarks,&x,Api_Kai_Bookmarks)
+        testing.expectf(t,call.failed && strings.contains(call.error.message,"set") || call.failed && strings.contains(call.error.message,"change"),"%v: %s",x,call.error.message)
+    }
+}
+
+// A pull holds its folder's workspace, and its lock, only while it pulls:
+// cancelled, failed or ended, another editor opens the folder at once. A
+// team whose state did not open opens when an action asks again, never at a
+// frame.
+@(test)
+editor_kai_pull_and_team_leave_nothing_held :: proc(t:^testing.T) {
+    k:=new(Kai_Fixture);defer free(k)
+    if !kai_fixture_init(t,k,"kai-pull-lock") {return}
+    defer kai_fixture_destroy(k)
+    s:=&k.s
+    s.kai.mesh_loopback=true
+    // The device key cannot be read: a folder stands where its file goes.
+    identity:=strings.concatenate({s.store.root,"/",vcs.IDENTITY_FILE},context.temp_allocator)
+    os.remove(identity)
+    testing.expect(t,os.make_directory(identity)==nil,"a folder blocks the key")
+    kai_team_open(s)
+    if !testing.expect(t,s.kai.team!=nil && s.kai.team.status==.Closed && s.kai.team.why_length>0,"the team does not open and says why") {return}
+    testing.expect(t,os.remove(identity)==nil,"the folder goes")
+    kai_team_open(s)
+    testing.expect_value(t,s.kai.team.status,Kai_Team_Status.Closed)
+    team,message:=kai_team_of(s)
+    testing.expectf(t,team!=nil && s.kai.team.status!=.Closed,"an action opens it again: %s",message)
+
+    p:=Api_Kai_Profile_Params{name="ana",device="mac"}
+    kai_call(s,api_kai_profile,&p,Api_Kai_Orgs)
+    o:=Api_Kai_Org_Params{new="studio"}
+    kai_call(s,api_kai_org,&o,Api_Kai_Orgs)
+    ids:=vcs.team_org_ids(&s.kai.team.team)
+    if !testing.expect_value(t,len(ids),1) {return}
+    folder:=base.test_folder(t,"kai-pull-lock-folder")
+    repo:=vcs.Repo_Id{0=7}
+    Case :: struct {name:string,end:proc(s:^Session)}
+    cases:=[]Case{
+        {"cancelled",proc(s:^Session) {kai_clone_cancel(s)}},
+        {"failed",proc(s:^Session) {kai_clone_end(&s.kai.team.clone,.Failed)}},
+        {"ended with the team",proc(s:^Session) {kai_team_close(s)}},
+    }
+    for c in cases {
+        kai_team_open(s)
+        if !testing.expectf(t,kai_clone_start(s,ids[0],repo,"game",folder)=="","%s: the pull starts",c.name) {return}
+        testing.expectf(t,s.kai.team.clone.state==.Pulling,"%s: nobody published it, so it waits",c.name)
+        held:ka.Project
+        testing.expectf(t,ka.project_open(&held,folder,&s.store)==.Locked,"%s: the pull holds the workspace",c.name)
+        c.end(s)
+        other:ka.Project
+        e:=ka.project_open(&other,folder,&s.store)
+        testing.expectf(t,e==.None,"%s: the workspace opens once the pull is over: %v",c.name,e)
+        if e==.None {ka.project_close(&other)}
     }
 }
 
@@ -819,9 +880,9 @@ editor_kai_is_optional_until_enabled :: proc(t:^testing.T) {
     testing.expectf(t,call.failed && strings.contains(call.error.message,"already"),"%s",call.error.message)
     kai_panel_still(t,s)
 
-    // The next editor on the project opens it.
+    // The next editor on the project opens it: a close lets it be tried again.
     kai_close(s)
-    s.kai.tried=false
+    testing.expect_value(t,s.kai.status,Kai_Workspace_Status.Untried)
     kai_open(s)
     testing.expect(t,kai_workspace(s)!=nil && s.kai.error==.None,"the workspace opens with the project")
     first:=vcs.repo_working(&kai_workspace(s).repo)
@@ -834,7 +895,6 @@ editor_kai_is_optional_until_enabled :: proc(t:^testing.T) {
     if !testing.expect_value(t,oe,store.Error.None) {return}
     s.store=other
     defer {kai_close(s);store.close(&s.store);s.store=mine}
-    s.kai.tried=false
     kai_open(s)
     testing.expect_value(t,s.kai.error,vcs.Error.Other_Store)
     call,_=kai_call(s,api_kai_init,&Api_Kai_Init_Params{},Api_Kai_Init)

@@ -114,6 +114,83 @@ a_snapshot_rehashes_only_changed_files :: proc(t:^testing.T) {
     testing.expect_value(t,report.files,4)
 }
 
+// A report that is not complete makes the next snapshot scan the folder,
+// whatever complete report comes after it; the snapshot starts over.
+@(test)
+an_unreported_change_keeps_the_next_snapshot_a_scan :: proc(t:^testing.T) {
+    f,ok:=fixture(t,"kai-touch");if !ok {return}
+    defer store.close(&f.s)
+    root:=folder_of(&f,"work")
+    write(t,root,"a.txt","alpha",time.Hour)
+    write(t,root,"b.txt","beta",time.Hour)
+    w:Workspace
+    testing.expect_value(t,workspace_create(&w,root,&f.s,identity_make()),Error.None)
+    defer workspace_close(&w)
+    testing.expect_value(t,w.touch,Touch_Mode.Clean)
+    Step :: struct {paths:[]string,complete:bool,touch:Touch_Mode}
+    steps:=[]Step{
+        {{"a.txt"},true,.Paths},
+        {nil,false,.Full_Scan},
+        {{"a.txt"},true,.Full_Scan},
+    }
+    for step,k in steps {
+        testing.expect_value(t,workspace_touched(&w,step.paths,step.complete),Error.None)
+        testing.expectf(t,w.touch==step.touch,"step %d: %v, not %v",k,w.touch,step.touch)
+    }
+    write(t,root,"b.txt","beta, unreported",30*time.Minute)
+    report,e:=workspace_snapshot(&w)
+    testing.expect_value(t,e,Error.None)
+    testing.expect_value(t,report.files,2)
+    testing.expect_value(t,report.hashed,1)
+    testing.expect(t,w.touch==.Clean && len(w.touched)==0,"the snapshot starts over")
+    testing.expect_value(t,workspace_touched(&w,{"a.txt"}),Error.None)
+    testing.expect_value(t,w.touch,Touch_Mode.Paths)
+}
+
+// A checkout cut midway leaves the conflicts of the state in memory as the
+// state on disk holds them: a conflict a path held stays until it is saved.
+@(test)
+a_cut_checkout_keeps_the_conflicts_as_on_disk :: proc(t:^testing.T) {
+    f,ok:=fixture(t,"kai-cut-conflicts");if !ok {return}
+    defer store.close(&f.s)
+    root:=folder_of(&f,"work")
+    write(t,root,"a.txt","a1",time.Hour)
+    write(t,root,"b.txt","b1",time.Hour)
+    identity:=identity_make()
+    w:Workspace
+    testing.expect_value(t,workspace_create(&w,root,&f.s,identity),Error.None)
+    defer workspace_close(&w)
+    one:=repo_working(&w.repo)
+    _,ne:=workspace_new(&w,{one})
+    testing.expect_value(t,ne,Error.None)
+    write(t,root,"a.txt","a2",50*time.Minute)
+    write(t,root,"b.txt","b2",50*time.Minute)
+    report,se:=workspace_snapshot(&w)
+    testing.expect_value(t,se,Error.None)
+    // a.txt holds a conflict as a checkout wrote it: its file is what was written.
+    files:=make([dynamic]File,context.temp_allocator)
+    testing.expect_value(t,tree_files(&f.s,tree_of(t,&f.s,report.revision),&files,context.temp_allocator),Error.None)
+    written:store.Hash
+    for file in files {if file.path=="a.txt" {written=file.address}}
+    path,_:=strings.clone("a.txt",w.allocator)
+    append(&w.state.conflicts,Materialized{path=path,conflict={0=1},written=written})
+    testing.expect_value(t,state_save(&w,&w.state),Error.None)
+    _,se=workspace_snapshot(&w)
+    testing.expect_value(t,se,Error.None)
+    if !testing.expect_value(t,len(w.state.conflicts),1) {return}
+
+    w.cut_after=1
+    testing.expect_value(t,workspace_switch(&w,one),Error.Io)
+    bytes,re:=os.read_entire_file(strings.concatenate({root,"/",STATE_FOLDER,"/workspace"},context.temp_allocator),context.temp_allocator)
+    testing.expect(t,re==nil,"the state reads")
+    saved:Workspace_State
+    saved.conflicts=make([dynamic]Materialized,context.temp_allocator)
+    testing.expect_value(t,state_decode(bytes,&saved,context.temp_allocator),Error.None)
+    testing.expect(t,len(saved.conflicts)==1 && saved.conflicts[0].path=="a.txt","the state on disk keeps the conflict")
+    testing.expect(t,len(w.state.conflicts)==1 && w.state.conflicts[0].path=="a.txt","and the state in memory too")
+    testing.expect(t,w.state.tree==saved.tree && w.state.target==saved.target,"the trees in memory are the saved ones")
+}
+
 expect_refused :: proc(t:^testing.T,bytes:[]u8,decode:proc(bytes:[]u8) -> Error,name:string,versioned:=false,loc:=#caller_location) {
     testing.expect_value(t,decode(bytes),Error.None,loc=loc)
     for n in 0..<len(bytes) {

@@ -47,7 +47,8 @@ Hub :: struct {
     sessions:map[[32]u8]Session,
     clients:[CONNECTIONS_MAX]Client,
     derivations:int,   // Argon2id derivations running
-    stopping:bool,
+    ended:sync.Cond,   // a client's slot was freed
+    stopping:bool,     // atomic, set once under lock
     accept:^thread.Thread,
     allocator:runtime.Allocator,
 }
@@ -66,7 +67,7 @@ Hub_Options :: struct {
     http:string,    // host:port of the web view
     public:string,  // host:port where members reach the agent
     name:string,    // the server's device name
-    max_orgs:int,   // orgs self-registered by admins; 0 defaults to MAX_ORGS_DEFAULT, <0 disables
+    max_orgs:Maybe(int), // orgs admins may self-register: nil for MAX_ORGS_DEFAULT, 0 disables (as Agent_Options)
 }
 
 // Opens the server's stores and starts its agent and its web view.
@@ -88,7 +89,7 @@ hub_start :: proc(h:^Hub,options:Hub_Options,allocator:=context.allocator) -> (w
     h.team.tenants=&h.tenants
     name:=options.name!=""?options.name:"server"
     if h.team.name!=name {kai.team_profile_set(&h.team,name,name)}
-    max_orgs:=options.max_orgs==0?MAX_ORGS_DEFAULT:max(options.max_orgs,0)
+    max_orgs:=max(options.max_orgs.? or_else MAX_ORGS_DEFAULT,0)
     agent_options:=kai.Agent_Options{host=options.host,port=options.port,node=true,public=options.public,max_orgs=max_orgs,web_login=account_set,web_data=h}
     if ae:=kai.agent_start(&h.agent,&h.team,agent_options,allocator);ae!=.None {
         hub_free(h)
@@ -135,16 +136,14 @@ hub_stop :: proc(h:^Hub) {
     if s,e:=net.dial_tcp_from_address_and_port(wake,h.port);e==nil {net.close(s)}
     thread.join(h.accept)
     thread.destroy(h.accept)
+    sync.mutex_lock(&h.lock)
     for {
-        sync.mutex_lock(&h.lock)
-        open:=0
-        for c in h.clients {
-            if c.open {open+=1}
-        }
-        sync.mutex_unlock(&h.lock)
-        if open==0 {break}
-        time.sleep(10*time.Millisecond)
+        open:=false
+        for c in h.clients {open||=c.open}
+        if !open {break}
+        sync.cond_wait(&h.ended,&h.lock)
     }
+    sync.mutex_unlock(&h.lock)
     net.close(h.listener)
     kai.agent_stop(&h.agent)
     hub_free(h)
@@ -174,7 +173,7 @@ hub_accept_run :: proc(h:^Hub) {
         socket,_,e:=net.accept_tcp(h.listener)
         slot:=-1
         sync.mutex_lock(&h.lock)
-        stopping:=h.stopping
+        stopping:=sync.atomic_load(&h.stopping)
         if !stopping && e==nil {
             for c,k in h.clients {
                 if c.open {continue}
@@ -218,6 +217,7 @@ hub_client_end :: proc(h:^Hub,slot:int) {
     sync.mutex_lock(&h.lock)
     socket:=h.clients[slot].socket
     h.clients[slot]={}
+    sync.cond_broadcast(&h.ended)
     sync.mutex_unlock(&h.lock)
     net.close(socket)
 }
@@ -237,12 +237,12 @@ hub_connection :: proc(h:^Hub,socket:net.TCP_Socket) {
         continued:=false
         for {
             p=request_parse(input[:have])
-            if p.status!=0 {break}
+            if p.state==.Ready || p.state==.Refused {break}
             if have==len(input) {
-                p.status=431
+                parse_overflow(&p)
                 break
             }
-            if p.head_done && p.request.expect_continue && !continued {
+            if p.state==.Body && p.request.expect_continue && !continued {
                 continued=true
                 if !send_all(socket,transmute([]u8)string("HTTP/1.1 100 Continue\r\n\r\n")) {return}
             }
@@ -260,7 +260,7 @@ hub_connection :: proc(h:^Hub,socket:net.TCP_Socket) {
             have+=n
         }
         out:=Out{body=make([dynamic]u8,context.temp_allocator),headers=make([dynamic]u8,context.temp_allocator)}
-        if p.status!=200 {
+        if p.state!=.Ready {
             out.status=p.status
             respond(socket,&out,false)
             return
@@ -331,7 +331,7 @@ serve_command :: proc(program:string,args:[]string,store_root:="") -> int {
                 fmt.eprintfln("Usage: %s %s",program,SERVE_USAGE)
                 return 2
             }
-            options.max_orgs=parsed==0?-1:parsed
+            options.max_orgs=parsed
         case:
             fmt.eprintfln("Usage: %s %s",program,SERVE_USAGE)
             return 2
@@ -347,9 +347,10 @@ serve_command :: proc(program:string,args:[]string,store_root:="") -> int {
     }
     defer hub_stop(&h)
     for token in joins {
-        org,e:=kai.agent_join(&h.agent,token)
+        join_why:string
+        org,e:=kai.agent_join(&h.agent,token,&join_why)
         if e!=.None {
-            fmt.eprintfln("%s kai serve: the invite does not join: %s",program,h.agent.team.why)
+            fmt.eprintfln("%s kai serve: the invite does not join: %s",program,join_why)
             return 1
         }
         hex:[32]u8

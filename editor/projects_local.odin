@@ -82,8 +82,7 @@ projects_cache_clean :: proc(s:^Session,folder:string) -> string {
 // The opening that failed has its errors cleared and starts again.
 @(private)
 projects_retry :: proc(s:^Session,folder:string,steps:[]install.Step={}) {
-    p:=s.projects
-    p.error_length,p.failed_opening[0],p.error_packages_dirty,p.error_plugin=0,0,false,{}
+    projects_error_clear(s.projects)
     if message:=projects_open(s,folder,steps);message!="" {notify(s,message)}
 }
 
@@ -147,16 +146,17 @@ projects_remove_ask :: proc(s:^Session,folder:string) {
         notify(s,refusal)
         return
     }
-    p.removing_kai,p.removing_unpublished=false,false
+    removal:Projects_Removal
     if ka.project_exists(absolute) {
         aside,why,ok:=projects_set_aside(s,absolute)
         if !ok {
             notify(s,why)
             return
         }
-        p.removing_kai,p.removing_unpublished=true,aside.unpublished
+        removal.kai,removal.unpublished=true,aside.unpublished
     }
-    base.text_set(p.removing[:],absolute)
+    base.text_set(removal.folder[:],absolute)
+    p.removing=removal
 }
 
 // Snapshots the Kai workspace at folder (ka.project_set_aside): why not when ok is false.
@@ -199,8 +199,8 @@ projects_remove_local :: proc(s:^Session,folder:string) -> string {
         if project.path_same(base.text_get(p.recent.projects[i].path[:]),absolute) {project.recent_remove(&p.recent,i)}
     }
     projects_recent_save(s)
-    if project.path_same(base.text_get(p.removing[:]),absolute) {p.removing[0]=0}
-    if project.path_same(base.text_get(p.failed_opening[:]),absolute) {p.error_length,p.failed_opening[0],p.error_packages_dirty,p.error_plugin=0,0,false,{}}
+    if removal,ok:=&p.removing.?;ok && project.path_same(base.text_get(removal.folder[:]),absolute) {p.removing=nil}
+    if project.path_same(base.text_get(p.failed_opening[:]),absolute) {projects_error_clear(p)}
     if s.kai!=nil && s.kai.team!=nil {kai_team_read(s)}
     projects_rows_read(s)
     return ""
@@ -241,7 +241,7 @@ projects_row_menu :: proc(s:^Session) {
         if !row.missing && ui.menu_item(ctx,ui.id(ctx,"open"),"Open",{icon=.Play,disabled=busy}) {
             if message:=projects_open(s,folder);message!="" {notify(s,message)}
         }
-        if row.behind_main && row.main_here && ui.menu_item(ctx,ui.id(ctx,"update"),"Update from main",{icon=ui.icon_user(u8(User_Icon.Down)),disabled=busy}) {projects_update(s,folder)}
+        if ka.sync_behind(row.sync) && row.main_here && ui.menu_item(ctx,ui.id(ctx,"update"),"Update from main",{icon=ui.icon_user(u8(User_Icon.Down)),disabled=busy}) {projects_update(s,folder)}
         if !row.missing && ui.menu_item(ctx,ui.id(ctx,"clean"),"Clean build cache",{icon=.Refresh,disabled=busy}) {
             if message:=projects_cache_clean(s,folder);message!="" {notify(s,message)} else {notify(s,fmt.tprintf("The build cache of %s was removed: its next opening builds it again",base.text_get(row.name[:])))}
         }
@@ -262,10 +262,11 @@ projects_remove_build :: proc(s:^Session) {
     p:=s.projects
     g:=s.gui
     ctx:=g.ctx
-    folder:=base.text_get(p.removing[:])
-    if folder=="" {return}
+    removal,asked:=p.removing.?
+    if !asked {return}
+    folder:=base.text_get(removal.folder[:])
     closed:=false
-    defer if closed {p.removing[0]=0}
+    defer if closed {p.removing=nil}
     if ui.modal(ctx,shell_id(g,"projects_remove"),{width=440,padding=16,gap=12,close=&closed}) {
         name:=filepath.base(folder)
         ui.label(ctx,fmt.tprintf("Remove the local copy of %s?",name),ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
@@ -275,9 +276,9 @@ projects_remove_build :: proc(s:^Session) {
         }
         prose:=ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
         what:="The folder moves to the Trash and leaves this list."
-        if p.removing_kai {what="Kai snapshotted its working copy into this machine's store. The folder moves to the Trash and leaves this list."}
+        if removal.kai {what="Kai snapshotted its working copy into this machine's store. The folder moves to the Trash and leaves this list."}
         ui.text(ctx,what,prose)
-        if p.removing_unpublished {
+        if removal.unpublished {
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={8,6,8,6},fill=ui.tone(ctx,"danger_surface"),stroke=ui.tone(ctx,"danger_stroke"),stroke_width=1,radius=6}) {
                 ui.text(ctx,"Unpublished changes or commits exist. They have been snapshotted to your local store, but deleting this folder removes the working copy from disk. Publish first or confirm removal.",ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_body")))
             }
@@ -286,7 +287,7 @@ projects_remove_build :: proc(s:^Session) {
             if ui.button(ctx,shell_id(g,"projects_remove_cancel"),{label="Cancel",variant="field",width=90,height=ui.metric(ctx,"control"),center=true}).clicked {closed=true}
             if ui.button(ctx,shell_id(g,"projects_remove_confirm"),{label="Remove local copy",variant="danger",height=ui.metric(ctx,"control"),center=true}).clicked {
                 there:=strings.clone(folder,context.temp_allocator)
-                p.removing[0]=0
+                p.removing=nil
                 if message:=projects_remove_local(s,there);message!="" {notify(s,message)} else {notify(s,fmt.tprintf("%s moved to the Trash",filepath.base(there)))}
             }
         }

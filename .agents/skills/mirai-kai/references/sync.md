@@ -31,7 +31,9 @@ a sync; `mirai:net` gives only the
   that long ends its connection. A dial gives up after `DIAL_SECONDS` or when the agent stops; the
   handshake, after `HANDSHAKE_SECONDS`. Its keys live on the stack of `conn_dial` and
   `conn_accept` and are zeroed before they return; a connection keeps only its session ciphers
-  and the invite proof. A failed handshake leaves the accepted socket to its caller.
+  and the invite proof. A failed handshake leaves the accepted socket to its caller. A
+  `Handshake` takes each message once, in its order and on its side (`Handshake_Phase`): a
+  repeated, early or wrong-side step fails it for good, and only a `Done` one gives the session.
 - The three handshake messages have fixed sizes, so neither end reads a length it did not
   authenticate. Every frame after them is a u32 little-endian length and one ChaChaPoly-sealed
   message of at most `FRAME_MAX`, its `Msg` kind first. A length past its bound, a frame that does
@@ -51,6 +53,10 @@ a sync; `mirai:net` gives only the
 - Of two connections between the same keys, both ends keep the one whose dialing end has the
   lower key (`peer_unique`); the choice is made under the agent's lock, so two members that dial
   each other at once (both learned the other's address) keep one.
+- A peer is `Connecting` (an accepted one runs its handshake there), `Hello` once kept to its
+  key, `Live` only once its server and puller run, and `Ended` (`Peer_Phase`, changed under its
+  lock and broadcast on its cond, which a join waits on). A peer that proved an invite may send
+  one `Join`; a second ends its connection, as does a `Welcome` to an end that did not dial.
 
 ## The agent
 
@@ -58,9 +64,13 @@ a sync; `mirai:net` gives only the
   an org), `mirai kai agent`, or `mirai kai serve`. `mirai kai join`, `pull` and `web-login` start
   one for their run that listens nowhere. The editor reads its peers, pulls and events under its
   lock, never over a socket, and reads them again only when `agent_generation` moved.
+- Every thread of the agent reads its team, so nothing writes the team's `why`: `agent_join`,
+  `agent_server_attach`, `agent_invite` and `agent_web_login` say why they failed in their `why`
+  parameter, in the caller's temp allocator, and `agent_start` in the `why` of the team given.
 - It listens on TCP, says on the LAN where (`agent_beacon_run`), and dials every member of its
   orgs it knows an address of (`agent_dial_members`): one thread per member tries its addresses
-  in turn, at most every `REDIAL_SECONDS`; a peer of the options goes by its address.
+  in turn, never two at once, at most every `REDIAL_SECONDS` (`Dial_Entry`: running, then
+  cooling); a peer of the options goes by its address.
   `agent_stop` waits for every dial, and a caller that holds a peer (a join, an ask) holds it
   against the reaper (`peer_pin`).
 - Each connection has three threads: the reader takes every message and stores the chunks a fetch
@@ -85,7 +95,8 @@ a sync; `mirai:net` gives only the
   reads as complete (`a_closure_is_whole_only_when_every_chunk_is_here`).
 - A head this process wrote reaches the peers at once (`agent_changed`), which also wakes dials
   for newly discovered members; one another process of the machine wrote reaches them within
-  `LOOK_SECONDS`. `agent_sync_now` clears dial throttling and forces an immediate sync pass.
+  `LOOK_SECONDS`. `agent_sync_now` drops the cooldown of every dial that ended (a running one
+  stays the only one) and forces an immediate sync pass.
   `agent_join` and `agent_admit` save the peer's dialed or listening address (`team_peer_seen`)
   after membership holds so peers reconnect across restarts without beacons. When an org's
   record or admissions move, each peer is told every head it reads (a peer a record lists only
@@ -163,7 +174,10 @@ a sync; `mirai:net` gives only the
   `mirai kai publish`) also publishes the builds of the packages it pins that the store holds
   whole, under `asset.REF_BUILDS`/<select> and `asset.REF_IMPORTS[_FAST]`/<key>
   (`project_ddc_publish`): a project imported before it was the org's reaches whoever pulls it
-  without a source. A running agent tells its nodes of the new sets within `LOOK_SECONDS`.
+  without a source. A running agent tells its nodes of the new sets within `LOOK_SECONDS`. A
+  pinned package with no whole build here is counted (`Ddc_Published.missing`): `mirai kai
+  publish` warns, the editor and the Launcher notify, and `kai.publish` gives `missing_builds`,
+  since the machines that pull build it themselves.
 - A refresh that lacks a pinned build re-imports it only as `Import_Options.exact`: an import
   that makes another manifest (content the source reads, such as Unreal's `/Engine`, differs on
   that machine) fails by package and names, pins and shares nothing.

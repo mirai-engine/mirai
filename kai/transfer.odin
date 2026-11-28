@@ -129,18 +129,24 @@ transfer_find_locked :: proc(a:^Agent,direction:Transfer_Direction,root:Transfer
 
 // Counts chunks and bytes that moved with p, of root, in direction; left,
 // what a download has asked and not had. The texts of a new transfer are
-// made outside the agent's lock, from the peer and the org's record.
+// made outside the agent's lock, from the peer and the org's record, and
+// made again when its slot left the table meanwhile.
 @(private)
 agent_transfer :: proc(a:^Agent,p:^Peer,direction:Transfer_Direction,root:Transfer_Root,chunks:int,bytes:i64,left:int) {
     if chunks<=0 {return}
     key:=p.conn.peer
-    sync.mutex_lock(&a.lock)
-    known:=transfer_find_locked(a,direction,root,key)!=nil
-    sync.mutex_unlock(&a.lock)
     label:[NAME_MAX]u8
     peer_name:[2*NAME_MAX+3]u8
     label_length,peer_name_length:int
-    if !known {
+    named:=false
+    x:^Transfer_Slot
+    now:i64
+    for {
+        now=transfer_now()
+        sync.mutex_lock(&a.lock)
+        x=transfer_find_locked(a,direction,root,key)
+        if x!=nil || named {break}
+        sync.mutex_unlock(&a.lock)
         label_length=transfer_label(a,root,label[:])
         sync.mutex_lock(&p.lock)
         name,device:=string(p.name[:p.name_len]),string(p.device[:p.device_len])
@@ -150,11 +156,9 @@ agent_transfer :: proc(a:^Agent,p:^Peer,direction:Transfer_Direction,root:Transf
         case: peer_name_length=copy(peer_name[:],device)
         }
         sync.mutex_unlock(&p.lock)
+        named=true
     }
-    now:=transfer_now()
-    sync.mutex_lock(&a.lock)
     defer sync.mutex_unlock(&a.lock)
-    x:=transfer_find_locked(a,direction,root,key)
     if x==nil {
         // The table is full: the transfer that moved longest ago gives its place.
         for &y in a.transfers {
@@ -213,8 +217,8 @@ agent_serving :: proc(a:^Agent,p:^Peer,org:Org_Id,addresses:[]store.Hash) -> Tra
     }
     sync.mutex_unlock(&a.lock)
     sync.mutex_lock(&p.lock)
-    if !matched && p.serving.org==org && now-p.serving_at<i64(TRANSFER_KEEP) {
-        found,matched=p.serving,true
+    if serving,ok:=p.serving.?;!matched && ok && serving.root.org==org && now-serving.at<i64(TRANSFER_KEEP) {
+        found,matched=serving.root,true
     }
     sync.mutex_unlock(&p.lock)
     if !matched {
@@ -226,7 +230,7 @@ agent_serving :: proc(a:^Agent,p:^Peer,org:Org_Id,addresses:[]store.Hash) -> Tra
         }
     }
     sync.mutex_lock(&p.lock)
-    p.serving,p.serving_at=found,now
+    p.serving=Peer_Serving{found,now}
     sync.mutex_unlock(&p.lock)
     return found
 }
@@ -276,7 +280,7 @@ agent_drain :: proc(a:^Agent,idle,limit:time.Duration) {
         sync.mutex_lock(&a.lock)
         for p in a.peers {
             sync.mutex_lock(&p.lock)
-            if p.ready && !p.done {
+            if p.phase==.Live {
                 live+=1
                 waiting||=len(p.requests)>0
             }

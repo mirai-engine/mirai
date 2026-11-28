@@ -103,7 +103,8 @@ pulls what the shared bookmarks reach.
   project rows show Update available and an Update button when shared main has what the working
   copy lacks and is here (`ka.project_update_folder`: a new working change merging main with what
   main lacks, so local edits and commits stay and a clash is a conflict value), else a direct
-  Publish button (`kai_launcher_publish`) when ahead of shared main, or a calm Synced badge. All
+  Publish button (`kai_launcher_publish`) when ahead of shared main (a Local changes badge for a
+  reader, who may not publish), or a calm Synced badge, as `ka.Workspace_Sync` says. All
   projects also lists unpulled org repositories (counted in its tab), pulled with one click
   (`kai.clone`). Team beside the tabs opens the Launcher Team view.
 - A right click on a local row opens Open, Update from main, Clean build cache

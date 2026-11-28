@@ -88,7 +88,7 @@ a_project_publishes_to_main_and_a_paired_machine_pulls_it :: proc(t:^testing.T) 
     testing.expect_value(t,oe,vcs.Error.None)
     link,je:=project_join(&p,&mac.team,org,true)
     testing.expect_value(t,je,vcs.Error.None)
-    published,pe:=publish(&p,&mac.team,BOOKMARK_DEFAULT,"first version",nil)
+    published,_,pe:=publish(&p,&mac.team,BOOKMARK_DEFAULT,"first version",nil)
     if !testing.expectf(t,pe==.None,"publish: %v %s",pe,mac.team.why) {return}
     v:Org_View
     testing.expect_value(t,org_view(&mac.team,org,&v),vcs.Error.None)
@@ -102,7 +102,8 @@ a_project_publishes_to_main_and_a_paired_machine_pulls_it :: proc(t:^testing.T) 
     pc.running=true
     text,ie:=vcs.team_invite(&mac.team,org,.Writer,"",{fmt.tprintf("127.0.0.1:%d",vcs.agent_port(&mac.agent))},context.temp_allocator)
     testing.expect_value(t,ie,vcs.Error.None)
-    if _,e:=vcs.agent_join(&pc.agent,text);!testing.expectf(t,e==.None,"join: %v %s",e,pc.agent.team.why) {return}
+    why:string
+    if _,e:=vcs.agent_join(&pc.agent,text,&why);!testing.expectf(t,e==.None,"join: %v %s",e,why) {return}
 
     // Pull into an empty folder: the files come once the agent has every object of main.
     clone_root:=strings.concatenate({pc.folder,"/Lighthouse"},context.temp_allocator)
@@ -123,7 +124,7 @@ a_project_publishes_to_main_and_a_paired_machine_pulls_it :: proc(t:^testing.T) 
 
     // The second machine publishes an edit; the first takes it as a new change.
     write(t,clone_root,"assets/readme.txt","edited on the PC\n")
-    second,se:=publish(&q,&pc.team,BOOKMARK_DEFAULT,"edit",nil)
+    second,_,se:=publish(&q,&pc.team,BOOKMARK_DEFAULT,"edit",nil)
     testing.expectf(t,se==.None,"the writer publishes: %s",pc.team.why)
     vcs.agent_changed(&pc.agent)
     Arrived :: struct {s:^store.Store,org:vcs.Org_Id,repo:vcs.Repo_Id,target:vcs.Revision}
@@ -178,12 +179,21 @@ a_publish_shares_the_builds_of_the_pinned_packages :: proc(t:^testing.T) {
     key:=store.hex(b.key,&key_digits)
     testing.expect_value(t,store.ref_set(&mac.s,asset.REF_BUILDS,select,build),store.Error.None)
     testing.expect_value(t,store.ref_set(&mac.s,asset.REF_IMPORTS,key,build),store.Error.None)
+    // And one it pins with no build in the store: nothing to share of it.
+    BARE,BARE_TEXTURE :: base.Asset_Id{2,1},base.Asset_Id{2,2}
+    y:=asset.Package{id=BARE,name="rock",origin={path="assets/rock.png",importer="image"},identity=store.address_of_bytes(transmute([]u8)string("rock"))}
+    y.assets=make([dynamic]asset.Package_Asset,context.temp_allocator)
+    append(&y.assets,asset.Package_Asset{kind=asset.KIND_TEXTURE,name="rock",id=BARE_TEXTURE})
+    bare,ye:=asset.package_put(&mac.s,&y)
+    if !testing.expect_value(t,ye,asset.Error.None) {return}
     list:asset.Packages
     list.packages=make([dynamic]asset.Project_Package,context.temp_allocator)
     entry:=asset.Project_Package{id=PACKAGE,manifest=manifest}
-    append(&list.packages,entry)
+    bare_entry:=asset.Project_Package{id=BARE,manifest=bare}
+    append(&list.packages,entry,bare_entry)
     testing.expect_value(t,asset.packages_save(root,&list),asset.Error.None)
     testing.expect_value(t,asset.package_file_save(&mac.s,root,&entry),asset.Error.None)
+    testing.expect_value(t,asset.package_file_save(&mac.s,root,&bare_entry),asset.Error.None)
 
     p:Project
     if !testing.expect_value(t,project_create(&p,root,&mac.s),vcs.Error.None) {return}
@@ -196,17 +206,21 @@ a_publish_shares_the_builds_of_the_pinned_packages :: proc(t:^testing.T) {
     testing.expect_value(t,vcs.agent_start(&server.agent,&server.team,{port=-1,node=true}),vcs.Error.None)
     server.running=true
     text,_:=vcs.team_invite(&mac.team,org,.Node,"",{fmt.tprintf("127.0.0.1:%d",vcs.agent_port(&mac.agent))},context.temp_allocator)
-    if _,e:=vcs.agent_join(&server.agent,text);!testing.expectf(t,e==.None,"the node joins: %s",server.agent.team.why) {return}
+    why:string
+    if _,e:=vcs.agent_join(&server.agent,text,&why);!testing.expectf(t,e==.None,"the node joins: %s",why) {return}
 
-    _,pe:=publish(&p,&mac.team,BOOKMARK_DEFAULT,"first",nil)
+    _,ddc,pe:=publish(&p,&mac.team,BOOKMARK_DEFAULT,"first",nil)
     if !testing.expectf(t,pe==.None,"publish: %s",mac.team.why) {return}
+    testing.expectf(t,ddc==Ddc_Published{published=2,missing=1},"both keys of the built package are shared and the bare one is missing: %v",ddc)
+    testing.expect(t,strings.contains(ddc_missing_text(ddc),"1 pinned package has no whole build"),"the publish says what it could not share")
+    testing.expect_value(t,ddc_missing_text({published=2}),"")
     keys:=[2]store.Hash{ddc_key(asset.REF_BUILDS,select),ddc_key(asset.REF_IMPORTS,key)}
     records:=make([dynamic]vcs.DDC_Record,context.temp_allocator)
     for k in keys {
         testing.expect_value(t,vcs.ddc_lookup(&mac.s,org,k,&records),vcs.Error.None)
         testing.expectf(t,len(records)==1,"one record of each key: %d",len(records))
     }
-    testing.expect_value(t,project_ddc_publish(&p,&mac.team),0)
+    testing.expect_value(t,project_ddc_publish(&p,&mac.team),Ddc_Published{missing=1})
     vcs.agent_changed(&mac.agent)
     Kept :: struct {s:^store.Store,org:vcs.Org_Id,keys:[2]store.Hash}
     kept:=Kept{&server.s,org,keys}
@@ -261,7 +275,7 @@ a_change_in_conflict_is_not_published :: proc(t:^testing.T) {
     }
     _,me:=new_change(w,sides[:],"",nil)
     testing.expect_value(t,me,vcs.Error.None)
-    _,pe:=publish(&p,&mac.team,BOOKMARK_DEFAULT,"merge",nil)
+    _,_,pe:=publish(&p,&mac.team,BOOKMARK_DEFAULT,"merge",nil)
     testing.expectf(t,pe==.Invalid_Argument && strings.contains(mac.team.why,"conflict"),"refused: %v %s",pe,mac.team.why)
     _,_,re:=vcs.repo_refs_head(&mac.s,org,p.workspace.repo.id,context.temp_allocator)
     testing.expect_value(t,re,vcs.Error.Missing)
@@ -324,7 +338,7 @@ a_workspace_behind_main_updates_and_keeps_its_work :: proc(t:^testing.T) {
     org,_:=vcs.team_org_create(&mac.team,"studio")
     link,je:=project_join(&a,&mac.team,org,false)
     testing.expect_value(t,je,vcs.Error.None)
-    _,pe:=publish(&a,&mac.team,BOOKMARK_DEFAULT,"first",nil)
+    _,_,pe:=publish(&a,&mac.team,BOOKMARK_DEFAULT,"first",nil)
     if !testing.expectf(t,pe==.None,"publish: %s",mac.team.why) {return}
 
     // Two more workspaces of the repository on main: b works on it, c does not.
@@ -350,19 +364,19 @@ a_workspace_behind_main_updates_and_keeps_its_work :: proc(t:^testing.T) {
     project_close(&b)
 
     state:=project_sync_state(&mac.s,&mac.team,b_root)
-    testing.expectf(t,state.linked && state.needs_publish && !state.behind_main,"b is ahead of main and not behind it: %v",state)
+    testing.expectf(t,state.sync==.Ahead,"b is ahead of main and not behind it: %v",state)
     state=project_sync_state(&mac.s,&mac.team,c_root)
-    testing.expectf(t,state.linked && !state.needs_publish && !state.behind_main,"c is on main: %v",state)
+    testing.expectf(t,state.sync==.Synced,"c is on main: %v",state)
 
     write(t,a_root,"assets/shared.txt","one\ntwo\nthree\nfour\n")
     write(t,a_root,"assets/clash.txt","theirs, on a\n")
-    _,pe=publish(&a,&mac.team,BOOKMARK_DEFAULT,"second",nil)
+    _,_,pe=publish(&a,&mac.team,BOOKMARK_DEFAULT,"second",nil)
     if !testing.expectf(t,pe==.None,"publish: %s",mac.team.why) {return}
 
     state=project_sync_state(&mac.s,&mac.team,b_root)
-    testing.expectf(t,state.behind_main && state.main_here && state.needs_publish,"b is behind main and still has its own: %v",state)
+    testing.expectf(t,state.sync==.Diverged && state.main_here,"b is behind main and still has its own: %v",state)
     state=project_sync_state(&mac.s,&mac.team,c_root)
-    testing.expectf(t,state.behind_main && state.main_here && !state.needs_publish,"c is only behind main: %v",state)
+    testing.expectf(t,state.sync==.Behind && state.main_here,"c is only behind main: %v",state)
 
     result,ue:=project_update_folder(&mac.s,&mac.team,b_root)
     if !testing.expectf(t,ue==.None,"update: %v %s",ue,mac.team.why) {return}
@@ -385,7 +399,7 @@ a_workspace_behind_main_updates_and_keeps_its_work :: proc(t:^testing.T) {
         project_close(&b)
     }
     state=project_sync_state(&mac.s,&mac.team,b_root)
-    testing.expectf(t,!state.behind_main && state.needs_publish,"b holds main now and has its own still: %v",state)
+    testing.expectf(t,state.sync==.Ahead,"b holds main now and has its own still: %v",state)
     result,ue=project_update_folder(&mac.s,&mac.team,b_root)
     testing.expectf(t,ue==.None && result.up_to_date,"a second update has nothing to take: %v %v",ue,result)
 
@@ -393,7 +407,7 @@ a_workspace_behind_main_updates_and_keeps_its_work :: proc(t:^testing.T) {
     testing.expectf(t,ue==.None && !result.up_to_date && result.conflicts==0,"c updates cleanly: %v %v %s",ue,result,mac.team.why)
     expect_text(t,c_root,"assets/clash.txt","theirs, on a\n")
     state=project_sync_state(&mac.s,&mac.team,c_root)
-    testing.expectf(t,!state.behind_main && !state.needs_publish,"c is on main again, synced: %v",state)
+    testing.expectf(t,state.sync==.Synced,"c is on main again, synced: %v",state)
 }
 
 // Restoring the pins of the packages takes back packages.mirai and the manifests of

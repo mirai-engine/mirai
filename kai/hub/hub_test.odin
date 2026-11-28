@@ -132,7 +132,7 @@ a_server_keeps_an_org_and_its_web_view_shows_what_each_one_may_see :: proc(t:^te
     hub_stopped:=false
     defer if !hub_stopped {hub_stop(&h)}
     node_invite,_:=kai.team_invite(&mac.team,org,.Node,"",{mac_address},context.temp_allocator)
-    if _,je:=kai.agent_join(&h.agent,node_invite);!testing.expectf(t,je==.None,"the server joins: %s",h.agent.team.why) {return}
+    if _,je:=kai.agent_join(&h.agent,node_invite,&why);!testing.expectf(t,je==.None,"the server joins: %s",why) {return}
     testing.expect(t,os.is_dir(fmt.tprintf("%s/server/orgs/%s",folder,id_text(org))),"the org has a folder of its own")
     testing.expect(t,!os.exists(fmt.tprintf("%s/server/orgs/%s",folder,id_text(other))),"an org it did not join has none")
     pc_invite,_:=kai.team_invite(&mac.team,org,.Writer,"",{mac_address},context.temp_allocator)
@@ -234,7 +234,20 @@ hub_http_refuses_hostile_requests :: proc(t:^testing.T) {
     }
     for c in cases {
         p:=request_parse(transmute([]u8)c.text)
-        testing.expectf(t,p.status==c.status,"%q: %d, not %d",c.text,p.status,c.status)
+        testing.expectf(t,parse_status(&p)==c.status,"%q: %d, not %d",c.text,parse_status(&p),c.status)
+    }
+    // Input that fills before the request is whole is refused by what is not
+    // whole: the head past its bound, else the body.
+    Overflow :: struct {text:string,state:Parse_State,status:int}
+    overflows:=[]Overflow{
+        {"GET / HTTP/1.1\r\nHost: a",.Head,431},
+        {"POST /login HTTP/1.1\r\nHost: a\r\nContent-Length: 10\r\n\r\nabc",.Body,413},
+    }
+    for c in overflows {
+        p:=request_parse(transmute([]u8)c.text)
+        testing.expectf(t,p.state==c.state,"%q: %v, not %v",c.text,p.state,c.state)
+        parse_overflow(&p)
+        testing.expectf(t,p.state==.Refused && p.status==c.status,"%q overflows as %v %d, not %d",c.text,p.state,p.status,c.status)
     }
     // The head's bound holds its blank line: the largest head and body fit
     // HEAD_MAX+BODY_MAX, the connection's input.
@@ -242,9 +255,11 @@ hub_http_refuses_hostile_requests :: proc(t:^testing.T) {
     pad:=HEAD_MAX-len(start)-4
     largest:=strings.concatenate({start,strings.repeat("p",pad,context.temp_allocator),"\r\n\r\n",strings.repeat("b",BODY_MAX,context.temp_allocator)},context.temp_allocator)
     testing.expect_value(t,len(largest),HEAD_MAX+BODY_MAX)
-    testing.expect_value(t,request_parse(transmute([]u8)largest).status,200)
+    whole:=request_parse(transmute([]u8)largest)
+    testing.expect_value(t,whole.state,Parse_State.Ready)
     longer:=strings.concatenate({start,strings.repeat("p",pad+1,context.temp_allocator),"\r\n\r\n"},context.temp_allocator)
-    testing.expect_value(t,request_parse(transmute([]u8)longer).status,431)
+    refused:=request_parse(transmute([]u8)longer)
+    testing.expect_value(t,parse_status(&refused),431)
     testing.expect_value(t,form_value(transmute([]u8)string("a=1&name=b%2Fc+d"),"name"),"b/c d")
     testing.expect_value(t,form_value(transmute([]u8)string("name=%zz"),"name"),"")
     testing.expect(t,!account_name_valid("Ben") && !account_name_valid("") && account_name_valid("ben.k-1"),"account names are lowercase")
@@ -272,7 +287,7 @@ bench_open :: proc(t:^testing.T,h:^Hub,folder:string,tenants:bool) -> bool {
 ask :: proc(h:^Hub,text:string) -> Out {
     p:=request_parse(transmute([]u8)text)
     out:=Out{body=make([dynamic]u8,context.temp_allocator),headers=make([dynamic]u8,context.temp_allocator)}
-    if p.status!=200 {
+    if p.state!=.Ready {
         out.status=p.status
         return out
     }
@@ -472,7 +487,7 @@ a_server_registers_an_org_and_admits_offline_invites :: proc(t:^testing.T) {
 
     org,oe:=kai.team_org_create(&mac.team,"studio")
     if !testing.expect_value(t,oe,kai.Error.None) {return}
-    if !testing.expectf(t,kai.agent_server_attach(&mac.agent,org,server_addr)==.None,"admin attaches server: %s",mac.agent.team.why) {return}
+    if !testing.expectf(t,kai.agent_server_attach(&mac.agent,org,server_addr,&why)==.None,"admin attaches server: %s",why) {return}
     testing.expect(t,os.is_dir(fmt.tprintf("%s/server/orgs/%s",folder,id_text(org))),"server created org tenant store")
     srv_key,srv_addr,has_srv:=kai.team_org_server(&mac.team,org)
     testing.expect(t,has_srv && srv_key==h.team.identity.key && srv_addr==server_addr,"org lists server as Node")
@@ -495,15 +510,15 @@ a_server_registers_an_org_and_admits_offline_invites :: proc(t:^testing.T) {
     }),"server synced the repo before admin goes offline") {return}
 
     mac_addr:=fmt.tprintf("127.0.0.1:%d",kai.agent_port(&mac.agent))
-    invite,via_server,ie:=kai.agent_invite(&mac.agent,org,.Writer,"",{mac_addr},context.temp_allocator)
-    if !testing.expectf(t,ie==.None && via_server,"offline server invite created: %v %v %s",ie,via_server,mac.agent.team.why) {return}
+    invite,via_server,ie:=kai.agent_invite(&mac.agent,org,.Writer,"",{mac_addr},context.temp_allocator,&why)
+    if !testing.expectf(t,ie==.None && via_server,"offline server invite created: %v %v %s",ie,via_server,why) {return}
 
     // Stop Admin completely: Writer joins and pulls while Admin is OFF.
     kai.agent_stop(&mac.agent)
     mac.running=false
 
-    joined,je:=kai.agent_join(&pc.agent,invite)
-    if !testing.expectf(t,je==.None && joined==org,"writer joins via server while admin is off: %v %s",je,pc.agent.team.why) {return}
+    joined,je:=kai.agent_join(&pc.agent,invite,&why)
+    if !testing.expectf(t,je==.None && joined==org,"writer joins via server while admin is off: %v %s",je,why) {return}
     kai.team_link(&pc.team,{local=kai.random_id(kai.Repo_Id),org=org,repo=repo})
     kai.agent_changed(&pc.agent)
     pc_held:=Held{s=&pc.s,org=org,rev=rev}
@@ -536,7 +551,7 @@ a_server_registers_an_org_and_admits_offline_invites :: proc(t:^testing.T) {
 
     // Self-registration respects --max-orgs (2).
     org2,_:=kai.team_org_create(&mac.team,"second")
-    testing.expectf(t,kai.agent_server_attach(&mac.agent,org2,server_addr)==.None,"second org attaches within max_orgs: %s",mac.agent.team.why)
+    testing.expectf(t,kai.agent_server_attach(&mac.agent,org2,server_addr,&why)==.None,"second org attaches within max_orgs: %s",why)
     org3,_:=kai.team_org_create(&mac.team,"third")
     testing.expect(t,kai.agent_server_attach(&mac.agent,org3,server_addr)!=.None,"third org refused past max_orgs")
     testing.expect(t,!os.exists(fmt.tprintf("%s/server/orgs/%s",folder,id_text(org3))),"refused org creates no tenant folder")

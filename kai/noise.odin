@@ -38,12 +38,22 @@ SIGN_LABEL :: "kai/3 handshake "
 @(private)
 Symmetric :: struct {
     ck,h,k:[32]u8,
-    has_k:bool,
     n:u64,
+}
+
+// Where a handshake is: each message is taken once and in its order, by the
+// side it belongs to; a failed or out-of-order step fails it for good.
+Handshake_Phase :: enum u8 {
+    Start,
+    Wrote_1, // the initiator waits for message 2
+    Wrote_2, // the responder waits for message 3
+    Done,    // handshake_split may give the session
+    Failed,
 }
 
 Handshake :: struct {
     sym:Symmetric,
+    phase:Handshake_Phase,
     initiator:bool,
     identity:Identity,
     e:[32]u8,  // private
@@ -53,7 +63,6 @@ Handshake :: struct {
     secret:[32]u8, // the invite's, when the initiator joins by one
     proof:[32]u8,  // what the initiator proved, for the responder to check
     proved:[32]u8, // the handshake hash its proof covers
-    failed:bool,
 }
 
 // One direction of a session: ChaChaPoly under key with a counter nonce.
@@ -77,7 +86,43 @@ handshake_destroy :: proc(hs:^Handshake) {
 
 // Message 1 of the initiator into out (NOISE_MSG1 bytes).
 handshake_write_1 :: proc(hs:^Handshake,out:[]u8) -> bool {
-    if !hs.initiator || len(out)!=NOISE_MSG1 {return false}
+    return handshake_step(hs,hs.initiator && len(out)==NOISE_MSG1,.Start) && handshake_end(hs,write_1(hs,out),.Wrote_1)
+}
+
+// Reads message 1 and writes message 2 of the responder into out.
+handshake_read_1 :: proc(hs:^Handshake,message,out:[]u8) -> bool {
+    return handshake_step(hs,!hs.initiator && len(message)==NOISE_MSG1 && len(out)==NOISE_MSG2,.Start) && handshake_end(hs,read_1(hs,message,out),.Wrote_2)
+}
+
+// Reads message 2, checks the responder's proof (against expect when it is not
+// zero) and writes message 3 into out.
+handshake_read_2 :: proc(hs:^Handshake,message,out:[]u8,expect:Key) -> bool {
+    return handshake_step(hs,hs.initiator && len(message)==NOISE_MSG2 && len(out)==NOISE_MSG3,.Wrote_1) && handshake_end(hs,read_2(hs,message,out,expect),.Done)
+}
+
+// Reads message 3: the initiator's key into hs.peer, its invite proof into
+// hs.proof (zero when it joins by none).
+handshake_read_3 :: proc(hs:^Handshake,message:[]u8) -> bool {
+    return handshake_step(hs,!hs.initiator && len(message)==NOISE_MSG3,.Wrote_2) && handshake_end(hs,read_3(hs,message),.Done)
+}
+
+// Whether a step may run: its side and sizes hold and the handshake is where
+// it comes; any other call fails the handshake.
+@(private="file")
+handshake_step :: proc(hs:^Handshake,valid:bool,from:Handshake_Phase) -> bool {
+    if valid && hs.phase==from {return true}
+    hs.phase=.Failed
+    return false
+}
+
+@(private="file")
+handshake_end :: proc(hs:^Handshake,ok:bool,next:Handshake_Phase) -> bool {
+    hs.phase=ok?next:.Failed
+    return ok
+}
+
+@(private="file")
+write_1 :: proc(hs:^Handshake,out:[]u8) -> bool {
     crypto.rand_bytes(hs.e[:])
     x25519.scalarmult_basepoint(out[:32],hs.e[:])
     mix_hash(&hs.sym,out[:32])
@@ -88,9 +133,8 @@ handshake_write_1 :: proc(hs:^Handshake,out:[]u8) -> bool {
     return true
 }
 
-// Reads message 1 and writes message 2 of the responder into out.
-handshake_read_1 :: proc(hs:^Handshake,message,out:[]u8) -> bool {
-    if hs.initiator || len(message)!=NOISE_MSG1 || len(out)!=NOISE_MSG2 {return false}
+@(private="file")
+read_1 :: proc(hs:^Handshake,message,out:[]u8) -> bool {
     copy(hs.re[:],message[:32])
     mix_hash(&hs.sym,message[:32])
     mix_hash(&hs.sym,message[32:])
@@ -116,10 +160,8 @@ handshake_read_1 :: proc(hs:^Handshake,message,out:[]u8) -> bool {
     return true
 }
 
-// Reads message 2, checks the responder's proof (against expect when it is not
-// zero) and writes message 3 into out.
-handshake_read_2 :: proc(hs:^Handshake,message,out:[]u8,expect:Key) -> bool {
-    if !hs.initiator || len(message)!=NOISE_MSG2 || len(out)!=NOISE_MSG3 {return false}
+@(private="file")
+read_2 :: proc(hs:^Handshake,message,out:[]u8,expect:Key) -> bool {
     copy(hs.re[:],message[:32])
     mix_hash(&hs.sym,message[:32])
     shared:[32]u8
@@ -145,10 +187,8 @@ handshake_read_2 :: proc(hs:^Handshake,message,out:[]u8,expect:Key) -> bool {
     return true
 }
 
-// Reads message 3: the initiator's key into hs.peer, its invite proof into
-// hs.proof (zero when it joins by none).
-handshake_read_3 :: proc(hs:^Handshake,message:[]u8) -> bool {
-    if hs.initiator || len(message)!=NOISE_MSG3 {return false}
+@(private="file")
+read_3 :: proc(hs:^Handshake,message:[]u8) -> bool {
     signed:=hs.sym.h
     p:[size_of(Key)+size_of(Signature)+32]u8
     if !decrypt_and_hash(&hs.sym,message,p[:]) {return false}
@@ -165,8 +205,9 @@ handshake_invited :: proc(proof,proved,secret:[32]u8) -> bool {
     return hmac.verify(.SHA256,p[:],h[:],k[:])
 }
 
-// The two directions of the session.
-handshake_split :: proc(hs:^Handshake) -> (send,receive:Cipher) {
+// The two directions of the session, once the handshake is Done.
+handshake_split :: proc(hs:^Handshake) -> (send,receive:Cipher,ok:bool) {
+    if hs.phase!=.Done {return}
     k1,k2:[32]u8
     defer crypto.zero_explicit(&k1,32)
     defer crypto.zero_explicit(&k2,32)
@@ -175,7 +216,7 @@ handshake_split :: proc(hs:^Handshake) -> (send,receive:Cipher) {
     if !hs.initiator {a,b=b,a}
     chacha20poly1305.init(&a.ctx,k1[:])
     chacha20poly1305.init(&b.ctx,k2[:])
-    return
+    return send,receive,true
 }
 
 // Seals plain into out (len(plain)+NOISE_TAG bytes); false once the
@@ -246,7 +287,7 @@ mix_hash :: proc(s:^Symmetric,data:[]u8) {
 @(private="file")
 mix_key :: proc(s:^Symmetric,ikm:[]u8) {
     hkdf2(s.ck[:],ikm,&s.ck,&s.k)
-    s.has_k,s.n=true,0
+    s.n=0
 }
 
 // Noise's HKDF with two outputs, HMAC-SHA256.

@@ -31,12 +31,11 @@ KAI_WATCH_BUDGET :: 512   // of a frame's watch of the folder
 KAI_LOG_ROWS :: 64        // changes the tab and kai.log show by default
 KAI_DESCRIPTION_BYTES :: 1024
 
-// Who changed the working copy since the last snapshot: the key of an editor
-// of a session the host applied, or the task of an agent's turn.
-Kai_Author :: struct {
-    key:vcs.Key,
-    task:u64,
-}
+// Who changed the working copy since the last snapshot: an editor of a
+// session the host applied, by its key, or an agent's turn, by its task.
+Kai_Coauthor :: distinct vcs.Key
+Kai_Turn_Task :: distinct u64
+Kai_Author :: union {Kai_Coauthor,Kai_Turn_Task}
 
 // What a change attaches for an agent's turn: a Kai_Turn object. Kai carries
 // it without reading it; what a turn is stays the editor's.
@@ -129,12 +128,19 @@ Kai_State :: struct {
     tab:Kai_Tab,
 }
 
+// Whether the project's workspace is open.
+Kai_Workspace_Status :: enum u8 {
+    Untried, // opening was not tried for this project yet
+    Open,    // state is its workspace
+    Closed,  // it did not open, or the project has none: error says why (Missing: none)
+}
+
 @(storage)
 Kai :: struct {
     state:^Kai_State,
     team:^Kai_Team,   // the machine of the store and its agent: with the workspace, or alone in a launcher
-    tried:bool,       // opening was tried for this project
-    error:vcs.Error,  // why it is not open
+    status:Kai_Workspace_Status,
+    error:vcs.Error,  // Closed: why
     key:vcs.Key,      // this editor's identity in every session and change
     mesh_loopback:bool, // the agent the editor starts listens on 127.0.0.1 alone, with no beacon: tests
     server:string,      // optional central server host:port override (tests)
@@ -159,12 +165,11 @@ kai_types :: proc(s:^Session) -> ^asset.Types {
 // editor that someone drives records history.
 kai_open :: proc(s:^Session) {
     k:=s.kai
-    if k==nil || k.tried || k.state!=nil || !s.has_project || s.store.root=="" || s.frames>0 {return}
+    if k==nil || k.status!=.Untried || !s.has_project || s.store.root=="" || s.frames>0 {return}
     if st:=collab_state(s);st!=nil && st.role==.Guest && st.phase!=.Ended {return}
-    k.tried=true
     // A project without a workspace makes nothing of Kai, not even this machine's identity.
     if !ka.project_exists(s.project_root) {
-        k.error=.Missing
+        k.status,k.error=.Closed,.Missing
         return
     }
     if identity,e:=ka.identity_load(&s.store);e==.None {k.key=identity.key}
@@ -189,7 +194,6 @@ kai_enable :: proc(s:^Session,reset:=false) -> string {
         log.infof("%s leaves the Kai workspace of another store for a new history",s.project_root)
     }
     if ka.project_exists(s.project_root) {return "The project already has a Kai workspace: it opens with the project"}
-    k.tried=true
     if identity,e:=ka.identity_load(&s.store);e==.None {k.key=identity.key}
     if e:=kai_attach(s,true);e!=.None {
         return fmt.tprintf("The Kai workspace of the project could not be made: %s",vcs.error_text(e))
@@ -205,7 +209,7 @@ kai_attach :: proc(s:^Session,create:bool) -> vcs.Error {
     k:=s.kai
     st:=new(Kai_State)
     if st==nil {
-        k.error=.Out_Of_Memory
+        k.status,k.error=.Closed,.Out_Of_Memory
         return .Out_Of_Memory
     }
     e:vcs.Error
@@ -216,10 +220,10 @@ kai_attach :: proc(s:^Session,create:bool) -> vcs.Error {
     }
     if e!=.None {
         free(st)
-        k.error=e
+        k.status,k.error=.Closed,e
         return e
     }
-    k.error=.None
+    k.status,k.error=.Open,.None
     k.state=st
     if s.edits!=nil {st.seen_state,st.seen_epoch=s.edits.serial,s.edits.epoch}
     if s.app!=nil && s.app.platform!=nil {
@@ -238,6 +242,8 @@ kai_close :: proc(s:^Session) {
     k:=s.kai
     if k==nil {return}
     kai_team_close(s)
+    // The next project is tried again.
+    k.status,k.error=.Untried,.None
     if k.state==nil {return}
     st:=k.state
     if st.watching && s.app!=nil && s.app.platform!=nil {platform.watch_destroy(s.app.platform,st.watch)}
@@ -266,8 +272,8 @@ kai_touched :: proc(s:^Session,file:string) {
 kai_touched_relative :: proc(s:^Session,relative:string) {
     st:=s.kai.state
     paths:=[1]string{relative}
-    complete:=st.watching && (!st.touched || st.project.workspace.touched_all)
-    if vcs.workspace_touched(&st.project.workspace,paths[:],complete)!=.None {return}
+    // The watch sees every change: what it misses (untracked) makes the next snapshot a scan, which stays.
+    vcs.workspace_touched(&st.project.workspace,paths[:],st.watching)
     st.touched,st.touched_at=true,platform.clock_seconds()
 }
 
@@ -325,13 +331,13 @@ kai_authors_follow :: proc(s:^Session) {
 @(private)
 kai_author_push :: proc(q:^Kai_Authorship,author:history.Edit_Author) {
     if author==history.EDIT_AUTHOR_USER || author==history.EDIT_AUTHOR_API {return}
-    core.push(&q.queue,Kai_Author{task=u64(author)})
+    core.push(&q.queue,Kai_Author(Kai_Turn_Task(author)))
 }
 
 // An editor of a session changed the project: the host records it as a coauthor.
 kai_coauthor :: proc(s:^Session,key:vcs.Key) {
     if s.kai_authorship==nil || key==({}) || s.kai==nil || key==s.kai.key {return}
-    core.push(&s.kai_authorship.queue,Kai_Author{key=key})
+    core.push(&s.kai_authorship.queue,Kai_Author(Kai_Coauthor(key)))
 }
 
 // Records the files as they are as the working copy, with the authors since
@@ -346,10 +352,12 @@ kai_snapshot :: proc(s:^Session) -> string {
     keys:=make([dynamic]vcs.Key,0,len(authors),context.temp_allocator)
     turns:=make([dynamic]vcs.Attachment,0,len(authors),context.temp_allocator)
     for a in authors {
-        if a.key!=({}) {append(&keys,a.key)}
-        if a.task==0 {continue}
-        turn:=Kai_Turn{version=KAI_TURN_VERSION,task=a.task}
-        if address,pe:=store.put(w.repo.s,([^]u8)(&turn)[:size_of(turn)]);pe==.None {append(&turns,vcs.Attachment{KAI_TURN,address})}
+        switch author in a {
+        case Kai_Coauthor: append(&keys,vcs.Key(author))
+        case Kai_Turn_Task:
+            turn:=Kai_Turn{version=KAI_TURN_VERSION,task=u64(author)}
+            if address,pe:=store.put(w.repo.s,([^]u8)(&turn)[:size_of(turn)]);pe==.None {append(&turns,vcs.Attachment{KAI_TURN,address})}
+        }
     }
     _,e:=ka.snapshot_authored(w,keys[:],turns[:])
     kai_read(s)
@@ -362,8 +370,10 @@ kai_missing :: proc(s:^Session) -> string {
     if !s.has_project {return "The editor has no project"}
     if s.store.root=="" {return "The editor has no store, where Kai keeps the changes: start it with --store <folder>"}
     if st:=collab_state(s);st!=nil && st.role==.Guest && st.phase!=.Ended {return "A guest of a session keeps no changes: its host records them"}
-    if k:=s.kai;k!=nil && k.error==.Missing {return "The project does not use version control: kai.init, or Enable Kai in the Kai tab, makes it a Kai workspace"}
-    if k:=s.kai;k!=nil && k.error!=.None {return fmt.tprintf("The Kai workspace of the project does not open: %s",vcs.error_text(k.error))}
+    if k:=s.kai;k!=nil && k.status==.Closed {
+        if k.error==.Missing {return "The project does not use version control: kai.init, or Enable Kai in the Kai tab, makes it a Kai workspace"}
+        return fmt.tprintf("The Kai workspace of the project does not open: %s",vcs.error_text(k.error))
+    }
     return "The Kai workspace of the project is not open"
 }
 
@@ -577,7 +587,17 @@ kai_read :: proc(s:^Session) {
     ka.diff(w,working,&diffs,a)
     // A conflict of a merge is in its parents' tree too: listed whether it changed or not.
     files:=make([dynamic]Kai_File,0,len(diffs)+len(w.state.conflicts),a)
-    for m in w.state.conflicts {append(&files,Kai_File{strings.clone(m.path,a),'C',false})}
+    unfolded:=false // the conflict unfolded is one still
+    for m in w.state.conflicts {
+        append(&files,Kai_File{strings.clone(m.path,a),'C',false})
+        unfolded||=m.path==st.unfolded
+    }
+    // A conflict an edit or another operation resolved folds.
+    if !unfolded && st.unfolded!="" {
+        delete(st.unfolded)
+        st.unfolded=""
+        clear(&st.picks)
+    }
     for d in diffs {
         listed:=false
         for &f in files {
