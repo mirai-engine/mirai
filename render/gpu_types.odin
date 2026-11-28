@@ -368,6 +368,10 @@ Gpu_Material_Subsurface :: struct {
 	weight: f32,
 	radius: f32, // metres
 }
+Gpu_Material_Stylized :: struct {
+	shade:    Vec3, // what it takes of the light around
+	softness: f32,  // the width of its terminator in the cosine
+}
 // What a solid of glass scatters of what it stops (asset.Material_Info.scatter_color).
 Gpu_Material_Volume :: struct {
 	scatter:  Vec3,
@@ -380,6 +384,7 @@ Gpu_Material_Blocks :: struct {
 	anisotropy:           Gpu_Material_Anisotropy,
 	diffuse_transmission: Gpu_Material_Diffuse_Transmission,
 	subsurface:           Gpu_Material_Subsurface,
+	stylized:             Gpu_Material_Stylized,
 }
 #assert(size_of(Gpu_Material) == abi.MATERIAL_WORDS * size_of(u32))
 #assert(size_of(Gpu_Material_Blocks) == abi.MATERIAL_BLOCK_WORDS * size_of(u32))

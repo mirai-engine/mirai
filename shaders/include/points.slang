@@ -195,14 +195,17 @@ uint record_unorm8x4(float4 v) {
 // What the program gave at the point, written by its stage. Its last byte
 // says it was written: storing the point clears it (point_record_clear), and
 // a point whose program has no pipeline yet keeps it clear, so what reads it
-// takes the row of the material instead (point_record_given).
+// takes the row of the material instead (point_record_given). Word 4 holds
+// how it reflects light (0 by its lobes, 0.5 stylized, 1 unlit); a stylized
+// point, which has no coat, keeps its shade and softness where the color and
+// weight of the coat go.
 void point_record_store(uint index, Mirai_Surface s) {
     uint at = points_records() + index * RECORD_WORDS;
     material_points[at] = record_half2(s.base_color.r, s.base_color.g);
     material_points[at + 1u] = record_half2(s.base_color.b, s.alpha);
     material_points[at + 2u] = record_oct(s.normal);
     material_points[at + 3u] = record_unorm16x2(s.metallic, s.roughness);
-    material_points[at + 4u] = record_unorm16x2(s.occlusion, s.unlit ? 1.0 : 0.0);
+    material_points[at + 4u] = record_unorm16x2(s.occlusion, s.unlit ? 1.0 : s.stylized ? 0.5 : 0.0);
     material_points[at + 5u] = asuint(s.emission.r);
     material_points[at + 6u] = asuint(s.emission.g);
     material_points[at + 7u] = asuint(s.emission.b);
@@ -210,7 +213,7 @@ void point_record_store(uint index, Mirai_Surface s) {
     material_points[at + 9u] = record_half2(s.specular_color.b, s.specular_factor);
     material_points[at + 10u] = record_half2(s.specular_ior, s.specular_anisotropy);
     material_points[at + 11u] = record_oct(s.specular_tangent);
-    material_points[at + 12u] = record_unorm8x4(float4(s.coat_color, s.coat_weight));
+    material_points[at + 12u] = record_unorm8x4(s.stylized ? float4(s.stylized_shade, s.stylized_softness) : float4(s.coat_color, s.coat_weight));
     material_points[at + 13u] = record_half2(s.coat_roughness, s.coat_ior);
     material_points[at + 14u] = record_oct(s.coat_normal);
     material_points[at + 15u] = record_unorm8x4(float4(s.fuzz_color, s.fuzz_weight));
@@ -231,7 +234,8 @@ Mirai_Surface point_record_load(uint index) {
     s.roughness = mr.y;
     float2 ou = record_ununorm16x2(material_points[at + 4u]);
     s.occlusion = ou.x;
-    s.unlit = ou.y > 0.5;
+    s.unlit = ou.y > 0.75;
+    s.stylized = !s.unlit && ou.y > 0.25;
     s.emission = float3(asfloat(material_points[at + 5u]), asfloat(material_points[at + 6u]), asfloat(material_points[at + 7u]));
     float2 sc = record_unhalf2(material_points[at + 8u]);
     float2 sf = record_unhalf2(material_points[at + 9u]);
@@ -242,8 +246,10 @@ Mirai_Surface point_record_load(uint index) {
     s.specular_anisotropy = ia.y;
     s.specular_tangent = unpack_normal(material_points[at + 11u]);
     float4 coat = unpackUnorm4x8(material_points[at + 12u]);
-    s.coat_color = coat.rgb;
-    s.coat_weight = coat.a;
+    s.coat_color = s.stylized ? MATERIAL_DEFAULT_COAT_COLOR : coat.rgb;
+    s.coat_weight = s.stylized ? 0.0 : coat.a;
+    s.stylized_shade = s.stylized ? coat.rgb : MATERIAL_DEFAULT_STYLIZED_SHADE;
+    s.stylized_softness = s.stylized ? coat.a : MATERIAL_DEFAULT_STYLIZED_SOFTNESS;
     float2 cr = record_unhalf2(material_points[at + 13u]);
     s.coat_roughness = cr.x;
     s.coat_ior = cr.y;

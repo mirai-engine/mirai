@@ -2597,6 +2597,75 @@ material_subsurface_costs_nothing_while_none_is_in_sight :: proc(t: ^testing.T) 
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
+// ---------------------------------------------------------------- stylized
+
+// Ground under a white sky and a sun at a cosine of 0.894, part of it in the
+// shadow of a board above it, drawn as a Lambert reflector, as stylized with
+// a terminator narrower than that cosine, and as unlit. In the sun, the
+// stylized ground takes the sun whole where Lambert takes its cosine; in the
+// shadow of the board, which the maps of the sun cast, it takes what Lambert
+// takes of the sky by its shade, channel by channel; a Surface program that
+// gives the same look draws the same. The unlit ground shows its emission
+// alike in both.
+@(test)
+material_stylized_takes_the_sun_whole_and_the_sky_by_its_shade :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 128, 128, layer_settings(), programs = true) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	lambert := DEFAULT_MATERIAL
+	lambert.base_color = {0.8, 0.8, 0.8}
+	lambert.specular_factor = 0
+	stylized, unlit := lambert, lambert
+	stylized.stylized = {enabled = true, softness = 0.2, shade = {0.5, 0.25, 1}}
+	unlit.base_color, unlit.unlit, unlit.emission = {0, 0, 0}, true, {0.3, 0.3, 0.3}
+	painted := lambert
+	if program := program_find(r, "Painted", .Surface); testing.expect(t, program != nil, "the tests have the Painted program") {
+		painted.program_id = program.id
+		painted.custom_params = program_defaults(program)
+	}
+	materials_set(r, {lambert, stylized, unlit, painted})
+	quad := ground_quad(r)
+	toward := linalg.normalize(Vec3{1, 2, 0})
+	sun := Sun_Desc{direction = toward, color = {1, 1, 1}, illuminance = math.PI, enabled = true, indirect = 1, scattering = 1}
+	// The board covers x and z within 0.25 at a height of 0.5: its shadow falls 0.25 towards -x.
+	board := Instance_Desc{object_id = 2, mesh = quad, transform = linalg.matrix4_translate_f32({0, 0.5, 0}) * scale_matrix(0.5), material = 1, tint = {1, 1, 1}}
+	shadowed, lit := Vec3{-0.4, 0, 0}, Vec3{0.6, 0, 0}
+	seen :: proc(t: ^testing.T, f: ^Fixture, quad: Mesh_Handle, board: Instance_Desc, material: Material_Handle, sun: Sun_Desc, at: [2]Vec3) -> (shadowed, lit: Vec3) {
+		r := f.renderer
+		scene_given(r, {{object_id = 1, mesh = quad, transform = scale_matrix(12), material = material, tint = {1, 1, 1}}, board}, nil, sun, {sky = {1, 1, 1}})
+		frames(t, f, OVERHEAD, 4)
+		// A program draws its row until its pipelines are made.
+		for renderer_pipelines_pending(r) > 0 {
+			renderer_pipelines_wait(r)
+			frames(t, f, OVERHEAD, 4)
+		}
+		return target_at(t, f, r.targets.display, OVERHEAD, at[0]), target_at(t, f, r.targets.display, OVERHEAD, at[1])
+	}
+	near :: proc(a, b, tolerance: f32) -> bool {return abs(a - b) <= tolerance * max(abs(b), 1e-3)}
+	cosine := linalg.dot(toward, Vec3{0, 1, 0})
+	lambert_dark, lambert_lit := seen(t, &f, quad, board, 1, sun, {shadowed, lit})
+	stylized_dark, stylized_lit := seen(t, &f, quad, board, 2, sun, {shadowed, lit})
+	unlit_dark, unlit_lit := seen(t, &f, quad, board, 3, sun, {shadowed, lit})
+	painted_dark, painted_lit := seen(t, &f, quad, board, 4, sun, {shadowed, lit})
+	testing.expect(t, r.targets.layers != 0, "the stylized ground is drawn with its layers")
+	sunlit := lambert_lit.y - lambert_dark.y
+	testing.expectf(t, near(sunlit, 0.8 * cosine, 0.03), "Lambert takes the cosine of the sun: %v, %v expected", sunlit, 0.8 * cosine)
+	testing.expectf(t, near(stylized_lit.y - stylized_dark.y, 0.8, 0.03), "the stylized ground takes the sun whole: %v", stylized_lit.y - stylized_dark.y)
+	testing.expectf(t, lambert_dark.y > 0.05 && lambert_dark.y < lambert_lit.y * 0.6, "the board shadows the ground: %v against %v", lambert_dark, lambert_lit)
+	shade := Vec3{0.5, 0.25, 1}
+	for c in 0 ..< 3 {
+		testing.expectf(t, near(stylized_dark[c], lambert_dark[c] * shade[c], 0.04), "in the shadow it takes the sky by its shade, channel %d: %v against %v", c, stylized_dark, lambert_dark)
+	}
+	for c in 0 ..< 3 {
+		testing.expectf(t, near(painted_dark[c], stylized_dark[c], 0.02) && near(painted_lit[c], stylized_lit[c], 0.02), "a program that gives the same look draws the same, channel %d: %v and %v against %v and %v", c, painted_dark, painted_lit, stylized_dark, stylized_lit)
+	}
+	for c in 0 ..< 3 {
+		testing.expectf(t, near(unlit_dark[c], 0.3, 0.02) && near(unlit_lit[c], 0.3, 0.02), "the unlit ground shows its emission alone, channel %d: %v and %v", c, unlit_dark, unlit_lit)
+	}
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
 // An anisotropic metal reads the light around it along its bent reflection
 // with the probe volume as without it: under a sky lit only behind the
 // camera, the lobe stretched towards the camera shows it, and the one

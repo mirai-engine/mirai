@@ -81,7 +81,8 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   [residency](references/materials.md#residency-by-sampling)
 - Decals (`Alpha_Mode.Decal`, what they write, their order, decal targets, the `Decal` stage) →
   [decals](references/materials.md#decals)
-- OpenPBR layers (coat, fuzz, anisotropy, diffuse transmission, unlit), tangents and normal maps →
+- OpenPBR layers (coat, fuzz, anisotropy, diffuse transmission, stylized, unlit), tangents and
+  normal maps →
   [layers](references/materials.md#layers-openpbr),
   [normal maps](references/materials.md#normal-maps-and-specular-antialiasing)
 - Glass → [glass](references/materials.md#glass); which rays see glass and which go through it →

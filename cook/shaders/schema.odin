@@ -54,6 +54,8 @@ material_schema :: proc(allocator:=context.temp_allocator) -> string {
     color(&b,"DIFFUSE_TRANSMISSION_COLOR",d.diffuse_transmission.color)
     color(&b,"SUBSURFACE_COLOR",d.subsurface.color)
     scalar(&b,"SUBSURFACE_RADIUS",d.subsurface.radius)
+    color(&b,"STYLIZED_SHADE",d.stylized.shade)
+    scalar(&b,"STYLIZED_SOFTNESS",d.stylized.softness)
     strings.write_string(&b,"#endif\n")
     return strings.to_string(b)
 }

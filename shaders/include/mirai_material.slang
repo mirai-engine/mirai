@@ -151,6 +151,9 @@ struct Mirai_Surface {
     float subsurface_weight;   // of the light the base scatters, the share that spreads under a solid before it leaves; it takes the place of diffuse_transmission
     float3 subsurface_color;   // the share of subsurface_radius each channel spreads over
     float subsurface_radius;   // metres
+    bool stylized;             // a painted look in place of the lobes: diffuse alone, across a terminator stylized_softness wide, and the light around by stylized_shade
+    float stylized_softness;   // 1: Lambert's terminator; toward 0 a hard edge, the side that faces the light lit whole
+    float3 stylized_shade;     // what it takes of the light around (the probes, the sky): the color and depth of its shadows
     bool unlit;                // it reflects no light: emission alone
 };
 // The values of the default material (asset.MATERIAL_DEFAULTS) at the point.
@@ -175,7 +178,8 @@ Mirai_Surface mirai_surface_mix(Mirai_Surface a, Mirai_Surface b, float mask) {
     a.fuzz_weight=lerp(a.fuzz_weight,b.fuzz_weight,w);a.fuzz_color=lerp(a.fuzz_color,b.fuzz_color,w);a.fuzz_roughness=lerp(a.fuzz_roughness,b.fuzz_roughness,w);
     a.diffuse_transmission_weight=lerp(a.diffuse_transmission_weight,b.diffuse_transmission_weight,w);a.diffuse_transmission_color=lerp(a.diffuse_transmission_color,b.diffuse_transmission_color,w);
     a.subsurface_weight=lerp(a.subsurface_weight,b.subsurface_weight,w);a.subsurface_color=lerp(a.subsurface_color,b.subsurface_color,w);a.subsurface_radius=lerp(a.subsurface_radius,b.subsurface_radius,w);
-    a.unlit=w<0.5?a.unlit:b.unlit;
+    a.stylized_softness=lerp(a.stylized_softness,b.stylized_softness,w);a.stylized_shade=lerp(a.stylized_shade,b.stylized_shade,w);
+    a.stylized=w<0.5?a.stylized:b.stylized;a.unlit=w<0.5?a.unlit:b.unlit;
     return a;
 }
 // Of the pixel an effect writes. color is the image the effect before left,

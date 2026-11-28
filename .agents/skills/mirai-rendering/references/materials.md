@@ -1,7 +1,8 @@
 # Materials and textures
 
 OpenPBR 1.1 model: glTF 2.0 metallic-roughness base with optional [layers](#layers-openpbr)
-(coat, fuzz, specular anisotropy, diffuse transmission, subsurface) and an unlit mode.
+(coat, fuzz, specular anisotropy, diffuse transmission, subsurface), a stylized mode and an
+unlit mode.
 
 ## Material row
 
@@ -79,7 +80,7 @@ erender.material_texture(&values, base.name_hash("maps.mask"), 0, mask_tex_id)
 ## Layers (OpenPBR)
 
 - `asset.material_layers` sets row `layers` bits; Surface programs add bits for fields written
-  on `Mirai_Surface`. `unlit` excludes all other layers. Layers only enable the
+  on `Mirai_Surface`. `unlit` and `stylized` exclude all other layers. Layers only enable the
   [layers target](frame-graph.md) while visible; they never change scene lighting mode.
 - **Stack order:** Fuzz over coat over base via albedo scaling (`shading_layers` prepares once
   for raster, `glass_shading`, `surface_shading`, GI, and studio; `shading_lobes` and
@@ -92,8 +93,11 @@ erender.material_texture(&values, base.name_hash("maps.mask"), 0, mask_tex_id)
 | Diffuse transmission | Thin-sheet OpenPBR / `KHR_materials_diffuse_transmission`: back lit via inverted Lambert (`shading_back`, `back_irradiance`, `direct_lighting` rays). `LIGHTS_THROUGH` / `trace_through` crosses masked transmitting sheets only; GI reflects diffuse part only. |
 | Anisotropy | Anisotropic GGX on MikkTSpace tangent rotated by `rotation`/map; bent normal for environment (Revie 2011), also in the probe light `contact_light.comp` gathers. |
 | Subsurface | `weight`, `color` (share of `radius` per channel), `radius` (m, up to `MATERIAL_SUBSURFACE_RADIUS_MAX`); maps `subsurface` (a), `subsurface_radius` (r). Opaque G-buffer only; excludes diffuse transmission (same layer bits). See [subsurface](#subsurface). |
+| Stylized | `Material_Stylized` (`enabled`, `softness`, `shade`); programs `s.stylized`, `stylized_softness`, `stylized_shade`. No specular lobe (`shading_layers`); each light by `stylized_terminator`: `saturate(cos / softness) / cos` over Lambert (1 is Lambert, toward 0 a hard edge, the lit side flat); shadows of maps and rays as they fall; `indirect_compose` and `sample_albedo` take the light around by `shade`. Layers target: softness and shade alone (8 bits each); material points keep them in the coat words. |
 | Unlit | BSDF = 0 everywhere; outputs emission (nits or [relative](display.md#exposure-relative-emission)). Base color/opacity still govern coverage. |
 
+- **Stylized focal test:** `material_stylized_takes_the_sun_whole_and_the_sky_by_its_shade`
+  (row and program `Painted` of `render/testdata`, unlit alongside).
 - **Zero-cost when unused:** `direct`, `contact_light` and `composite` run `unlayered`
   (`MIRAI_GBUFFER_NO_LAYERS`) when no layered instance is visible. Glass uses its `layers` variant
   of `glass_layer` only when layered glass is in view.

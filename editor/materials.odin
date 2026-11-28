@@ -44,6 +44,7 @@ Material_Value :: enum u8 {
     Base_Color,Opacity,Metallic,Roughness,Emission,Specular,Ior,Transmission,Alpha_Mode,
     Coat,Coat_Roughness,Coat_Color,Coat_Ior,Fuzz,Fuzz_Color,Fuzz_Roughness,Anisotropy,Anisotropy_Rotation,Unlit,
     Emission_Mode,Diffuse_Transmission,Diffuse_Transmission_Color,Subsurface,Subsurface_Color,Subsurface_Radius,
+    Stylized,Stylized_Softness,Stylized_Shade,
 }
 #assert(len(Material_Value)==len(asset.MATERIAL_VALUE_FIELDS))
 
@@ -569,6 +570,16 @@ material_parameters :: proc(c:^Inspect,a:^Appearance) {
     choice_row(s,a,"Unlit",.Unlit,{"Off","On"},int(values.unlit))
     if values.unlit {
         alpha_row(s,a)
+        return
+    }
+    // A stylized material reflects diffuse light alone, in its own way: the lobes and layers of OpenPBR do not apply.
+    choice_row(s,a,"Stylized",.Stylized,{"Off","On"},int(values.stylized.enabled))
+    if values.stylized.enabled {
+        override_number_row(s,a,"Softness",.Stylized_Softness,values.stylized.softness)
+        shade:=material_value_name(.Stylized_Shade)
+        appearance_swatch(s,"Shade",7,values.stylized.shade,{key=value_key(a.entity,a.slot,shade),entity=a.entity,slot=a.slot,name=shade})
+        alpha_row(s,a)
+        for kind in ([?]asset.Material_Map_Kind{.Normal,.Occlusion}) {map_row(c,a,info,kind)}
         return
     }
     override_number_row(s,a,"Metallic",.Metallic,values.metallic)

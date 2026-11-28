@@ -720,6 +720,7 @@ gpu_material_values :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row 
 	result.anisotropy = {amount = clamp(m.anisotropy.amount, 0, 1), rotation = {math.cos(m.anisotropy.rotation), math.sin(m.anisotropy.rotation)}}
 	result.diffuse_transmission = {color = linalg.clamp(d.color, 0, 1), weight = clamp(d.weight, 0, 1)}
 	result.subsurface = {color = linalg.clamp(u.color, 0, 1), weight = clamp(u.weight, 0, 1), radius = clamp(u.radius, 0, asset.MATERIAL_SUBSURFACE_RADIUS_MAX)}
+	result.stylized = {shade = linalg.clamp(m.stylized.shade, 0, 1), softness = clamp(m.stylized.softness, 0, 1)}
 	for texture, kind in m.textures {result.textures[kind] = texture_index(r, texture)}
 	if !material_mask_own(m) {result.textures[.Mask] = result.textures[.Base_Color]}
 	// The usual packing of glTF: occlusion in the red of the metallic-roughness

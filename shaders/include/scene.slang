@@ -720,6 +720,7 @@ Mirai_Surface mirai_surface_default(Mirai_Surface_Context ctx) {
     s.fuzz_weight = 0.0; s.fuzz_color = MATERIAL_DEFAULT_FUZZ_COLOR; s.fuzz_roughness = MATERIAL_DEFAULT_FUZZ_ROUGHNESS;
     s.diffuse_transmission_weight = 0.0; s.diffuse_transmission_color = MATERIAL_DEFAULT_DIFFUSE_TRANSMISSION_COLOR;
     s.subsurface_weight = 0.0; s.subsurface_color = MATERIAL_DEFAULT_SUBSURFACE_COLOR; s.subsurface_radius = MATERIAL_DEFAULT_SUBSURFACE_RADIUS;
+    s.stylized = false; s.stylized_softness = MATERIAL_DEFAULT_STYLIZED_SOFTNESS; s.stylized_shade = MATERIAL_DEFAULT_STYLIZED_SHADE;
     s.specular_anisotropy = 0.0; s.specular_tangent = ctx.tangent.xyz; s.unlit = false;
     return s;
 }
@@ -888,6 +889,11 @@ Material_Layers material_layers(Material m, Mirai_Surface_Context ctx) {
     Material_Diffuse_Transmission transmission = blocks.diffuse_transmission;
     Material_Anisotropy anisotropy = blocks.anisotropy;
     Material_Subsurface subsurface = blocks.subsurface;
+    if ((bits & MATERIAL_LAYER_STYLIZED) != 0u) {
+        l.stylized_softness = blocks.stylized.softness;
+        l.stylized_shade = blocks.stylized.shade;
+        return l;
+    }
     if ((bits & MATERIAL_LAYER_COAT) != 0u) {
         l.coat = coat.weight;
         l.coat_roughness = coat.roughness;
@@ -992,6 +998,9 @@ Mirai_Surface material_standard(Material m, Mirai_Surface_Context ctx, float3 ti
     s.specular_ior = m.ior;
     // The layers the row holds there, as a program gives them.
     s.unlit = (layers.bits & MATERIAL_LAYER_UNLIT) != 0u;
+    if ((layers.bits & MATERIAL_LAYER_STYLIZED) != 0u) {
+        s.stylized = true; s.stylized_softness = layers.stylized_softness; s.stylized_shade = layers.stylized_shade;
+    }
     if ((layers.bits & MATERIAL_LAYER_COAT) != 0u) {
         s.coat_weight = layers.coat; s.coat_roughness = layers.coat_roughness; s.coat_color = layers.coat_color; s.coat_ior = layers.coat_ior; s.coat_normal = layers.coat_normal;
     }
@@ -1097,7 +1106,11 @@ void material_program_apply(Material m, Mirai_Surface result, float3 tint, float
     // The layers a program gives, where the row says it may give them.
     Material_Layers l = material_layers_none();
     l.bits = result.unlit ? MATERIAL_LAYER_UNLIT : 0u;
-    if (!result.unlit) {
+    if (!result.unlit && result.stylized && (m.layers & MATERIAL_LAYER_STYLIZED) != 0u) {
+        l.bits = MATERIAL_LAYER_STYLIZED;
+        l.stylized_softness = saturate(result.stylized_softness);
+        l.stylized_shade = saturate(result.stylized_shade);
+    } else if (!result.unlit) {
         l.coat = saturate(result.coat_weight); l.coat_roughness = saturate(result.coat_roughness); l.coat_color = saturate(result.coat_color);
         l.coat_ior = max(result.coat_ior, 1.0); l.coat_normal = normalize(result.coat_normal);
         l.fuzz = saturate(result.fuzz_weight); l.fuzz_color = saturate(result.fuzz_color); l.fuzz_roughness = saturate(result.fuzz_roughness);
@@ -1291,6 +1304,8 @@ float3 sample_albedo(Material_Sample m, float3 normal) {
     Shading s = shading_surface(float3(0.0), normal, normal, m.base_color, m.metallic, m.roughness, m.f0, m.f90);
     shading_layers(s, m.layers, m.metallic);
     if ((s.layers & MATERIAL_LAYER_UNLIT) != 0u) return float3(0.0);
+    // A stylized point reflects its diffuse light alone, by its shade.
+    if ((s.layers & MATERIAL_LAYER_STYLIZED) != 0u) return s.diffuse * s.shade;
     // What a thin base lets through leaves on the other side: it reflects the rest.
     if ((s.layers & MATERIAL_LAYER_DIFFUSE_TRANSMISSION) != 0u) base = min(s.diffuse * diffuse_remaining(m.f0) + m.f0, float3(1.0));
     if (s.coat > 0.0) base = base * ((1.0 - s.coat) + s.below_coat * s.coat_through) + coat_reflectance(s);

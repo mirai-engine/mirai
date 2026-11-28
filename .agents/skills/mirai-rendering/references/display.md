@@ -171,7 +171,9 @@ and then the dither. The debug views show sRGB in [0, 1].
   into `Renderer.display_lut` once, when the renderer starts; the tonemap and the UI particles
   read it when the project chooses ACES 2.0. Its axes are log2 around the mid gray
   (`display_shaper`); outside its range it is clipped.
-- **Grading.** A grading LUT would go in the shaper space, before the display LUT; none exists.
+- **Grading.** The built-in PostProcess program `ColorGrade` (`shaders/materials/color_grade.slang`)
+  in a layer of a `View_Volume`: tint, saturation, contrast around middle gray and gamma, for the
+  image and for its shadows, midtones and highlights. Without the layer nothing runs.
 - **HDR.** The swapchain is SDR sRGB; PQ or scRGB are pending (issue #53). Another display is
   another `Display_Desc` and another bake.
 - **Previews.** Thumbnails, document previews, their background and the UI studio do not go

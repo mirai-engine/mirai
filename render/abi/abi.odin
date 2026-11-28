@@ -682,7 +682,7 @@ INSTANCE_ROW_WORDS     :: 1 + MATERIAL_WORDS + MATERIAL_BLOCK_WORDS + PROGRAM_PA
 // values shading holds, then the blocks of its layers, and from
 // MATERIAL_PARAMETERS_WORD the parameters of its program.
 MATERIAL_WORDS           :: 29 + len(asset.Material_Map_Kind)
-MATERIAL_BLOCK_WORDS     :: 24
+MATERIAL_BLOCK_WORDS     :: 28
 MATERIAL_PARAMETERS_WORD :: MATERIAL_WORDS + MATERIAL_BLOCK_WORDS + 4 + 8 * len(asset.Material_Map_Kind)
 // The bits of what the program of a row does (render.Gpu_Material_Volume.flags).
 MATERIAL_PROGRAM_CHANGING    :: 1 // what it gives a point changes with nothing that says so: it reads the time

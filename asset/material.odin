@@ -9,7 +9,8 @@ import "mirai:std/serial"
 // .mat: the values of a material. The standard model is OpenPBR's: a
 // metallic-roughness base, as in glTF 2.0, with glass, and the layers a
 // material may add over it (coat, fuzz, specular anisotropy, diffuse
-// transmission, subsurface) or no light at all (unlit). A material may instead name a Surface program and carry the
+// transmission, subsurface), a painted look in their place (stylized) or no
+// light at all (unlit). A material may instead name a Surface program and carry the
 // values of its parameters. Textures are asset ids.
 //
 //   material     Material_Info, one row: what the material is
@@ -30,7 +31,7 @@ import "mirai:std/serial"
 // A source gives the values of the standard model and of the parameters of
 // its program; overlays and hidden names are always the material's own.
 
-MATERIAL_VERSION :: 7
+MATERIAL_VERSION :: 8
 MATERIAL_MAX_PARAMETERS :: 32
 MATERIAL_MAX_OVERLAYS :: 4
 MATERIAL_NAME_BYTES :: 64
@@ -174,6 +175,18 @@ Material_Subsurface :: struct {
     radius:f32 `mirai:"min=0,max=0.1,unit=m"`, // up to MATERIAL_SUBSURFACE_RADIUS_MAX
 }
 
+// A painted look in place of the lobes of OpenPBR: the base reflects diffuse
+// light alone, each light reaches it across a terminator softness wide in the
+// cosine (1: Lambert's; toward 0 a hard edge, the side that faces the light
+// lit whole), and it takes the light around it (the probes, the sky) by
+// shade: the color and depth of its shadows. The shadows of the lights stay
+// as they fall. No other layer goes with it.
+Material_Stylized :: struct {
+    enabled:bool,
+    softness:f32 `mirai:"min=0,max=1"`,
+    shade:[3]f32 `mirai:"color"`,
+}
+
 // How the emission of a material is measured.
 Emission_Mode :: enum u8 {
     // Luminance in nits: physical light, which lights the scene and which the
@@ -185,12 +198,13 @@ Emission_Mode :: enum u8 {
     Relative,
 }
 // What a material holds besides the base. Unlit has none of the others: it
-// reflects no light.
-Material_Layer :: enum u8 {Coat,Fuzz,Anisotropy,Unlit,Diffuse_Transmission,Subsurface}
+// reflects no light; nor has Stylized, which reflects it in its own way.
+Material_Layer :: enum u8 {Coat,Fuzz,Anisotropy,Unlit,Diffuse_Transmission,Subsurface,Stylized}
 Material_Layers :: bit_set[Material_Layer;u32]
 
 material_layers :: proc "contextless" (m:^Material_Info) -> (layers:Material_Layers) {
     if m.unlit {return {.Unlit}}
+    if m.stylized.enabled {return {.Stylized}}
     if m.coat.weight>0 {layers+={.Coat}}
     if m.fuzz.weight>0 {layers+={.Fuzz}}
     if m.anisotropy.amount>0 {layers+={.Anisotropy}}
@@ -225,6 +239,7 @@ Material_Info :: struct {
     anisotropy:Material_Anisotropy,
     diffuse_transmission:Material_Diffuse_Transmission,
     subsurface:Material_Subsurface,
+    stylized:Material_Stylized,
     unlit:bool, // it reflects no light and shows its emission alone; base color and opacity still cover
     decal:Material_Decal, // of Alpha_Mode.Decal
     maps:Material_Maps,
@@ -258,7 +273,7 @@ MATERIAL_DEFAULTS :: Material_Info{
     base_color={1,1,1},opacity=1,alpha_cutoff=0.5,roughness=1,normal_scale=1,occlusion_strength=1,
     specular_factor=1,specular_color={1,1,1},ior=1.5,attenuation_color={1,1,1},
     coat={color={1,1,1},ior=1.6,normal_scale=1},fuzz={color={1,1,1},roughness=0.5},diffuse_transmission={color={1,1,1}},
-    subsurface={color={1,0.5,0.25},radius=0.005},decal={writes={.Color,.Normal,.Surface}},
+    subsurface={color={1,0.5,0.25},radius=0.005},stylized={softness=1,shade={1,1,1}},decal={writes={.Color,.Normal,.Surface}},
     maps={
         MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,
         MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,
@@ -275,7 +290,7 @@ Material_Value_Field :: struct {
     kind:enum u8 {Number,Color,Flag,Mode},
     modes:u8,
 }
-MATERIAL_VALUE_FIELDS :: [25]Material_Value_Field{
+MATERIAL_VALUE_FIELDS :: [28]Material_Value_Field{
     {"base_color",offset_of(Material_Info,base_color),.Color,0},{"opacity",offset_of(Material_Info,opacity),.Number,0},
     {"metallic",offset_of(Material_Info,metallic),.Number,0},{"roughness",offset_of(Material_Info,roughness),.Number,0},
     {"emission",offset_of(Material_Info,emission),.Color,0},{"specular",offset_of(Material_Info,specular_factor),.Number,0},
@@ -293,6 +308,9 @@ MATERIAL_VALUE_FIELDS :: [25]Material_Value_Field{
     {"subsurface",offset_of(Material_Info,subsurface)+offset_of(Material_Subsurface,weight),.Number,0},
     {"subsurface_color",offset_of(Material_Info,subsurface)+offset_of(Material_Subsurface,color),.Color,0},
     {"subsurface_radius",offset_of(Material_Info,subsurface)+offset_of(Material_Subsurface,radius),.Number,0},
+    {"stylized",offset_of(Material_Info,stylized)+offset_of(Material_Stylized,enabled),.Flag,0},
+    {"stylized_softness",offset_of(Material_Info,stylized)+offset_of(Material_Stylized,softness),.Number,0},
+    {"stylized_shade",offset_of(Material_Info,stylized)+offset_of(Material_Stylized,shade),.Color,0},
 }
 
 // Puts a value of the standard model over the values of a material (put), or
@@ -511,6 +529,7 @@ material_problem :: proc(view:Material_View) -> string {
     unit_range(p,"diffuse_transmission.weight",transmission.weight);color_range(p,"diffuse_transmission.color",transmission.color)
     unit_range(p,"subsurface.weight",subsurface.weight);color_range(p,"subsurface.color",subsurface.color)
     in_range(p,"subsurface.radius",subsurface.radius,0,MATERIAL_SUBSURFACE_RADIUS_MAX)
+    unit_range(p,"stylized.softness",m.stylized.softness);color_range(p,"stylized.shade",m.stylized.shade)
     if problem=="" && subsurface.weight>0 && transmission.weight>0 {
         problem="subsurface.weight and diffuse_transmission.weight are both above 0: a solid takes a subsurface, a thin surface a diffuse transmission; set one of them to 0"
     }

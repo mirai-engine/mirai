@@ -20,10 +20,10 @@ A scene is entities with components: a file of `assets/` written by `mirai rpc` 
 - A place where something happens (a gravity, a force, water, a trigger, a navigation area), and a
   blast or a gust from code: [regions.md](world/regions.md).
 - Sun, sky, indoor lights: [Light](#light). Brightness of the image: [Exposure](#exposure). Its
-  color on the display: [display transform](world/exposure.md#display-transform).
+  color on the display: [display transform](world/exposure.md#display-transform); a stylized
+  game (painted shade, sky changes, haze, grading): [painted.md](world/painted.md).
 - An image that is too dark or too bright, step by step: [exposure.md](world/exposure.md).
-- The color, the light or a material value of one entity, from game code:
-  [look.md](world/look.md).
+- The color, the light or a material value of one entity, from code: [look.md](world/look.md).
 - Walking on it, swimming in it: [character](character.md).
 
 ## Plugins

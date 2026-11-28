@@ -29,9 +29,9 @@ uint gbuffer_bits_unpack(float4 texel) { return uint(texel.w + 0.5); }
 // (MATERIAL_LAYER_*):
 // Its emission is relative to the exposure (EMISSION_RELATIVE): it shows in
 // the image, but neither lights the scene nor is metered.
-#define GBUFFER_EMISSION_RELATIVE 64u
+#define GBUFFER_EMISSION_RELATIVE 128u
 // A layer of glass that is a back face of the solid the camera is in: the view leaves the solid there.
-#define GBUFFER_GLASS_EXIT 128u
+#define GBUFFER_GLASS_EXIT 256u
 
 // The layers target (RGBA32 uint), while some instance with layers is in
 // sight: its 128 bits in this order, from the low bits of x up, each value
@@ -43,9 +43,11 @@ uint gbuffer_bits_unpack(float4 texel) { return uint(texel.w + 0.5); }
 // the diffuse transmission (5 per channel each), as their square roots. A
 // subsurface, which a pixel holds in place of a diffuse transmission, keeps
 // its weight where that weight goes and the radius of each channel where its
-// color goes (subsurface_radius_code).
+// color goes (subsurface_radius_code). A stylized pixel, which has none of the
+// others, holds its softness (8) and the square roots of its shade (8 per
+// channel) alone.
 // The layers whose values the layers target holds.
-#define MATERIAL_LAYERS_HELD (MATERIAL_LAYER_COAT | MATERIAL_LAYER_FUZZ | MATERIAL_LAYER_ANISOTROPY | MATERIAL_LAYER_DIFFUSE_TRANSMISSION | MATERIAL_LAYER_SUBSURFACE)
+#define MATERIAL_LAYERS_HELD (MATERIAL_LAYER_COAT | MATERIAL_LAYER_FUZZ | MATERIAL_LAYER_ANISOTROPY | MATERIAL_LAYER_DIFFUSE_TRANSMISSION | MATERIAL_LAYER_SUBSURFACE | MATERIAL_LAYER_STYLIZED)
 uint gbuffer_unorm(float value, uint bits) { return uint(round(saturate(value) * float((1u << bits) - 1u))); }
 // `bits` of `value` at bit `at` of the 128, which may cross from one word into the next.
 void gbuffer_put(inout uint4 v, inout uint at, uint value, uint bits) {
@@ -103,6 +105,11 @@ uint4 gbuffer_layers_pack(Material_Layers l) {
     bool scatters = (l.bits & MATERIAL_LAYER_SUBSURFACE) != 0u;
     uint4 v = uint4(0u);
     uint at = 0u;
+    if ((l.bits & MATERIAL_LAYER_STYLIZED) != 0u) {
+        gbuffer_put_unorm(v, at, l.stylized_softness, 8u);
+        gbuffer_put_color(v, at, l.stylized_shade, uint3(8u, 8u, 8u));
+        return v;
+    }
     gbuffer_put_oct(v, at, l.coat_normal, 11u);
     gbuffer_put_oct(v, at, l.tangent, 9u);
     gbuffer_put_unorm(v, at, l.coat, 7u);
@@ -130,6 +137,11 @@ Material_Layers gbuffer_layers_unpack(uint4 v, uint bits) {
     l.bits = bits & (held | MATERIAL_LAYER_UNLIT);
     if ((l.bits & held) == 0u) return l;
     uint at = 0u;
+    if ((l.bits & MATERIAL_LAYER_STYLIZED) != 0u) {
+        l.stylized_softness = gbuffer_take_unorm(v, at, 8u);
+        l.stylized_shade = gbuffer_take_color(v, at, uint3(8u, 8u, 8u));
+        return l;
+    }
     l.coat_normal = gbuffer_take_oct(v, at, 11u);
     l.tangent = gbuffer_take_oct(v, at, 9u);
     l.coat = gbuffer_take_unorm(v, at, 7u);

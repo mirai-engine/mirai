@@ -54,7 +54,7 @@ PARAMETER_GROUP_BYTES :: 32
 // The layers a Surface program gives, by the fields of Mirai_Surface its
 // source names: a material shows them only where its program may give them.
 @(private)
-PROGRAM_LAYERS :: [asset.Material_Layer]string{.Coat="coat_weight",.Fuzz="fuzz_weight",.Anisotropy="specular_anisotropy",.Unlit="unlit",.Diffuse_Transmission="diffuse_transmission_weight",.Subsurface="subsurface_weight"}
+PROGRAM_LAYERS :: [asset.Material_Layer]string{.Coat="coat_weight",.Fuzz="fuzz_weight",.Anisotropy="specular_anisotropy",.Unlit="unlit",.Diffuse_Transmission="diffuse_transmission_weight",.Subsurface="subsurface_weight",.Stylized="stylized"}
 
 // Whether a Surface program may give a reflectance that its base color and
 // metallic do not, by the fields of Mirai_Surface its source names: the G-buffer

@@ -45,6 +45,8 @@ struct Material_Layers {
     float subsurface;                    // of the light the base scatters, the share that spreads under it (subsurface.comp)
     float3 subsurface_color;             // the share of subsurface_radius each channel spreads over
     float subsurface_radius;             // metres
+    float stylized_softness;             // a stylized point: the width of its terminator in the cosine
+    float3 stylized_shade;               // a stylized point: what it takes of the light around
 };
 Material_Layers material_layers_none() {
     Material_Layers l = (Material_Layers)0;
@@ -54,6 +56,8 @@ Material_Layers material_layers_none() {
     l.fuzz_roughness = MATERIAL_DEFAULT_FUZZ_ROUGHNESS;
     l.diffuse_transmission_color = float3(1.0);
     l.subsurface_color = float3(1.0);
+    l.stylized_softness = MATERIAL_DEFAULT_STYLIZED_SOFTNESS;
+    l.stylized_shade = MATERIAL_DEFAULT_STYLIZED_SHADE;
     return l;
 }
 
@@ -104,6 +108,10 @@ struct Shading {
     // that reaches its other side, as a Lambert reflector facing that side
     // would (shading_back), the layers over it included.
     float3 transmit;
+    // A stylized point (MATERIAL_LAYER_STYLIZED), diffuse alone: the width of
+    // its terminator in the cosine, and what it takes of the light around.
+    float softness;
+    float3 shade;
     // A point of a medium (shading_medium), whose normal is zero: it sends
     // towards view what the phase function of its anisotropy (media_phase)
     // gives of the light from each direction, and nothing of a lobe.
@@ -340,6 +348,16 @@ void shading_layers(inout Shading s, Material_Layers layers, float metallic) {
         s.energy = float3(1.0);
         return;
     }
+    if ((layers.bits & MATERIAL_LAYER_STYLIZED) != 0u) {
+        s.f0 = float3(0.0);
+        s.f90 = float3(0.0);
+        s.glossy = false;
+        s.dfg = float2(0.0);
+        s.energy = float3(1.0);
+        s.softness = saturate(layers.stylized_softness);
+        s.shade = saturate(layers.stylized_shade);
+        return;
+    }
     if ((layers.bits & MATERIAL_LAYER_DIFFUSE_TRANSMISSION) != 0u && layers.diffuse_transmission > 0.0) {
         // Of the light the dielectric base scatters, the weight leaves through
         // the other side of a thin surface filtered by the color, and the rest
@@ -574,6 +592,16 @@ void shading_lobes(Shading s, float3 light, Highlight base, Highlight coat, out 
     }
 }
 
+// What a stylized point takes of a light from `light` (unit) over what Lambert
+// does, whose cosine is part of the irradiance: it rises across the cosine
+// from 0 to its softness, and past it the point is lit whole. A softness of 1
+// is Lambert's; toward 0, a hard edge.
+float stylized_terminator(Shading s, float3 light) {
+    float cosine = dot(s.normal, light);
+    if (!(cosine > 0.0)) return 0.0;
+    return saturate(cosine / max(s.softness, 1e-3)) / cosine;
+}
+
 // Radiance leaving towards s.view per unit of Lambert-normalized irradiance
 // from a sphere of light of `radius` whose center lies `distance` along the
 // unit `light` (the cosine is part of the irradiance); a radius of zero is a
@@ -583,6 +611,7 @@ void shading_lobes(Shading s, float3 light, Highlight base, Highlight coat, out 
 float3 shading_response(Shading s, float3 light, float distance = 0.0, float radius = 0.0) {
     if (s.medium) return float3(media_phase(dot(-s.view, light), s.anisotropy));
     if (!s.glossy && s.layers == 0u) return s.diffuse;
+    if ((s.layers & MATERIAL_LAYER_STYLIZED) != 0u) return s.diffuse * stylized_terminator(s, light);
     Highlight base = highlight_at(light), coat = highlight_at(light);
     if (radius > 0.0 && distance > 0.0) sphere_highlights(s, light * distance, radius, base, coat);
     float3 diffuse, specular;
@@ -665,12 +694,14 @@ float3 occlusion_bounced(float3 albedo, float occlusion) {
 // (base_diffuse_share, as for each light) and the ambient occlusion with its bounces; its specular lobe, the radiance around its dominant
 // direction, with the specular occlusion. The layers over the base take
 // their share as they do of each light (shading_lobes), the coat the mean
-// of its transmission towards the light around.
+// of its transmission towards the light around. A stylized point takes it by
+// its shade.
 float3 indirect_compose(Shading s, Indirect light) {
     float3 reflectance = environment_reflectance(s);
     float3 diffuse = s.diffuse * base_diffuse_share(s) * light.irradiance * occlusion_bounced(s.diffuse, light.occlusion);
     float3 color = diffuse + reflectance * light.radiance * specular_occlusion(s.nov, s.roughness, light.occlusion);
     if (s.layers == 0u) return color;
+    if ((s.layers & MATERIAL_LAYER_STYLIZED) != 0u) return color * s.shade;
     if (s.coat > 0.0) {
         color = color * ((1.0 - s.coat) + s.below_coat * s.coat_through) + coat_reflectance(s) * light.coat_radiance * specular_occlusion(s.coat_nov, s.coat_roughness, light.occlusion);
     }
