@@ -160,9 +160,13 @@ float3 sky_direction(float3 dir) {
 
 // An image of the sky (map as Frame.sky_map) at a level of its mip chain,
 // times its luminance. The image has the whole turn across and the zenith at
-// its top; its rows do not wrap: the top one is not next to the bottom one.
+// its top, twice as wide as tall; its rows do not wrap: the top one is not
+// next to the bottom one, though the sampler repeats. A read keeps to the
+// middle of the top and bottom rows of the coarser level it blends, which at
+// the levels of an irradiance are a few rows in all.
 float3 sky_image(float4 map, float3 color, float3 dir, float level) {
-    float2 uv = float2(atan2(dir.z, dir.x) / (2.0 * PI) + 0.5, clamp(acos(clamp(dir.y, -1.0, 1.0)) / PI, 0.002, 0.998));
+    float edge = 0.5 / exp2(max(map.z - 1.0 - ceil(level), 0.0));
+    float2 uv = float2(atan2(dir.z, dir.x) / (2.0 * PI) + 0.5, clamp(acos(clamp(dir.y, -1.0, 1.0)) / PI, edge, 1.0 - edge));
     return color * material_textures[mirai_nonuniform(uint(map.x))].SampleLevel(material_sampler, uv, level).rgb;
 }
 
