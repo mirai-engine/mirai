@@ -177,8 +177,8 @@ editor UI; at most two self-iterations before showing the user; crop/zoom with `
   `render.inspect_entity`) and stop the session when done. Heavy performance runs (`mirai render
   check`, `mirai bench compare`, full-GPU benchmark sweeps) run at integration or close, never in
   a subagent. Research subagents do not edit versioned files.
-- **Machines.** At most three agents compile on one machine at once, and one agent uses its GPU at
-  a time (GPU tests, `play test`, captures, live sessions, timings): the GPU turn queues the others
+- **Machines.** One agent uses a machine's GPU at a time (GPU tests, `play test`, captures, live
+  sessions, timings): the GPU turn queues the others
   ([turns](.agents/skills/mirai-projects/references/build.md#turns-between-processes)). GPU
   captures, timings and Vulkan runs go to the Windows PC by default when it is reachable
   ([eco](.agents/skills/mirai-agent-api/SKILL.md#5-remote-windows-sessions-eco)); the Mac's GPU is
