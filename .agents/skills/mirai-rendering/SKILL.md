@@ -33,6 +33,9 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   instance index of a batch → [batches](references/scene.md#instance-batches); batches the GPU
   fills in the `Instances` stage (`batch_reserve`, `pass_batch_target`) →
   [filled](references/scene.md#instance-batches)
+- Textures whose rows the CPU writes in a frame or a pass copies from a buffer
+  (`texture_add_dynamic`, `Texture_Write`, `pass_texture_copy`, `texture_write`), and what
+  shadow-casting custom cards and trails use → [dynamic](references/scene.md#dynamic-textures)
 - Meshes and textures one at a time, geometry publication →
   [scene](references/scene.md#meshes-and-textures-one-at-a-time); geometry that uploads over several
   frames (`mesh_add_over_frames`, `mesh_uploading`) →

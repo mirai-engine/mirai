@@ -37,6 +37,7 @@ FRAME_DEBUG_CAPACITY :: 8
 FRAME_INSTANCE_RESERVE :: 256
 FRAME_UI_TEXTURE_CAPACITY :: 32
 FRAME_EFFECT_VIEW_CAPACITY :: 16
+FRAME_TEXTURE_WRITES :: 16
 TEXTURE_VIEW_CAPACITY :: 8
 
 CAMERA_DEFAULT :: render.Camera{position={0,2,6},forward={0,-1,-6},up={0,1,0},fov_y=60,near=0.1}
@@ -62,6 +63,8 @@ Frame_Extras :: struct {
     probe_count:int,
     texture_views:[TEXTURE_VIEW_CAPACITY]render.Frame_View, // the views this frame draws into a texture
     texture_view_count:int,
+    texture_writes:[FRAME_TEXTURE_WRITES]render.Texture_Write, // rows of dynamic textures this frame writes
+    texture_write_count:int,
     dropped:u64, // what did not fit in its frame and was not drawn, since the application started
 }
 
@@ -531,7 +534,7 @@ app_frame_end :: proc(app:^App) {
     base.profile_end(zone)
     app.extras.layer_count,app.extras.panel_count,app.extras.debug_count=0,0,0
     clear(&app.extras.instances)
-    app.extras.ui_texture_count,app.extras.effect_view_count,app.extras.probe_count=0,0,0
+    app.extras.ui_texture_count,app.extras.effect_view_count,app.extras.probe_count,app.extras.texture_write_count=0,0,0,0
     app.camera_cut=false
     app.camera_carried={}
     app.inspection={}
@@ -622,7 +625,7 @@ app_draw :: proc(app:^App,window:platform.Window_Frame) -> bool {
         views=views[:count],
         panels=extras.panels[:extras.panel_count],debug=extras.debug[:extras.debug_count],
         ui_textures=extras.ui_textures[:extras.ui_texture_count],effect_views=extras.effect_views[:extras.effect_view_count],
-        probes=extras.probes[:extras.probe_count],
+        probes=extras.probes[:extras.probe_count],texture_writes=extras.texture_writes[:extras.texture_write_count],
         output=app.output,ui_only=app.ui_only,
         refresh_hz=app.platform.window.refresh_hz if app.platform!=nil else 0,
     })
@@ -661,6 +664,19 @@ extras_ui_texture_draw :: proc(extras:^Frame_Extras,draw:render.Ui_Texture_Draw)
     if extras.ui_texture_count>=len(extras.ui_textures) {extras.dropped+=1;return false}
     extras.ui_textures[extras.ui_texture_count]=draw
     extras.ui_texture_count+=1
+    return true
+}
+
+// Rows of a dynamic texture (render.texture_add_dynamic) this frame writes
+// before its passes: rows is the first and how many, zero all of them, and
+// texels are tightly packed from the top. The texels are read when the frame
+// is drawn: keep them until then (the temp allocator lasts). The renderer
+// checks the write again and reports a bad one in its error. False without
+// room for another write in the frame.
+extras_texture_write :: proc(extras:^Frame_Extras,handle:render.Texture_Handle,texels:[]u8,rows:=[2]u32{}) -> bool {
+    if handle==0 || len(texels)==0 || extras.texture_write_count>=len(extras.texture_writes) {extras.dropped+=1;return false}
+    extras.texture_writes[extras.texture_write_count]={handle,texels,rows}
+    extras.texture_write_count+=1
     return true
 }
 
@@ -912,6 +928,7 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
             camera=app.camera,ui=extras.layers[:extras.layer_count],camera_cut=frame==0,inspection=app.inspection,time=app.time,
             views=app.views[:app.view_count],panels=extras.panels[:extras.panel_count],debug=extras.debug[:extras.debug_count],
             ui_textures=extras.ui_textures[:extras.ui_texture_count],effect_views=extras.effect_views[:extras.effect_view_count],
+            texture_writes=extras.texture_writes[:extras.texture_write_count],
             offscreen=true,streamed=wait>0,settle_gi=wait>0,detail=app.detail,
         }
         seen:=[1]render.Frame_View{{camera=app.camera,camera_cut=frame==0,rect={0,0,size.x,size.y},texture=texture,inspection=app.inspection}}
@@ -919,7 +936,7 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
         drawn=render.renderer_frame(r,desc)
         extras.layer_count,extras.panel_count,extras.debug_count=0,0,0
         clear(&extras.instances)
-        extras.ui_texture_count,extras.effect_view_count,extras.probe_count=0,0,0
+        extras.ui_texture_count,extras.effect_view_count,extras.probe_count,extras.texture_write_count=0,0,0,0
         app.camera_cut=false
         app.inspection={}
         app.view_count=0
@@ -1004,10 +1021,10 @@ app_world_draw :: proc(app:^App,world,editor:rawptr,texture:render.Texture_Handl
         offscreen_origin(app,ref)
         run_phase(app,.Game,.Render,{.Render},world,nil)
         seen:=[1]render.Frame_View{{camera=app.camera,camera_cut=cut && frame==0,rect={0,0,size.x,size.y},texture=texture}}
-        drawn=render.renderer_frame(r,{camera=app.camera,camera_cut=cut && frame==0,time=app.time+f32(frame)*max(dt,0),views=seen[:],offscreen=true})
+        drawn=render.renderer_frame(r,{camera=app.camera,camera_cut=cut && frame==0,time=app.time+f32(frame)*max(dt,0),views=seen[:],texture_writes=extras.texture_writes[:extras.texture_write_count],offscreen=true})
         extras.layer_count,extras.panel_count,extras.debug_count=0,0,0
         clear(&extras.instances)
-        extras.ui_texture_count,extras.effect_view_count,extras.probe_count=0,0,0
+        extras.ui_texture_count,extras.effect_view_count,extras.probe_count,extras.texture_write_count=0,0,0,0
         if !drawn {return}
     }
     return

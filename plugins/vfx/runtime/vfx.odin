@@ -135,6 +135,7 @@ Particle_Sync :: struct {
     bone_sources:[dynamic]Bone_Source, // whose they are
     pipelines:Particle_Pipelines,
     world_textures:[WORLD_TEXTURES]u64, // the names of the grids whose textures the renderer keeps
+    world_texture_handles:[WORLD_TEXTURES]erender.Texture_Handle, // of each, RGBA16F of its cells along x and z; 0: not made yet
     world_texture_count:int,
     world_textures_changed,world_texture_layout_dirty:bool,
     world_frame:World_Textures_Frame, // the textures of the world as the last steps left them
@@ -689,7 +690,7 @@ particles_release :: proc(sync:^Particle_Sync,id:core.World_Id,renderer:^erender
     if renderer!=nil {
         pool_release(renderer,id,&sync.pool)
         erender.buffer_release(renderer,id,world_buffer(sync).name)
-        for name in sync.world_textures[:sync.world_texture_count] {erender.table_texture_release(renderer,id,world_texture_key(name))}
+        for &texture in sync.world_texture_handles {erender.texture_remove(renderer,texture);texture=0}
     }
     pool_free(&sync.pool)
     surfaces_free(&sync.surfaces)

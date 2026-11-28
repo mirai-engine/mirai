@@ -464,7 +464,7 @@ level_store :: proc(
         linear:=transfer_make(false)
         out,alloc_error=level_convert(level,.RGBA16,transfer,&linear,allocator)
     case .RGBA16F: out,alloc_error=level_convert(level,.RGBA16F,transfer,transfer,allocator)
-    case .BC1,.BC5,.BC6H,.BC7:
+    case .R8,.BC1,.BC5,.BC6H,.BC7:
         return nil,.Invalid
     }
     if alloc_error!=nil {return nil,.Out_Of_Memory}

@@ -39,6 +39,7 @@ Texture_State :: struct {
 	sizes:     [dynamic][2]int,
 	stored:    [dynamic]u64,  // GPU memory of each one
 	partial:   [dynamic]bool, // not streamed, and left levels out to fit the pool
+	dynamic_format: [dynamic]rhi.Format, // of a texture of texture_add_dynamic; Undefined for the others
 	count:     int,
 	bytes:     u64, // GPU memory of every level
 	reduced:   int, // textures not streamed that left levels out to fit the pool
@@ -243,6 +244,7 @@ textures_init :: proc(r: ^Renderer) {
 	state.sizes = make([dynamic][2]int, r.allocator)
 	state.stored = make([dynamic]u64, r.allocator)
 	state.partial = make([dynamic]bool, r.allocator)
+	state.dynamic_format = make([dynamic]rhi.Format, r.allocator)
 	state.residency.streams = make([dynamic]Texture_Stream, r.allocator)
 }
 
@@ -254,6 +256,7 @@ textures_destroy :: proc(r: ^Renderer) {
 	delete(state.sizes)
 	delete(state.stored)
 	delete(state.partial)
+	delete(state.dynamic_format)
 	delete(state.residency.streams)
 	textures_feedback_release(r)
 	if state.residency.bc_scratch != 0 {rhi.buffer_destroy(r.device, state.residency.bc_scratch)}
@@ -275,20 +278,21 @@ textures_room :: proc(r: ^Renderer, index: int, name: string) -> bool {
 	if index >= cap(state.textures) {
 		size := max(2 * cap(state.textures), rhi.TEXTURE_TABLE_FIRST, index + 1)
 		fits = reserve(&state.textures, size) == nil && reserve(&state.keys, size) == nil && reserve(&state.sizes, size) == nil &&
-			reserve(&state.stored, size) == nil && reserve(&state.partial, size) == nil && reserve(&state.residency.streams, size) == nil
+			reserve(&state.stored, size) == nil && reserve(&state.partial, size) == nil && reserve(&state.dynamic_format, size) == nil && reserve(&state.residency.streams, size) == nil
 		if fits && !textures_feedback_reserve(r, size) {
 			set_error(r, "texture %s: the GPU has no memory for the feedback of %d textures: %s", name, size, rhi.device_error(r.device))
 			return false
 		}
 	}
 	fits = fits && resize(&state.textures, index + 1) == nil && resize(&state.keys, index + 1) == nil && resize(&state.sizes, index + 1) == nil &&
-		resize(&state.stored, index + 1) == nil && resize(&state.partial, index + 1) == nil && resize(&state.residency.streams, index + 1) == nil
+		resize(&state.stored, index + 1) == nil && resize(&state.partial, index + 1) == nil && resize(&state.dynamic_format, index + 1) == nil && resize(&state.residency.streams, index + 1) == nil
 	if !fits {
 		base.truncate(&state.textures, before)
 		base.truncate(&state.keys, before)
 		base.truncate(&state.sizes, before)
 		base.truncate(&state.stored, before)
 		base.truncate(&state.partial, before)
+		base.truncate(&state.dynamic_format, before)
 		base.truncate(&state.residency.streams, before)
 		set_error(r, "texture %s: out of memory for the table of %d textures", name, index + 1)
 		return false
@@ -471,6 +475,7 @@ textures_clear :: proc(r: ^Renderer) {
 	clear(&state.sizes)
 	clear(&state.stored)
 	clear(&state.partial)
+	clear(&state.dynamic_format)
 	clear(&state.residency.streams)
 	state.count, state.bytes, state.reduced = 0, 0, 0
 	state.residency.pending = 0
@@ -489,6 +494,13 @@ texture_find :: proc(r:^Renderer,key:u64)->(handle:Texture_Handle,width,height:i
 texture_index :: proc(r: ^Renderer, handle: Texture_Handle) -> u32 {
 	if handle == 0 || int(handle) > r.textures.count || r.textures.textures[handle - 1] == 0 {return max(u32)}
 	return texture_entry(int(handle) - 1)
+}
+
+// The size of the first level of a texture; zero for one that is gone.
+texture_size :: proc(r: ^Renderer, handle: Texture_Handle) -> [2]u32 {
+	index := int(handle) - 1
+	if index < 0 || index >= r.textures.count || r.textures.textures[index] == 0 {return {}}
+	return {u32(r.textures.sizes[index].x), u32(r.textures.sizes[index].y)}
 }
 
 // What the pool holds of a texture, and whether one that does not follow its

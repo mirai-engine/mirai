@@ -288,6 +288,12 @@ texture_round_trips_every_format_and_checks_level_sizes :: proc(t:^testing.T) {
     testing.expect_value(t,texture_level_size(.BC1,5,3),16)
     testing.expect_value(t,texture_level_size(.BC5,1,1),16)
     testing.expect_value(t,texture_level_size(.BC7,5,9),2*3*16)
+    testing.expect_value(t,texture_level_size(.R8,5,3),15)
+    testing.expect_value(t,texture_level_size(.R8,1,1),1)
+    testing.expect_value(t,texture_block_bytes(.R8),0)
+    r8:=[2]u8{7,200}
+    rgba:[8]u8
+    testing.expect(t,texture_level_rgba8(.R8,r8[:],2,1,rgba[:]) && rgba==[8]u8{7,0,0,255,200,0,0,255},"R8 reads as (r, 0, 0, 255), as the GPU samples it")
     testing.expect_value(t,texture_mip_count(8,2),4)
     testing.expect_value(t,texture_mip_count(1,1),1)
     testing.expect_value(t,texture_mip_count(5,3),3)
@@ -310,7 +316,8 @@ texture_round_trips_every_format_and_checks_level_sizes :: proc(t:^testing.T) {
         for level,i in levels {
             got:=texture_mip(view,i)
             testing.expect(t,mem.compare(got,level)==0)
-            testing.expect(t,uintptr(raw_data(got))%TEXTURE_BULK_ALIGNMENT==0 && inside(&a,raw_data(got)))
+            // The levels of R8 here are mostly the padding between them, which compresses: they decode out of the file.
+            testing.expect(t,uintptr(raw_data(got))%TEXTURE_BULK_ALIGNMENT==0 && (inside(&a,raw_data(got)) || format==.R8))
         }
         testing.expect(t,view.mips[3].width==1 && view.mips[3].height==1 && view.source==nil)
         asset_close(&a)

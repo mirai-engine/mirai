@@ -187,7 +187,9 @@ allocate.
   [registry](../../mirai-assets/references/formats.md#registry),
   [container](../../mirai-assets/references/formats.md#container)).
 - **Runtime textures & geometry:** `assets_texture_generate`/`release` (not unloaded/reloaded;
-  release bumps `revision`), `assets_geometry` (level 0 cluster-decoded, no UV1),
+  release bumps `revision`; `writable` makes a
+  [dynamic texture](../../mirai-rendering/references/scene.md#dynamic-textures) whose rows
+  `extras_texture_write` writes in a frame), `assets_geometry` (level 0 cluster-decoded, no UV1),
   `assets_collision`, `assets_mesh_collides`, `App.collision_cache`
   ([pieces](../../mirai-assets/references/kinds.md#mesh)).
 - **Job prep & budget (`assets_loading.odin`):** `assets_source`/`assets_source_open` +

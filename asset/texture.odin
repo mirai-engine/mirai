@@ -36,6 +36,7 @@ Texture_Format :: enum u8 {
     RGBA16,  // 16-bit channels, linear: data that keeps its precision
     RGBA16F, // half floats, linear: HDR with alpha, negative values or kept uncompressed
     BC6H,    // rgb half floats without sign, linear: HDR light and color
+    R8,      // one 8-bit channel, linear: masks and data, sampled as (r, 0, 0, 1)
 }
 
 Texture_Flag :: enum u8 {
@@ -90,6 +91,7 @@ Texture_View :: struct {
 // Bytes of one image of a level of a size, in a format.
 texture_level_size :: proc "contextless" (format:Texture_Format,width,height:int) -> int {
     switch format {
+    case .R8: return width*height
     case .RGBA8: return width*height*4
     case .RGBA16,.RGBA16F: return width*height*8
     case .BC1: return ((width+3)/4)*((height+3)/4)*8

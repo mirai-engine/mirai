@@ -207,7 +207,8 @@ void render(Mirai_Vfx_Context ctx, Parameters p, Mirai_Vfx_Particle pt, Attribut
 
 `Particle_World_Texture` on a flat-Y `Particle_Grid` exposes `layer` to materials (cap
 `WORLD_TEXTURES`; non-flat or overflow reports `vfx.world_texture`). Packed to half-float after
-steps and copied to the texture table (`erender.pass_table_texture_copy`); views read the previous
+steps and copied into a dynamic texture the world keeps per grid (`erender.pass_texture_copy`,
+[dynamic](../../mirai-rendering/references/scene.md#dynamic-textures)); views read the previous
 frame's steps.
 
 ```slang

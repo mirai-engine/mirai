@@ -85,3 +85,35 @@ color multiplies the light where each part of it falls.
   window), and the light that bounces from them.
 - A light without a texture costs what it did; one with a texture reads it once for each point it
   lights.
+
+## A texture the game writes
+
+A mask the player paints or a map that fills in: `host.assets_texture_generate` with
+`writable=true` makes a texture of zeros (or of its pixels), and `render.texture_write` gives it
+new rows that every pass of that frame already sees.
+
+```odin
+import "mirai:engine/render"
+import "mirai:host"
+import "mirai:std/base"
+
+@(storage)
+Paint_Mask :: struct {texture:base.Asset_Id,texels:[64*64]u8,dirty:bool} // R8, rows from the top
+
+@(step="render",loops="game")
+paint_mask_write :: proc(mask:^Paint_Mask,assets:^host.Assets,extras:^host.Frame_Extras) {
+    if mask.texture=={} {
+        mask.texture,_=host.assets_texture_generate(assets,nil,64,64,false,"paint mask",
+            format=.R8,writable=true)
+    }
+    if !mask.dirty {return}
+    mask.dirty=!render.texture_write(extras,assets,mask.texture,mask.texels[:])
+}
+```
+
+- Formats: `RGBA8` (the only one that can be `srgb`), `R8` (read as red), `RGBA16`, `RGBA16F`
+  (finite half floats). One level, with no smaller ones.
+- `rows={first,count}` writes only those rows, of `width*count` texels. Up to 16 writes a frame;
+  keep the texels until the frame is drawn (the temp allocator does).
+- False, with the renderer saying why, for an id that is not writable, rows past the bottom or
+  texels of another size. `host.assets_texture_release` frees it.

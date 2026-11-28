@@ -73,7 +73,7 @@ Foliage_Trample :: struct {
     height:f32,      // metres: the height the texels keep theirs from, a multiple of TRAMPLE_STEP
     writes:int,      // frames still to write: two after one that changed it, for the texture of the frame before
     written:u64,     // frames written: the half of the buffer the last one wrote is its parity
-    now,before:u32,  // the textures of the field and of the frame before (render.table_texture); max(u32) none
+    textures:[2]render.Texture_Handle, // RGBA16F: of the field and of the frame before (render.texture_add_dynamic); 0 none
 }
 
 // foliage_wind.slang: what the hook reads in the constants of each view.
@@ -201,7 +201,6 @@ trample_update :: proc(f:^Foliage_Trample,benders:^core.Table(Foliage_Bender,$A)
         f.texels=texels
         f.low=trample_low(at)
         f.height=trample_height(at.y)
-        f.now,f.before=max(u32),max(u32)
     }
     changed:=trample_follow(f,at)
     changed|=trample_recover(f,frame.dt)
@@ -226,7 +225,7 @@ trample_draw :: proc(resident:^Foliage_Resident,benders:^core.Table(Foliage_Bend
     f:=&resident.trample
     trample_update(f,benders,volumes,worlds,frame,at)
     trample_textures(resident,renderer)
-    if f.writes>0 && f.now!=max(u32) && render.frame_pass(renderer,.Geometry,foliage_trample_record,resident) {
+    if f.writes>0 && f.textures[0]!=0 && render.frame_pass(renderer,.Geometry,foliage_trample_record,resident) {
         f.writes-=1
         f.written+=1
     }
@@ -345,25 +344,26 @@ trample_at :: proc(f:^Foliage_Trample,at:[3]f32) -> (lean:[2]f32,height:f32,insi
     return {f32(v[0]),f32(v[1])},f.height+(f32(v[2])/m if m>0 else 0),true
 }
 
-// The textures of the field, made the first time (a load transaction): the
-// field is written again into new ones.
+// The textures of the field, made the first time (a load transaction), of
+// zeros: the field is written into them.
 @(private)
 trample_textures :: proc(resident:^Foliage_Resident,renderer:^render.Renderer) {
     f:=&resident.trample
-    if f.texels==nil {return}
-    key:=render.world_key(resident.world)
-    now,made,ok:=render.table_texture(renderer,key,{name=TRAMPLE_TEXTURE,width=TRAMPLE_SIDE,height=TRAMPLE_SIDE})
-    before,made_before,ok_before:=render.table_texture(renderer,key,{name=TRAMPLE_BEFORE,width=TRAMPLE_SIDE,height=TRAMPLE_SIDE})
-    if !ok || !ok_before {f.now,f.before=max(u32),max(u32);return}
-    if made || made_before {f.writes=2}
-    f.now,f.before=now,before
+    if f.texels==nil || f.textures[0]!=0 {return}
+    for name,i in ([2]string{TRAMPLE_TEXTURE,TRAMPLE_BEFORE}) {
+        ok:bool
+        if f.textures[i],ok=render.texture_add_dynamic(renderer,TRAMPLE_SIDE,TRAMPLE_SIDE,.RGBA16F,false,name);!ok {
+            for &texture in f.textures {render.texture_remove(renderer,texture);texture=0}
+            return
+        }
+    }
+    f.writes=2
 }
 
 trample_free :: proc(resident:^Foliage_Resident) {
     if resident.app!=nil {
         render.buffer_release(resident.app.renderer,resident.world,TRAMPLE_BUFFER)
-        render.table_texture_release(resident.app.renderer,resident.world,TRAMPLE_TEXTURE)
-        render.table_texture_release(resident.app.renderer,resident.world,TRAMPLE_BEFORE)
+        for texture in resident.trample.textures {render.texture_remove(resident.app.renderer,texture)}
     }
     delete(resident.trample.texels)
     resident.trample={}
@@ -377,12 +377,12 @@ foliage_wind_record :: proc(pass:^render.Pass,user:rawptr) {
     frame:Gpu_Wind_Frame
     frame.wind=volume.gpu_wind_relative(resident.wind,pass.origin)
     frame.textures={max(u32),max(u32),0,0}
-    if f:=&resident.trample;f.texels!=nil && f.now!=max(u32) {
+    if f:=&resident.trample;f.texels!=nil && f.textures[0]!=0 {
         side:=f32(TRAMPLE_SIDE)*TRAMPLE_TEXEL
         centre:=[3]f32{f32(f64(f.low.x)*f64(TRAMPLE_TEXEL))+side*0.5,f.height,f32(f64(f.low.y)*f64(TRAMPLE_TEXEL))+side*0.5}
         at:=render.origin_point(centre,pass.origin)
         frame.trample={at.x,at.z,at.y,side}
-        frame.textures={f.now,f.before,0,0}
+        frame.textures={render.texture_index(f.textures[0]),render.texture_index(f.textures[1]),0,0}
     }
     copy(data,([^]u8)(&frame)[:size_of(Gpu_Wind_Frame)])
 }
@@ -401,8 +401,6 @@ foliage_trample_record :: proc(pass:^render.Pass,user:rawptr) {
     if made {render.pass_buffer_fill(pass,desc,0,desc.size)}
     at:=((f.written-1)&1)*bytes
     if !render.pass_buffer_write(pass,desc,at,raw_data(f.texels),int(bytes)) {return}
-    texture:=render.Table_Texture_Desc{name=TRAMPLE_TEXTURE,width=TRAMPLE_SIDE,height=TRAMPLE_SIDE}
-    render.pass_table_texture_copy(pass,desc,at,texture)
-    texture.name=TRAMPLE_BEFORE
-    render.pass_table_texture_copy(pass,desc,bytes-at,texture)
+    render.pass_texture_copy(pass,desc,at,f.textures[0])
+    render.pass_texture_copy(pass,desc,bytes-at,f.textures[1])
 }

@@ -46,7 +46,7 @@ fields_move :: proc "contextless" (format:Texture_Format,blocks,planes:[]u8,join
     case .BC5:
         if join {fields_copy(b,p,count,true,16,BC5_FIELD_AT,BC5_FIELD_SIZE)}
         else {fields_copy(b,p,count,false,16,BC5_FIELD_AT,BC5_FIELD_SIZE)}
-    case .RGBA8,.BC7,.RGBA16,.RGBA16F,.BC6H:
+    case .RGBA8,.R8,.BC7,.RGBA16,.RGBA16F,.BC6H:
     }
     return true
 }

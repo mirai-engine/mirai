@@ -612,6 +612,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     base.profile_end(zone)
     zone=render_zone_begin(r,"uploads")
     texture_uploads_record(r,cmd)
+    texture_writes_record(r,cmd,frame.texture_writes)
     recorded_ok:=renderer_commit_geometry(r,cmd,slot) && font_record(r,cmd,slot) && ground_table_record(r,cmd)
     base.profile_end(zone)
     zone=render_zone_begin(r,"scene tables")

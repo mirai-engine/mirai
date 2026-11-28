@@ -156,6 +156,31 @@ batch, err := render.batch_set(r, 0, world_key, desc, insts, colors)
   defers BLAS destroy. `texture_remove`: removes between frames keeping handles; update referencing
   materials via `materials_set` before the next frame.
 
+## Dynamic textures
+
+`render/textures_dynamic.odin`: `texture_add_dynamic(r, width, height, format, srgb, name, pixels)`
+makes one level of `RGBA8` (`srgb` only here), `R8`, `RGBA16` or `RGBA16F`, of the pixels or of
+zeros (a new Vulkan image is undefined). Outside streaming and the pool; sampled by
+`texture_index` like any texture; `texture_remove` frees it. Two writers, no third:
+
+- **CPU rows:** `Frame_Desc.texture_writes` (`Texture_Write{texture, texels, rows}`, rows =
+  `{first, count}`, zero = all), recorded after `texture_uploads_record` and before every pass,
+  through `rhi.frame_alloc`; never charged to `textures_upload_budget`, so a write always lands
+  in its frame. Each is checked again at record time (`texture_write_check`: gone, not dynamic,
+  rows, bytes = width * rows * texel, finite halves) and a refusal goes to `r.error`. Games use
+  `host.assets_texture_generate(..., format, writable = true)` and
+  `engine/render.texture_write(extras, assets, id, texels, rows)` (`host.FRAME_TEXTURE_WRITES`
+  a frame, via `host.extras_texture_write`).
+- **GPU rows:** an extension pass copies from one of its world buffers with
+  `pass_texture_copy(pass, buffer, offset, handle, rows)` (offset a multiple of 16): foliage
+  trample, vfx world textures.
+
+Custom instanced cards that cast shadows are a `batch_set` batch of a Mask material with
+`.Casts_Shadow` ([batches](#instance-batches)) whose per-instance data a dynamic texture can
+carry; ribbons, trails and beams are `plugins/vfx` `.Ribbon`/`.Trail`/`.Beam`
+([vfx](../../mirai-world/references/vfx.md)). There is no camera-facing batch mode nor a
+GPU-filled batch that casts shadows.
+
 ## Geometry publication
 
 - `renderer_commit_geometry` publishes dirty pool ranges, mesh rows and new native BLASes:

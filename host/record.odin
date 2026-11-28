@@ -75,11 +75,11 @@ app_recording_frame :: proc(app:^App,rec:^World_Recording,world:rawptr,out:[]f32
     drawn:=render.renderer_frame(r,{
         camera=app.camera,camera_cut=cut,inspection=app.inspection,time=app.time,views=seen[:],
         ui_textures=extras.ui_textures[:extras.ui_texture_count],effect_views=extras.effect_views[:extras.effect_view_count],
-        offscreen=true,
+        texture_writes=extras.texture_writes[:extras.texture_write_count],offscreen=true,
     })
     extras.layer_count,extras.panel_count,extras.debug_count=0,0,0
     clear(&extras.instances)
-    extras.ui_texture_count,extras.effect_view_count,extras.probe_count=0,0,0
+    extras.ui_texture_count,extras.effect_view_count,extras.probe_count,extras.texture_write_count=0,0,0,0
     app.camera_cut=false
     app.inspection={}
     app.view_count=0

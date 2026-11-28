@@ -271,7 +271,7 @@ my_lit_record :: proc(pass: ^erender.Pass, user: rawptr) {
 | View texture | `pass_texture` / `_sample` / `pass_volume_sample` (`EXTENSION_TEXTURE_CAPACITY` = 8/view) | 2D, 2D array (`layers`), 3D (`depth`), `mips` (`mip=-1` read all), `history` (`kept` false on cut/first/skip); freed after 1 unrequested frame. |
 | View media | `MEDIA_TEXTURE`, `pass_media`, `media_over` (`media_grid.slang`) | Written in `Lit` by [`fog`](../../mirai-plugins/references/render-plugins.md#fog); sampled in later blend passes. |
 | World buffer | `pass_buffer` / `_write` / `_fill` / `_held` (`EXTENSION_BUFFER_CAPACITY` = 64) | Persists per `world` until `buffer_release` in `release`; indirect args (`pass_dispatch_indirect`, `pass_draw_indexed_indirect`, `pass_indices`). |
-| Table texture | `table_texture` / `pass_table_texture_copy` (`EXTENSION_TABLE_TEXTURE_CAPACITY`) | RGBA16F per world readable by materials; transaction to create/resize; free via `table_texture_release`. |
+| Dynamic texture | `texture_add_dynamic` / `pass_texture_copy` ([dynamic](scene.md#dynamic-textures)) | Owned by the plugin; materials read `texture_index`; transaction to create/resize; free with `texture_remove` in `release`. |
 | Frame rows | `pass_rows_upload` / `pass_rows` | Uploaded once per `Pass.frame` into frame memory. |
 | Counters | `pass_counters` / `erender.counters` (`EXTENSION_COUNTER_CAPACITY` = 16) | 4x `u32` zeroed per frame; read 2 frames later (`Stats.counters`). |
 | Readbacks | `pass_readback` / `erender.readback` (`EXTENSION_READBACK_CAPACITY`) | Async end-of-frame copy; presentation-only (never `fixed`); `readback_release`. |

@@ -212,6 +212,7 @@ texture_remove :: proc(r: ^Renderer, handle: Texture_Handle) -> bool {
 	state.sizes[index] = {}
 	state.stored[index] = 0
 	state.partial[index] = false
+	state.dynamic_format[index] = .Undefined
 	texture_stream_forget(state, index)
 	for state.count > 0 && state.textures[state.count - 1] == 0 {state.count -= 1}
 	return true

@@ -502,6 +502,7 @@ Frame_Desc :: struct {
 	ui_textures:    []Ui_Texture_Draw, // world panels drawn into textures, before the views
 	effect_views:   []Effect_View,     // what extensions draw into textures (the Effect stage), before the UI that shows them
 	probes:         []Depth_Probe,     // pixels whose depth goes back to the CPU (renderer_depth_probes)
+	texture_writes: []Texture_Write,   // rows of dynamic textures, written before every pass of the frame
 	debug:  []Debug_Lines, // line and triangle batches, over the panels and under the screen UI; of a frame alone, over its first view
 	// Drawn only into the image renderer_capture reads, for a world that is
 	// not shown: nothing reaches the window, and the probe volume keeps the
@@ -728,7 +729,6 @@ Renderer :: struct {
 	gbuffer_asked:   bit_set[Gbuffer_Target], // of frame_gbuffer_mesh for the next frame
 	decal_emission_asked: bool, // of frame_decal_emission for the next frame
 	dynamic_lights:  Dynamic_Lights, // of frame_dynamic_lights and pass_dynamic_lights_copy
-	table_textures:  [EXTENSION_TABLE_TEXTURE_CAPACITY]Extension_Table_Texture, // of pass_table_texture, by world
 	quad_indices:    rhi.Buffer, // the six of a quad, for the draws of pass_indices
 	scene:           Scene_State,
 	textures:        Texture_State,
@@ -860,7 +860,6 @@ renderer_destroy :: proc(r: ^Renderer) {
 	pipeline_thread_destroy(r)
 	scene_destroy(r)
 	extension_buffers_destroy(r)
-	extension_table_textures_destroy(r)
 	extension_counters_destroy(r)
 	extension_readbacks_destroy(r)
 	points_destroy(r)

@@ -1318,7 +1318,7 @@ assets_texture_fields :: proc(view:asset.Texture_View,limits:render.Texture_Limi
 @(private="file")
 assets_texture_levels :: proc(view:asset.Texture_View,limits:render.Texture_Limits,from:int,levels:^Assets_Levels,allocator:mem.Allocator) -> (problem:Assets_Problem,detail:asset.Error,ok:bool) {
     info:=view.info
-    blocks:=info.format!=.RGBA8 && info.format!=.RGBA16 && info.format!=.RGBA16F
+    blocks:=asset.texture_block_bytes(info.format)>0
     decode:=blocks && !limits.blocks
     srgb:=.Srgb in info.flags
     layers:=int(info.layers)
@@ -1329,6 +1329,7 @@ assets_texture_levels :: proc(view:asset.Texture_View,limits:render.Texture_Limi
     if decode {format=.RGBA16F if info.format==.BC6H else .RGBA8}
     switch format {
     case .RGBA8:   data.format=srgb?.RGBA8_Srgb:.RGBA8_Unorm
+    case .R8:      data.format=.R8_Unorm
     case .RGBA16:  data.format=.RGBA16_Unorm
     case .RGBA16F: data.format=.RGBA16_Float
     case .BC1:     data.format=srgb?.BC1_Srgb:.BC1_Unorm
@@ -1525,25 +1526,35 @@ assets_arrivals_settle :: proc(a:^Assets) -> (changed:bool) {
     return
 }
 
-// A texture made at run time from RGBA8 pixels, rows from the top, with an
-// id of its own that an image of the UI or a material shows as it shows a
-// texture asset: an image a game read itself, as the thumbnail of a save.
-// srgb: it is color. Its levels are made here (texels: level 0 alone, for one
-// read texel by texel), and the pixels can go once it returns. It lives until
-// assets_texture_release; each id is a version that is never used again. A
-// transaction: between frames. False, with nothing made, for a size of zero
-// or pixels that do not hold width by height, and without room for another
-// texture.
-assets_texture_generate :: proc(a:^Assets,pixels:[]u8,width,height:int,srgb:=true,name:="generated texture",texels:=false) -> (id:base.Asset_Id,ok:bool) {
-    if width<=0 || height<=0 || len(pixels)!=width*height*4 {return}
+// A texture made at run time from pixels, rows from the top, with an id of
+// its own that an image of the UI or a material shows as it shows a texture
+// asset: an image a game read itself, as the thumbnail of a save. srgb: it
+// is color. Its levels are made here from RGBA8 (texels: level 0 alone, for
+// one read texel by texel), and the pixels can go once it returns. writable:
+// one level of format (RGBA8, R8, RGBA16 or RGBA16F; srgb only for RGBA8)
+// whose rows the game writes again in any frame (engine/render.texture_write),
+// of zeros without pixels. It lives until assets_texture_release; each id is
+// a version that is never used again. A transaction: between frames. False,
+// with nothing made, for a size of zero or pixels that do not hold width by
+// height, a format other than RGBA8 that is not writable, and without room
+// for another texture.
+assets_texture_generate :: proc(a:^Assets,pixels:[]u8,width,height:int,srgb:=true,name:="generated texture",texels:=false,format:=asset.Texture_Format.RGBA8,writable:=false) -> (id:base.Asset_Id,ok:bool) {
+    if width<=0 || height<=0 || width>asset.TEXTURE_MAX_SIZE || height>asset.TEXTURE_MAX_SIZE {return}
+    if !writable && (format!=.RGBA8 || len(pixels)!=width*height*4) {return}
+    if writable && pixels!=nil && len(pixels)!=asset.texture_level_size(format,width,height) {return}
     a.generated_next+=1
     id={ASSETS_GENERATED_TAG,a.generated_next}
     entry:=assets_texture_entry(a,id)
     if entry==nil {return {},false}
-    made:=Assets_Texture{width=u32(width),height=u32(height),layers=1,format=.RGBA8,flags=srgb?{.Srgb}:{},generated=true}
+    made:=Assets_Texture{width=u32(width),height=u32(height),layers=1,format=format,flags=srgb?{.Srgb}:{},generated=true}
     if a.renderer!=nil {
         added:bool
-        if made.handle,added=render.texture_add(a.renderer,{pixels=pixels,width=width,height=height,srgb=srgb,texels=texels,name=name});!added {
+        if writable {
+            made.handle,added=render.texture_add_dynamic(a.renderer,u32(width),u32(height),format,srgb,name,pixels)
+        } else {
+            made.handle,added=render.texture_add(a.renderer,{pixels=pixels,width=width,height=height,srgb=srgb,texels=texels,name=name})
+        }
+        if !added {
             entry^={}
             append(&a.free_textures,a.index[id].index)
             delete_key(&a.index,id)
@@ -1554,6 +1565,14 @@ assets_texture_generate :: proc(a:^Assets,pixels:[]u8,width,height:int,srgb:=tru
     entry^=made
     a.stats.generated+=1
     return id,true
+}
+
+// The texture of the renderer of a generated texture; 0 for another id and
+// without a renderer. It loads nothing.
+assets_texture_generated :: proc(a:^Assets,id:base.Asset_Id) -> render.Texture_Handle {
+    ref,known:=a.index[id]
+    if !known || ref.kind!=.Texture || !a.textures[ref.index].generated {return 0}
+    return a.textures[ref.index].handle
 }
 
 // Removes a generated texture, from the renderer too: its id names nothing

@@ -61,15 +61,20 @@ texture_bc4_block_decode :: proc "contextless" (block:[8]u8) -> (values:[16]f32)
     return
 }
 
-// One image of a level of a format of 8 bits (RGBA8, BC1, BC5, BC7) as
+// One image of a level of a format of 8 bits (RGBA8, R8, BC1, BC5, BC7) as
 // RGBA8, rows from the top, with the values it stores. A BC5 level gets the
-// third component of its unit vector in blue. False for another format and
+// third component of its unit vector in blue; R8 gives (r, 0, 0, 255), as the
+// GPU samples it. False for another format and
 // when either slice does not hold an image of that size.
 texture_level_rgba8 :: proc "contextless" (format:Texture_Format,level:[]u8,width,height:int,pixels:[]u8) -> bool {
     if width<=0 || height<=0 || len(level)!=texture_level_size(format,width,height) || len(pixels)!=width*height*4 {return false}
     if format==.RGBA16 || format==.RGBA16F || format==.BC6H {return false}
     if format==.RGBA8 {
         copy(pixels,level)
+        return true
+    }
+    if format==.R8 {
+        for value,i in level {pixels[i*4],pixels[i*4+1],pixels[i*4+2],pixels[i*4+3]=value,0,0,255}
         return true
     }
     to_byte :: proc "contextless" (value:f32) -> u8 {return u8(clamp(value,0,1)*255+0.5)}
@@ -83,7 +88,7 @@ texture_level_rgba8 :: proc "contextless" (format:Texture_Format,level:[]u8,widt
             copy(first[:],block[:8])
             if size==16 {copy(second[:],block[8:16])}
             switch format {
-            case .RGBA8,.RGBA16,.RGBA16F,.BC6H:
+            case .RGBA8,.R8,.RGBA16,.RGBA16F,.BC6H:
             case .BC1:
                 colors,alpha:=texture_bc1_block_decode(first)
                 for c,i in colors {texels[i]={to_byte(c.r),to_byte(c.g),to_byte(c.b),to_byte(alpha[i])}}

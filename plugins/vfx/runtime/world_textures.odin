@@ -1,6 +1,5 @@
 package vfx
 
-import "core:fmt"
 import "core:mem"
 import "core:slice"
 import "mirai:core"
@@ -8,32 +7,30 @@ import erender "mirai:engine/render"
 
 // The textures of the world: layers of grids that materials read
 // (Particle_World_Texture). After the steps of each frame a pass packs each
-// layer as halves after the grids and the renderer copies it into a texture
-// of its table that it keeps for the world, and the
+// layer as halves after the grids and the renderer copies it into a dynamic
+// texture the world keeps for the grid, and the
 // views of the world have in their constants (shaders/vfx_world.slang) the
 // name, the place and the region of each as the frame before left them: what
 // the first view draws before the steps of its frame holds that.
-
-// The texture of the table of a grid, by the hash of its name.
-@(private)
-world_texture_key :: proc(name:u64) -> string {return fmt.tprintf("vfx world texture %x",name)}
 
 // The grids of the world with a texture, and the textures of those that no
 // longer have one released.
 @(private)
 world_textures_keep :: proc(sync:^Particle_Sync,renderer:^erender.Renderer,id:core.World_Id) {
     kept:=0
-    for name in sync.world_textures[:sync.world_texture_count] {
+    for name,i in sync.world_textures[:sync.world_texture_count] {
+        texture:=sync.world_texture_handles[i]
+        sync.world_texture_handles[i]=0
         if at:=grid_find(&sync.grids,name);at>=0 && sync.grids.entries[at].has_texture {
-            sync.world_textures[kept]=name
+            sync.world_textures[kept],sync.world_texture_handles[kept]=name,texture
             kept+=1
         } else {
-            erender.table_texture_release(renderer,id,world_texture_key(name))
+            erender.texture_remove(renderer,texture)
         }
     }
     for &entry in sync.grids.entries {
         if !entry.has_texture || kept==WORLD_TEXTURES || slice.contains(sync.world_textures[:kept],entry.name) {continue}
-        sync.world_textures[kept]=entry.name
+        sync.world_textures[kept],sync.world_texture_handles[kept]=entry.name,0
         kept+=1
     }
     if kept!=sync.world_texture_count {
@@ -42,15 +39,44 @@ world_textures_keep :: proc(sync:^Particle_Sync,renderer:^erender.Renderer,id:co
     }
 }
 
-// The textures of the grids that have one, made between frames.
+// The texture a grid keeps of the world, by its name; 0 without one.
+@(private)
+world_texture_handle :: proc "contextless" (sync:^Particle_Sync,name:u64) -> erender.Texture_Handle {
+    for kept,i in sync.world_textures[:sync.world_texture_count] {
+        if kept==name {return sync.world_texture_handles[i]}
+    }
+    return 0
+}
+
+// The textures of the grids that have one, made between frames, of zeros,
+// and made again with the size of their cells when it changes.
 @(private)
 world_textures_make :: proc(sync:^Particle_Sync,renderer:^erender.Renderer) {
     for &entry in sync.grids.entries {
         if !entry.has_texture {continue}
-        index,made,ok:=erender.table_texture(renderer,sync.world,{name=world_texture_key(entry.name),width=entry.cells.x,height=entry.cells.z})
-        entry.texture_dirty||=made || entry.texture_index!=index
+        at:=-1
+        for name,i in sync.world_textures[:sync.world_texture_count] {
+            if name==entry.name {at=i;break}
+        }
+        if at<0 {
+            entry.texture_index=max(u32)
+            continue
+        }
+        texture:=&sync.world_texture_handles[at]
+        if texture^!=0 && erender.texture_size(renderer,texture^)!={entry.cells.x,entry.cells.z} {
+            erender.texture_remove(renderer,texture^)
+            texture^=0
+        }
+        if texture^==0 {
+            ok:bool
+            if texture^,ok=erender.texture_add_dynamic(renderer,entry.cells.x,entry.cells.z,.RGBA16F,false,"vfx world texture");!ok {
+                entry.has_texture=false
+                continue
+            }
+        }
+        index:=erender.texture_index(texture^)
+        entry.texture_dirty||=entry.texture_index!=index
         entry.texture_index=index
-        if !ok {entry.has_texture=false}
     }
 }
 
@@ -71,14 +97,14 @@ world_textures_write :: proc(sync:^Particle_Sync,pass:^erender.Pass) {
     count:=0
     Params :: struct {grid,layer,packed,pad:u32}
     for &entry,at in sync.grids.entries {
-        if !entry.has_texture || count==WORLD_TEXTURES {continue}
+        if !entry.has_texture || count==WORLD_TEXTURES || entry.texture_index==max(u32) {continue}
         if entry.texture_dirty {
             packed:=grids_base(sync)+entry.packed
             params:=Params{sync.pool.grids_at+u32(at)*size_of(Gpu_Grid),entry.texture.layer,packed,0}
             erender.pass_pipeline(pass,sync.pipelines.world_texture)
             erender.pass_params(pass,&params,size_of(params))
             erender.pass_dispatch(pass,groups(entry.cells.x,8),groups(entry.cells.z,8))
-            if !erender.pass_table_texture_copy(pass,world_buffer(sync),u64(packed+15)&~u64(15),{name=world_texture_key(entry.name),width=entry.cells.x,height=entry.cells.z}) {continue}
+            if !erender.pass_texture_copy(pass,world_buffer(sync),u64(packed+15)&~u64(15),world_texture_handle(sync,entry.name)) {continue}
             entry.texture_dirty=false
         }
         frame.names[count],frame.textures[count]=entry.texture_name,entry.texture_index
