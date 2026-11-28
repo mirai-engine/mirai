@@ -467,6 +467,7 @@ workspace_snapshot :: proc(w:^Workspace) -> (report:Snapshot_Report,error:Error)
     append(&st.conflicts,..w.state.conflicts[:])
     conflicts_apply(&st,&files) or_return
     root:=tree_build(w.repo.s,files[:]) or_return
+    root=untracked_keep(w,w.state.tree,root,&files) or_return
     report.revision=change_snapshot(&w.repo,root) or_return
     index_save(w,&next) or_return
     st.op,st.tree=w.repo.op,root
@@ -481,6 +482,30 @@ workspace_snapshot :: proc(w:^Workspace) -> (report:Snapshot_Report,error:Error)
     }
     state_commit(w,&st)
     return report,.None
+}
+
+// root, the tree of files (sorted by path), with every file of before that
+// the workspace does not track (own_path) added back as before held it: a
+// file its filter stops tracking stays in its changes, as a later ignore
+// leaves a file git tracks, and goes only when a checkout takes a tree
+// without it. The trees differ only where files changed, so only that is read.
+@(private)
+untracked_keep :: proc(w:^Workspace,before,root:store.Hash,files:^[dynamic]File) -> (kept:store.Hash,error:Error) {
+    if before=={} || before==root {return root,.None}
+    diffs:=make([dynamic]Diff,context.temp_allocator)
+    tree_diff(w.repo.s,before,root,&diffs,context.temp_allocator) or_return
+    added:=false
+    for d in diffs {
+        if d.before.address=={} || d.after.address!={} || own_path(w,d.path) {continue}
+        at,found:=slice.binary_search_by(files[:],d.path,proc(f:File,path:string) -> slice.Ordering {return slice.cmp(f.path,path)})
+        if found {continue}
+        f:=d.before
+        f.path=d.path
+        if _,e:=inject_at(files,at,f);e!=nil {return {},.Out_Of_Memory}
+        added=true
+    }
+    if !added {return root,.None}
+    return tree_build(w.repo.s,files[:])
 }
 
 // Makes st, saved, the workspace's state in memory. Its conflicts are some of

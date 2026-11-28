@@ -327,7 +327,7 @@ import_run :: proc(job:^Import_Job) {
     if threaded {job.options.worker={system=&js,worker=jobs.OWNER}}
     defer job.options.worker={}
     // What the peers of the project's org built is taken, and what the import builds is published.
-    shared,close:=ka.peers_open(job.store.root,job.root)
+    shared,close:=ka.peers_open(&job.store,job.root)
     if close!=nil {job.options.source=shared}
     defer if close!=nil {
         close(shared)

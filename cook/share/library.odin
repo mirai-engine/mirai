@@ -157,8 +157,8 @@ manifests_fetch :: proc(n:^Node,packages:[]exchange.Name,cancel:^bool=nil) {
         name:=store.hex(p.address,digits)
         if _,error:=store.ref_get(n.s,asset.REF_MANIFESTS,name);error!=.None {append(&names,name)}
     }
-    given:=make([]bool,len(names),context.temp_allocator)
-    node_fetch(n,cancel,n.s,asset.REF_MANIFESTS,names[:],given)
+    status:=make([]cache.Fetch_Status,len(names),context.temp_allocator)
+    node_fetch(n,cancel,n.s,asset.REF_MANIFESTS,names[:],status)
 }
 
 // The names of namespace peer exposes, page by page.
@@ -265,7 +265,7 @@ package_take :: proc(
     fetching:=Node_Fetching{node=n,cancel=cancel}
     // The session's peers first: they hold what this session offers and answer at once, while the
     // mesh of the project's org waits for its peers on a miss.
-    shared,close:=kai_assets.peers_open(s.root,root)
+    shared,close:=kai_assets.peers_open(s,root)
     defer if close!=nil {close(shared)}
     chain:=cache.Chain{first=node_source_cancellable(&fetching),second=shared}
     options:=sources.Library_Options{store=s,source=cache.chain_source(&chain),fast_textures=true,root=root,plugins=library,worker=worker,gpu=gpu}

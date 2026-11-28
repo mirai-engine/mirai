@@ -16,11 +16,18 @@ import "mirai:store"
 // whole or does not read is a miss. The store owns space and checks its
 // chunks (its scrub): the cache removes nothing.
 
+// What a source did with a ref it was asked for.
+Fetch_Status :: enum u8 {
+    Missing, // it answered that it has none: building it here is the way
+    Taken,   // the object is whole in the store asked into, and the ref set there
+    Failed,  // it could not answer (no peer reached, a transfer cut or timed out): whether one exists is unknown
+}
+
 // Asked on a miss before building: for each of names, makes the object of the
-// ref (namespace, name) whole in into and sets the ref there; given (as
-// long as names, all false when asked) says for which it did. Names known
+// ref (namespace, name) whole in into and sets the ref there; status (as long
+// as names, all Missing when asked) says what it did with each. Names known
 // together are asked together, so a source that asks peers waits for them once.
-Fetch :: #type proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool)
+Fetch :: #type proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,status:[]Fetch_Status)
 
 // Told after a result was kept under the ref (namespace, name): a source that
 // shares results publishes it. from: the files it was made from, absolute,
@@ -91,10 +98,10 @@ lookup :: proc(c:Cache,name:string,keys:[]u64,version:u64,here:[]bool) {
         if _,no_room:=append(&at,k);no_room!=nil {return}
     }
     if len(lacking)==0 || c.source.fetch==nil {return}
-    given:=make([]bool,len(lacking),context.temp_allocator)
-    c.source.fetch(c.source.user,c.store,namespace,lacking[:],given)
+    status:=make([]Fetch_Status,len(lacking),context.temp_allocator)
+    c.source.fetch(c.source.user,c.store,namespace,lacking[:],status)
     for ref,i in lacking {
-        if given[i] {here[at[i]]=has_here(c.store,namespace,ref)}
+        if status[i]==.Taken {here[at[i]]=has_here(c.store,namespace,ref)}
     }
 }
 
@@ -113,35 +120,38 @@ put :: proc(c:Cache,name:string,key,version:u64,bytes:[]u8) -> bool {
 }
 
 // What gives the imports and cooks of the project at root what the peers of
-// its org built and takes what they build, through the runner of the store at
-// store_root (cook/kai.peers_open, which the programs that import and cook pass
-// down). close says how many results went each way; nil when the project
-// shares with no peers.
-Peers_Open :: #type proc(store_root,root:string) -> (source:Source,close:Peers_Close)
+// its org built and takes what they build, kept in s, the caller's handle of
+// the machine's store, which it borrows until close (cook/kai.peers_open,
+// which the programs that import and cook pass down). close says how many
+// results went each way; nil when the project shares with no peers.
+Peers_Open :: #type proc(s:^store.Store,root:string) -> (source:Source,close:Peers_Close)
 Peers_Close :: #type proc(source:Source) -> (taken,published:int)
 
 // Two sources as one: a miss asks first, then second for what first did not
-// give; what is kept is told to both. Lives while it is asked.
+// give; what is kept is told to both. A ref either could not answer for and
+// neither gave stays Failed. Lives while it is asked.
 Chain :: struct {first,second:Source}
 
 chain_source :: proc(c:^Chain) -> Source {
     if c.first.fetch==nil && c.first.kept==nil {return c.second}
     if c.second.fetch==nil && c.second.kept==nil {return c.first}
-    fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
+    fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,status:[]Fetch_Status) {
         c:=(^Chain)(user)
-        if c.first.fetch!=nil {c.first.fetch(c.first.user,into,namespace,names,given)}
+        if c.first.fetch!=nil {c.first.fetch(c.first.user,into,namespace,names,status)}
         if c.second.fetch==nil {return}
         lacking:=make([dynamic]string,context.temp_allocator)
         at:=make([dynamic]int,context.temp_allocator)
         for name,k in names {
-            if given[k] {continue}
+            if status[k]==.Taken {continue}
             append(&lacking,name)
             append(&at,k)
         }
         if len(lacking)==0 {return}
-        second:=make([]bool,len(lacking),context.temp_allocator)
+        second:=make([]Fetch_Status,len(lacking),context.temp_allocator)
         c.second.fetch(c.second.user,into,namespace,lacking[:],second)
-        for k,i in at {given[k]=second[i]}
+        for k,i in at {
+            if second[i]!=.Missing {status[k]=second[i]}
+        }
     }
     kept :: proc(user:rawptr,namespace,name:string,object:store.Hash,from:[]string) {
         c:=(^Chain)(user)
@@ -177,16 +187,16 @@ ref_name :: proc(key,version:u64,buffer:^[REF_BYTES]u8) -> string {
 
 @(private)
 fetched :: proc(c:Cache,namespace,ref:string) -> bool {
-    return source_fetch(c.source,c.store,namespace,ref)
+    return source_fetch(c.source,c.store,namespace,ref)==.Taken
 }
 
-// Asks source for the one ref (namespace, name); false without a source.
-source_fetch :: proc(source:Source,into:^store.Store,namespace,name:string) -> bool {
-    if source.fetch==nil {return false}
+// Asks source for the one ref (namespace, name); Missing without a source.
+source_fetch :: proc(source:Source,into:^store.Store,namespace,name:string) -> Fetch_Status {
+    if source.fetch==nil {return .Missing}
     names:=[1]string{name}
-    given:[1]bool
-    source.fetch(source.user,into,namespace,names[:],given[:])
-    return given[0]
+    status:[1]Fetch_Status
+    source.fetch(source.user,into,namespace,names[:],status[:])
+    return status[0]
 }
 
 @(private)
@@ -210,13 +220,15 @@ load_here :: proc(s:^store.Store,namespace,ref:string,key,version:u64,file:^asse
 // asset.REF_IMPORTS_FAST or asset.REF_BUILDS), every object it lists. What a peer gives, and what an installed engine gives from
 // the store of the builds of its plugins.
 store_source :: proc(from:^store.Store) -> Source {
-    fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
+    fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,status:[]Fetch_Status) {
         from:=(^store.Store)(user)
         source:=store.read_index(from)
         target:=store.read_index(into)
         scratch,no_room:=make([]u8,COPY_SCRATCH)
         defer delete(scratch)
-        for name,k in names {given[k]=no_room==nil && copy_ref(&source,&target,namespace,name,scratch)}
+        for name,k in names {
+            if no_room==nil && copy_ref(&source,&target,namespace,name,scratch) {status[k]=.Taken}
+        }
     }
     copy_ref :: proc(from,into:^store.Store,namespace,name:string,scratch:[]u8) -> bool {
         object,error:=store.ref_get(from,namespace,name)

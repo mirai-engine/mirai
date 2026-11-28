@@ -401,8 +401,8 @@ node_lease :: proc(n:^Node,now:f64) {
 // before the ref is set there. The names of one call are asked together, and
 // the objects of their builds fetched together. For a thread other than the pump's.
 node_source :: proc(n:^Node) -> cache.Source {
-    return {fetch=proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
-        node_fetch((^Node)(user),nil,into,namespace,names,given)
+    return {fetch=proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,status:[]cache.Fetch_Status) {
+        node_fetch((^Node)(user),nil,into,namespace,names,status)
     },user=n}
 }
 
@@ -412,14 +412,14 @@ node_source :: proc(n:^Node) -> cache.Source {
 Node_Fetching :: struct {node:^Node,cancel:^bool}
 
 node_source_cancellable :: proc(f:^Node_Fetching) -> cache.Source {
-    return {fetch=proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
+    return {fetch=proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,status:[]cache.Fetch_Status) {
         f:=(^Node_Fetching)(user)
-        node_fetch(f.node,f.cancel,into,namespace,names,given)
+        node_fetch(f.node,f.cancel,into,namespace,names,status)
     },user=f}
 }
 
 @(private)
-node_fetch :: proc(n:^Node,cancel:^bool,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
+node_fetch :: proc(n:^Node,cancel:^bool,into:^store.Store,namespace:string,names:[]string,status:[]cache.Fetch_Status) {
     if into!=n.s || len(names)==0 {return}
     addresses:=make([]store.Hash,len(names),context.temp_allocator)
     refs_fetch(&n.x,namespace,names,addresses,cancel)
@@ -443,7 +443,7 @@ node_fetch :: proc(n:^Node,cancel:^bool,into:^store.Store,namespace:string,names
         }
     }
     for address,k in addresses {
-        given[k]=address!={} && asset.object_whole(into,address) && store.ref_set(into,namespace,names[k],address)==.None
+        if address!={} && asset.object_whole(into,address) && store.ref_set(into,namespace,names[k],address)==.None {status[k]=.Taken}
     }
 }
 

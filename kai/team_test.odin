@@ -809,6 +809,7 @@ a_peer_that_asks_and_never_reads_is_cut_off :: proc(t:^testing.T) {
     c,e:=conn_dial(address,pc.team.identity,mac.team.identity.key)
     if !testing.expect_value(t,e,Error.None) {return}
     defer conn_free(c)
+    hello_send(c,"Ben")
     head:=transmute([2]u8)u16le(WANT_MAX)
     wants:=make([]store.Hash,WANT_MAX,context.temp_allocator)
     for &w in wants {crypto.rand_bytes(w[:])}
@@ -844,6 +845,7 @@ a_bad_join_does_not_spend_the_invite :: proc(t:^testing.T) {
     token,_:=invite_parse(invite,context.temp_allocator)
     c,e:=conn_dial(address,pc.team.identity,token.key,token.secret)
     if !testing.expect_value(t,e,Error.None) {return}
+    hello_send(c,"Ben")
     body:=make([dynamic]u8,context.temp_allocator)
     append(&body,..o_bytes(&org))
     write_text(&body,"Ben")
@@ -867,6 +869,20 @@ a_bad_join_does_not_spend_the_invite :: proc(t:^testing.T) {
 
 @(private="file")
 o_bytes :: proc(org:^Org_Id) -> []u8 {return org[:]}
+
+// Says on c the Hello of an agent named name that listens nowhere and holds
+// nothing: a connection's first message.
+@(private="file")
+hello_send :: proc(c:^Conn,name:string) -> bool {
+    body:=make([dynamic]u8,context.temp_allocator)
+    write_text(&body,name)
+    write_text(&body,name)
+    append(&body,0,0)
+    instance:=transmute([8]u8)u64le(rand.uint64()|1)
+    append(&body,..instance[:])
+    append(&body,0,0)
+    return conn_send(c,.Hello,body[:])
+}
 
 // What a machine takes from a peer is committed, and derived data is taken
 // only whole: a set whose output is not all there sets no ref on a server,
@@ -1313,6 +1329,63 @@ members_that_know_only_the_server_meet_through_it :: proc(t:^testing.T) {
     }),"the member pulls from the admin with the server off")
 }
 
+// Two agents of one device key (an editor's and an import's of one
+// machine) each keep their connection to the org's server: neither ends the
+// other's. A second connection between the same two agents, both dialing at
+// once, is one.
+@(test)
+two_agents_of_one_key_keep_a_connection_each :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-one-key")
+    if folder=="" {return}
+    mac,importer,server:Machine
+    if !machine_open(t,&mac,folder,"Ana") || !machine_open(t,&server,folder,"cloud") {return}
+    defer machine_close(&mac)
+    defer machine_close(&server)
+    server.running=testing.expect_value(t,agent_start(&server.agent,&server.team,{port=0,host="127.0.0.1",node=true,max_orgs=4}),Error.None)
+    if !server.running || !machine_start(t,&mac,0) {return}
+    org,_:=vcs_org(t,&mac)
+    why:string
+    if !testing.expectf(t,agent_server_attach(&mac.agent,org,fmt.tprintf("127.0.0.1:%d",agent_port(&server.agent)),&why)==.None,"the admin attaches the server: %s",why) {return}
+    // The import's agent: another handle of the same store, so the same key.
+    if !machine_open(t,&importer,folder,"Ana") {return}
+    defer machine_close(&importer)
+    if !testing.expect(t,importer.team.identity.key==mac.team.identity.key,"one machine, one key") {return}
+    if !machine_start(t,&importer,-1) {return}
+    Both :: struct {server:^Agent,key:Key}
+    both:=Both{&server.agent,mac.team.identity.key}
+    count :: proc(a:^Agent,key:Key) -> int {
+        peers:=make([dynamic]Peer_Info,context.temp_allocator)
+        agent_peers(a,&peers,context.temp_allocator)
+        n:=0
+        for p in peers {if p.key==key {n+=1}}
+        return n
+    }
+    met:=until(10,&both,proc(data:rawptr) -> bool {
+        x:=(^Both)(data)
+        return count(x.server,x.key)==2
+    })
+    if !testing.expect(t,met,"the server keeps a connection to each agent of the key") {return}
+    // Both redial at once, as one that woke does: neither ends the other.
+    agent_sync_now(&mac.agent)
+    agent_sync_now(&importer.agent)
+    time.sleep(500*time.Millisecond)
+    testing.expect_value(t,count(&server.agent,mac.team.identity.key),2)
+    testing.expect_value(t,count(&mac.agent,server.team.identity.key),1)
+    testing.expect_value(t,count(&importer.agent,server.team.identity.key),1)
+    // The same two agents dialing each other again keep one connection.
+    server_address:=fmt.tprintf("127.0.0.1:%d",agent_port(&server.agent))
+    mac_address:=fmt.tprintf("127.0.0.1:%d",agent_port(&mac.agent))
+    if p,e:=agent_dial(&mac.agent,server_address,server.team.identity.key);e==.None {peer_unpin(&mac.agent,p)}
+    if p,e:=agent_dial(&server.agent,mac_address,mac.team.identity.key);e==.None {peer_unpin(&server.agent,p)}
+    One :: struct {mac,server:^Machine}
+    one:=One{&mac,&server}
+    settled:=until(10,&one,proc(data:rawptr) -> bool {
+        x:=(^One)(data)
+        return count(&x.mac.agent,x.server.team.identity.key)==1 && count(&x.server.agent,x.mac.team.identity.key)==2
+    })
+    testing.expect(t,settled,"a second connection between the same two agents is one")
+}
+
 // A Peers message whose count passes GOSSIP_MAX, whose length is not that of
 // its entries or that names port zero ends the connection; a good one does
 // not.
@@ -1356,6 +1429,7 @@ a_malformed_peers_message_ends_the_connection :: proc(t:^testing.T) {
     for body,k in bad {
         c,e:=conn_dial(address,pc.team.identity,mac.team.identity.key)
         if !testing.expect_value(t,e,Error.None) {return}
+        hello_send(c,"Ben")
         conn_send(c,.Peers,body)
         net.set_option(c.socket,.Receive_Timeout,5*time.Second)
         started:=time.tick_now()
@@ -1372,6 +1446,7 @@ a_malformed_peers_message_ends_the_connection :: proc(t:^testing.T) {
     key:store.Hash
     crypto.rand_bytes(key[:])
     o:=org
+    hello_send(c,"Ben")
     conn_send(c,.Peers,message(1,{entry}))
     conn_send(c,.Ddc_Ask,o[:],key[:])
     net.set_option(c.socket,.Receive_Timeout,5*time.Second)

@@ -28,7 +28,7 @@ GOSSIP_MAX :: 1024 // entries one Peers message names
 // The kinds of messages, each a byte and its body (agent.odin reads them).
 Msg :: enum u8 {
     None,
-    Hello,         // name, device, port u16, then a Tell's body: who this end is and what it holds
+    Hello,         // name, device, port u16, agent instance u64, then a Tell's body: who this end is and what it holds; each end's first
     Tell,          // count u16 × Tell_Entry: heads this end holds now
     Want,          // org, count u16 × address: send these chunks
     Chunks,        // count u16 × (address, codec u8, raw u32, stored u32, bytes): the chunks asked, in order

@@ -82,6 +82,7 @@ Projects_Row :: struct {
     sync:ka.Workspace_Sync, // its Kai workspace against its org's shared main
     can_publish:bool,   // this machine has write permission in its linked org
     main_here:bool,     // when behind: every object of shared main is in the store, so Update can start
+    conflicts:u32,      // files in conflict in its working copy: no Publish until they are resolved
     opened:[32]u8,      // when an editor last opened it, as the list says it
     bytes:i64,          // project content bytes (excluding .mirai and .git)
     has_size:bool,      // bytes is ready (immediately for Kai projects, off-thread otherwise)
@@ -360,7 +361,7 @@ projects_row_fill :: proc(s:^Session,folder:string,opened:i64,recent_index:int,n
         if s.kai!=nil && s.kai.team!=nil && s.kai.team.status!=.Closed {team=&s.kai.team.team}
         state:=ka.project_sync_state(&s.store,team,folder)
         base.text_set(row.kai[:],state.kai)
-        row.sync,row.can_publish,row.main_here=state.sync,state.can_publish,state.main_here
+        row.sync,row.can_publish,row.main_here,row.conflicts=state.sync,state.can_publish,state.main_here,state.conflicts
         if bytes,sized:=state.size.?;sized {
             row.bytes,row.has_size=bytes,true
             base.text_set(row.size[:],base.bytes_text(row.bytes))
@@ -1368,7 +1369,10 @@ projects_row :: proc(s:^Session,index:int,row:^Projects_Row,folder:string,busy,o
                         projects_update(s,folder)
                     }
                 case .Unpublished,.Ahead:
-                    if row.can_publish {
+                    if row.conflicts>0 {
+                        // A publish with conflicts is refused: they are resolved in the editor first.
+                        projects_badge(ctx,"Conflicts",.Split,"danger")
+                    } else if row.can_publish {
                         if ui.button(ctx,ui.id(ctx,"project_publish",index),{label="Publish",variant="field",height=24,size=ui.metric(ctx,"font_small"),disabled=busy}).clicked {
                             kai_launcher_publish(s,folder)
                         }

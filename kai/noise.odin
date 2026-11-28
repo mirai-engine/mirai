@@ -24,7 +24,7 @@ import "core:crypto/x25519"
 // here: wire.odin frames the three messages over TCP.
 
 NOISE_PROTOCOL :: "Noise_NNhfs_25519+MLKEM768_ChaChaPoly_SHA256"
-NOISE_PROLOGUE :: "kai/3"
+NOISE_PROLOGUE :: "kai/4"
 NOISE_TAG :: chacha20poly1305.TAG_SIZE
 KEM_PUBLIC :: 1184
 KEM_CIPHERTEXT :: 1088
@@ -33,7 +33,7 @@ NOISE_MSG2 :: 32+KEM_CIPHERTEXT+NOISE_TAG+size_of(Key)+size_of(Signature)+NOISE_
 NOISE_MSG3 :: size_of(Key)+size_of(Signature)+32+NOISE_TAG
 
 @(private="file")
-SIGN_LABEL :: "kai/3 handshake "
+SIGN_LABEL :: "kai/4 handshake "
 
 @(private)
 Symmetric :: struct {

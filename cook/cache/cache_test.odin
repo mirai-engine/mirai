@@ -33,8 +33,8 @@ store_at :: proc(t:^testing.T,root:string,loc:=#caller_location) -> (s:store.Sto
 
 // Copies what the store at user keeps, as a peer would give it.
 @(private="file")
-copy_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
-    store_source((^store.Store)(user)).fetch(user,into,namespace,names,given)
+copy_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,status:[]Fetch_Status) {
+    store_source((^store.Store)(user)).fetch(user,into,namespace,names,status)
 }
 
 @(private="file")
@@ -108,11 +108,11 @@ a_lookup_of_many_keys_asks_the_source_once :: proc(t:^testing.T) {
     testing.expect(t,put({store=&peer},NAME,12,VERSION,result_bytes(&types,12,VERSION,3)))
     Counted :: struct {from:^store.Store,calls,names:int}
     counted:=Counted{from=&peer}
-    fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
+    fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,status:[]Fetch_Status) {
         c:=(^Counted)(user)
         c.calls+=1
         c.names+=len(names)
-        copy_fetch(c.from,into,namespace,names,given)
+        copy_fetch(c.from,into,namespace,names,status)
     }
     found:=make([]bool,len(keys),context.temp_allocator)
     lookup({store=&here,source={fetch=fetch,user=&counted}},NAME,keys,VERSION,found)

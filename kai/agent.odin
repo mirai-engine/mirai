@@ -106,6 +106,8 @@ Agent :: struct {
     asked:i64,                // atomic, tick ns: when a peer last asked or was answered, or a node was told of derived data (agent_drain)
     wakes:bit_set[Agent_Wake], // what the look thread does at its next turn
     generation:u64, // one more each time what agent_peers, agent_pulls, agent_events or the heads give changes
+    instance:u64,   // random, not zero, said in its Hello: tells apart two agents of one device key (an editor's and an import's)
+    dialed:bool,    // under lock: the look thread began its first dial of the members (agent_org_wait)
     allocator:runtime.Allocator,
 }
 
@@ -144,8 +146,8 @@ Heard :: struct {
 // the peer's lock and broadcast on its cond.
 @(private)
 Peer_Phase :: enum u8 {
-    Connecting, // the handshake runs (accepted) or held; not yet the one connection kept to its key
-    Hello,      // kept to its key (peer_unique): its reader sends the Hello and starts the other two
+    Connecting, // the handshake runs (accepted) or held, and the Hellos cross; not yet the one connection kept to its agent
+    Hello,      // kept to its agent (peer_unique): its reader starts the other two
     Live,       // its server and puller run
     Ended,      // its connection ends: its threads end and the reaper frees it
 }
@@ -180,6 +182,7 @@ Peer :: struct {
     name,device:[NAME_MAX]u8,
     name_len,device_len:int,
     port:int,
+    instance:u64,           // of the other end's agent, from its Hello, set by its reader before it leaves Connecting
     told:map[Tell_Key]store.Hash, // what it holds
     dirty:bool,
     requests:[dynamic][]u8, // wants and asks waiting, their kind first
@@ -247,6 +250,7 @@ agent_start :: proc(a:^Agent,team:^Team,options:Agent_Options,allocator:=context
     a.claims=make(map[Claim]^Fetch,allocator)
     a.heard=make(map[Key]Heard,allocator)
     a.roots=make(map[store.Hash]Transfer_Root,allocator)
+    for a.instance==0 {crypto.rand_bytes(slice.bytes_from_ptr(&a.instance,size_of(a.instance)))}
     if address,ok:=net.parse_ip4_address(options.host);ok {a.loopback=address[0]==127}
     if options.port>=0 {
         host:=net.IP4_Any
@@ -546,6 +550,52 @@ agent_peers :: proc(a:^Agent,out:^[dynamic]Peer_Info,allocator:=context.allocato
     }
 }
 
+// Waits, at most timeout, for the members of org a process that just started
+// asks first: every node of the org connected, or with no node, one other
+// member. It waits less once nothing more can connect soon: the first dial of
+// the members ended, no dial runs and no connection is in its handshake (the
+// next try is REDIAL_SECONDS away), or the org has no other member. Whether
+// they are connected.
+agent_org_wait :: proc(a:^Agent,org:Org_Id,timeout:time.Duration) -> bool {
+    o,_,e:=team_org(&a.team,org)
+    if e!=.None {return false}
+    own:=a.team.identity.key
+    wanted:=make([dynamic]Key,context.temp_allocator)
+    for m in o.members {
+        if m.key!=own && m.role==.Node {append(&wanted,m.key)}
+    }
+    nodes:=len(wanted)>0
+    if !nodes {
+        for m in o.members {
+            if m.key!=own {append(&wanted,m.key)}
+        }
+    }
+    if len(wanted)==0 {return true}
+    started:=time.tick_now()
+    sync.mutex_lock(&a.lock)
+    defer sync.mutex_unlock(&a.lock)
+    live:=make([]bool,len(wanted),context.temp_allocator)
+    for {
+        settling:=false // a connection in its handshake or its Hellos
+        for p in a.peers {
+            sync.mutex_lock(&p.lock)
+            switch p.phase {
+            case .Connecting,.Hello: settling=true
+            case .Live: if at,found:=slice.linear_search(wanted[:],p.conn.peer);found {live[at]=true}
+            case .Ended:
+            }
+            sync.mutex_unlock(&p.lock)
+        }
+        connected:=0
+        for x in live {if x {connected+=1}}
+        if nodes ? connected==len(wanted) : connected>0 {return true}
+        slice.fill(live,false)
+        if a.dialed && !settling && !agent_dials_running(a) {return false}
+        if sync.atomic_load(&a.stopping) || time.tick_since(started)>=timeout {return false}
+        sync.cond_wait_with_timeout(&a.wake,&a.lock,20*time.Millisecond)
+    }
+}
+
 // How far each repository's pull is, into out.
 agent_pulls :: proc(a:^Agent,out:^[dynamic]Pull) {
     sync.mutex_lock(&a.lock)
@@ -810,6 +860,8 @@ peer_tell :: proc(p:^Peer,entries:[]Tell_Entry,kind:=Msg.Tell) -> bool {
             write_text(&body,a.team.device)
             port:=u16(a.port)
             append(&body,u8(port),u8(port>>8))
+            instance:=transmute([8]u8)u64le(a.instance)
+            append(&body,..instance[:])
         }
         append(&body,u8(count),u8(count>>8))
         for &e in part {
@@ -895,10 +947,22 @@ peer_read_run :: proc(p:^Peer) {
             return
         }
     }
-    if !peer_unique(a,p) {return}
+    // Both ends say Hello before reading the other's, the dialing end first:
+    // the connection kept to the other end's agent is chosen once both are.
     heads:=make([dynamic]Tell_Entry,context.temp_allocator)
     agent_heads(a,c.peer,&heads)
-    if !peer_tell(p,heads[:],.Hello) {return}
+    if dialed {
+        if !peer_tell(p,heads[:],.Hello) {return}
+        ok:bool
+        if first,first_body,ok=conn_receive(c,buffer);!ok {return}
+    }
+    instance,said:=hello_instance(first,first_body)
+    if !said {return}
+    sync.mutex_lock(&p.lock)
+    p.instance=instance
+    sync.mutex_unlock(&p.lock)
+    if !peer_unique(a,p) {return}
+    if !dialed && !peer_tell(p,heads[:],.Hello) {return}
     // The other two start only while the peer runs: one ended meanwhile starts
     // none. It is Live once both run; if one does not start, it ends.
     sync.mutex_lock(&p.lock)
@@ -920,6 +984,7 @@ peer_read_run :: proc(p:^Peer) {
     raw,re:=make([]u8,store.CHUNK_MAX)
     if re!=nil {return}
     defer delete(raw)
+    greeted:=false
     for {
         free_all(context.temp_allocator)
         kind,body:=first,first_body
@@ -932,9 +997,12 @@ peer_read_run :: proc(p:^Peer) {
         switch kind {
         case .None:
         case .Hello:
+            if greeted {return}
+            greeted=true
             name:=tail_string(&r)
             device:=tail_string(&r)
             port:=int(read_value(&r,u16le))
+            _=read_value(&r,u64le) // its instance, taken before
             if r.short {return}
             sync.mutex_lock(&p.lock)
             p.name_len=copy(p.name[:],name)
@@ -1037,27 +1105,38 @@ hello_names_an_org :: proc(a:^Agent,r:^Reader) -> bool {
     return false
 }
 
-// Whether p is the one connection kept to its key: of two, the one whose
-// dialing end has the lower key, which both ends choose alike. Two readers
-// that run it at once (both ends dialed each other) see each other's choice:
-// it is made under the agent's lock.
+// The agent instance a connection's first message, its Hello, says; said
+// false for any other message or one that does not parse.
+@(private)
+hello_instance :: proc(kind:Msg,body:[]u8) -> (instance:u64,said:bool) {
+    if kind!=.Hello {return}
+    r:=Reader{data=body}
+    _=tail_string(&r)
+    _=tail_string(&r)
+    _=read_value(&r,u16le)
+    instance=u64(read_value(&r,u64le))
+    return instance,!r.short && instance!=0
+}
+
+// Whether p is the one connection kept to the agent at its other end, its
+// key and the instance its Hello said: of two, the one whose dialing end has
+// the lower key, then instance, which both ends choose alike. Two agents of
+// one key (an editor's and an import's of one machine) keep a connection
+// each. Two readers that run it at once (both ends dialed each other) see
+// each other's choice: it is made under the agent's lock.
 @(private)
 peer_unique :: proc(a:^Agent,p:^Peer) -> bool {
     sync.mutex_lock(&a.lock)
     defer sync.mutex_unlock(&a.lock)
-    own:=a.team.identity.key
-    key:=p.conn.peer // set before this reader runs it, by its own thread
+    // Both set before this reader runs it, by its own thread.
+    key,instance:=p.conn.peer,p.instance
     for q in a.peers {
         if q==p {continue}
         sync.mutex_lock(&q.lock)
-        kept:=(q.phase==.Hello || q.phase==.Live) && q.conn.peer==key
+        kept:=(q.phase==.Hello || q.phase==.Live) && q.conn.peer==key && q.instance==instance
         sync.mutex_unlock(&q.lock)
         if !kept {continue}
-        initiator :: proc(x:^Peer,own,key:Key) -> Key {
-            _,dialed:=x.origin.(Peer_Dialed)
-            return dialed?own:key
-        }
-        if key_less(initiator(q,own,key),initiator(p,own,key)) {return false}
+        if dialer_before(a,q,p) {return false}
         peer_end(q)
     }
     sync.mutex_lock(&p.lock)
@@ -1065,6 +1144,20 @@ peer_unique :: proc(a:^Agent,p:^Peer) -> bool {
     if p.phase==.Ended {return false}
     peer_phase_set_locked(p,.Hello)
     return true
+}
+
+// Whether the agent that dialed x comes before the one that dialed y, by key
+// then instance. Both are kept to their agent: their instance is set.
+@(private="file")
+dialer_before :: proc(a:^Agent,x,y:^Peer) -> bool {
+    Dialer :: struct {key:Key,instance:u64}
+    of :: proc(a:^Agent,p:^Peer) -> Dialer {
+        if _,dialed:=p.origin.(Peer_Dialed);dialed {return {a.team.identity.key,a.instance}}
+        return {p.conn.peer,p.instance}
+    }
+    dx,dy:=of(a,x),of(a,y)
+    if dx.key!=dy.key {return key_less(dx.key,dy.key)}
+    return dx.instance<dy.instance
 }
 
 @(private)
@@ -2171,32 +2264,61 @@ agent_fail :: proc(why:^string,e:Error,text:string) -> Error {
 
 // --- Derived data ---
 
+// What an ask of derived data (agent_ddc_ask) came to.
+Ddc_Answer :: enum u8 {
+    Missing, // every member that could hold the set answered, and none does: the org has no other member, or each one connected answered none
+    Taken,   // a peer held the set, and it is whole here
+    Failed,  // unknown: no other member of the org was connected, one asked did not answer in time or left, or the set did not come whole
+}
+
 // Asks the connected members of org for the derived data set of key and
-// fetches it whole from the first that holds one; found when it is here.
-agent_ddc_ask :: proc(a:^Agent,org:Org_Id,key:store.Hash,timeout:=5*time.Second) -> (found:bool) {
+// fetches it whole from the first that holds one.
+agent_ddc_ask :: proc(a:^Agent,org:Org_Id,key:store.Hash,timeout:=5*time.Second) -> Ddc_Answer {
+    s,se:=team_store(&a.team,org)
+    if se!=.None {return .Failed}
+    held,_,oe:=org_effective_head(s,org,context.temp_allocator)
+    if oe!=.None {return .Failed}
+    others:=false
+    for m in held.members {others||=m.key!=a.team.identity.key}
+    if !others {return .Missing}
     body:=make([dynamic]u8,context.temp_allocator)
     o,k:=org,key
     append(&body,..o[:])
     append(&body,..k[:])
-    peers:=peers_live(a) // held until the wait ends: what answers is one of them
-    w:=Ddc_Wait{org=org,key=key,asked=peers,answered=make([]bool,len(peers),context.temp_allocator)}
+    // The members of org connected, held until the wait ends: what answers is one of them.
+    live:=peers_live(a)
+    peers:=make([dynamic]^Peer,0,len(live),context.temp_allocator)
+    for p in live {
+        if _,member:=org_role(&held,p.conn.peer);member {append(&peers,p)} else {peer_unpin(a,p)}
+    }
+    if len(peers)==0 {return .Failed}
+    w:=Ddc_Wait{org=org,key=key,asked=peers[:],answered=make([]bool,len(peers),context.temp_allocator)}
     sync.mutex_lock(&a.lock)
     _,ae:=append(&a.waits,&w)
     sync.mutex_unlock(&a.lock)
     if ae!=nil {
-        peers_unpin(a,peers)
-        return false
+        peers_unpin(a,peers[:])
+        return .Failed
     }
+    silent:=false // a peer asked that will not answer
     for p,i in peers {
         if !conn_send(p.conn,.Ddc_Ask,body[:]) {
             sync.mutex_lock(&a.lock)
-            w.answered[i]=true // it will not answer
+            w.answered[i],silent=true,true
             sync.mutex_unlock(&a.lock)
         }
     }
     sync.mutex_lock(&a.lock)
     started:=time.tick_now()
-    for !ddc_wait_done(&w) && time.tick_since(started)<timeout {sync.cond_wait_with_timeout(&a.wake,&a.lock,100*time.Millisecond)}
+    for !ddc_wait_done(&w) && time.tick_since(started)<timeout {
+        // One whose connection ended will not answer: the wait does not wait for it.
+        for p,i in peers {
+            if !w.answered[i] && peer_phase(p)==.Ended {w.answered[i],silent=true,true}
+        }
+        if ddc_wait_done(&w) {break}
+        sync.cond_wait_with_timeout(&a.wake,&a.lock,100*time.Millisecond)
+    }
+    all:=ddc_wait_done(&w)
     for x,i in a.waits {
         if x==&w {
             unordered_remove(&a.waits,i)
@@ -2208,14 +2330,10 @@ agent_ddc_ask :: proc(a:^Agent,org:Org_Id,key:store.Hash,timeout:=5*time.Second)
     for p in peers {
         if !ok || p!=hit.from {peer_unpin(a,p)}
     }
-    if !ok {return false}
+    if !ok {return all && !silent ? .Missing : .Failed}
     defer peer_unpin(a,hit.from)
-    s,se:=team_store(&a.team,org)
-    if se!=.None {return false}
-    held,_,oe:=org_effective_head(s,org,context.temp_allocator)
-    if oe!=.None {return false}
-    found,_=peer_ddc_take(hit.from,&held,s,key,hit.address)
-    return
+    whole,_:=peer_ddc_take(hit.from,&held,s,key,hit.address)
+    return whole ? .Taken : .Failed
 }
 
 // Takes the answer of p to w: the first that names a set is the hit; each
@@ -2259,10 +2377,11 @@ agent_look_run :: proc(a:^Agent) {
     defer thread_end()
     last_dial:i64
     mapped:=wire.Port_Mapping_Phase.Pending
-    for {
+    // The first turn dials at once: a process that just started asks its peers soon.
+    for first:=true;;first=false {
         free_all(context.temp_allocator)
         sync.mutex_lock(&a.lock)
-        if !sync.atomic_load(&a.stopping) && a.wakes=={} {sync.cond_wait_with_timeout(&a.wake,&a.lock,LOOK_SECONDS*time.Second)}
+        if !first && !sync.atomic_load(&a.stopping) && a.wakes=={} {sync.cond_wait_with_timeout(&a.wake,&a.lock,LOOK_SECONDS*time.Second)}
         if sync.atomic_load(&a.stopping) {
             sync.mutex_unlock(&a.lock)
             return
@@ -2499,6 +2618,8 @@ agent_dial_members :: proc(a:^Agent) {
     sync.mutex_lock(&a.lock)
     defer sync.mutex_unlock(&a.lock)
     if sync.atomic_load(&a.stopping) {return}
+    // Seen with the dials of this pass Running: the lock is held until they are.
+    a.dialed=true
     now:=time.now()._nsec
     next: for t in targets {
         if len(t.address)>ADDRESS_MAX {continue}

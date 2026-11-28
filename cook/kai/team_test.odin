@@ -399,7 +399,7 @@ a_workspace_behind_main_updates_and_keeps_its_work :: proc(t:^testing.T) {
         project_close(&b)
     }
     state=project_sync_state(&mac.s,&mac.team,b_root)
-    testing.expectf(t,state.sync==.Ahead,"b holds main now and has its own still: %v",state)
+    testing.expectf(t,state.sync==.Ahead && state.conflicts==1,"b holds main now, has its own still and a conflict: %v",state)
     result,ue=project_update_folder(&mac.s,&mac.team,b_root)
     testing.expectf(t,ue==.None && result.up_to_date,"a second update has nothing to take: %v %v",ue,result)
 
@@ -408,6 +408,64 @@ a_workspace_behind_main_updates_and_keeps_its_work :: proc(t:^testing.T) {
     expect_text(t,c_root,"assets/clash.txt","theirs, on a\n")
     state=project_sync_state(&mac.s,&mac.team,c_root)
     testing.expectf(t,state.sync==.Synced,"c is on main again, synced: %v",state)
+}
+
+// A working copy whose edits are what main took since is main once updated:
+// the update is on main alone, not a merge, and nothing is left to publish.
+// A merge of the working copy and main whose files are main's, with nothing
+// described, is synced too.
+@(test)
+an_update_to_what_main_holds_is_main :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-team-update-same")
+    if folder=="" {return}
+    mac:Team_Machine
+    if !team_open(t,&mac,folder,"Ana") {return}
+    defer team_close(&mac)
+    a_root:=strings.concatenate({mac.folder,"/a"},context.temp_allocator)
+    write(t,a_root,"project.mirai","{\"name\": \"Lighthouse\"}\n")
+    write(t,a_root,"assets/shared.txt","one\n")
+    a:Project
+    if !testing.expect_value(t,project_create(&a,a_root,&mac.s),vcs.Error.None) {return}
+    defer project_close(&a)
+    org,_:=vcs.team_org_create(&mac.team,"studio")
+    link,_:=project_join(&a,&mac.team,org,false)
+    _,_,pe:=publish(&a,&mac.team,BOOKMARK_DEFAULT,"first",nil)
+    if !testing.expectf(t,pe==.None,"publish: %s",mac.team.why) {return}
+    roots:[2]string
+    for name,k in ([2]string{"b","c"}) {
+        roots[k]=strings.concatenate({mac.folder,"/",name},context.temp_allocator)
+        q:Project
+        if !testing.expectf(t,project_clone(&q,&mac.team,roots[k],&mac.s,org,link.repo)==.None,"clone: %s",mac.team.why) {return}
+        _,ce:=clone_checkout(&q,&mac.team)
+        testing.expectf(t,ce==.None,"checkout: %s",mac.team.why)
+        // The same edit main takes next, not committed.
+        write(t,roots[k],"assets/shared.txt","one\ntwo\n")
+        _,se:=snapshot(&q.workspace)
+        testing.expect_value(t,se,vcs.Error.None)
+        project_close(&q)
+    }
+    write(t,a_root,"assets/shared.txt","one\ntwo\n")
+    second,_,se:=publish(&a,&mac.team,BOOKMARK_DEFAULT,"second",nil)
+    if !testing.expectf(t,se==.None,"publish: %s",mac.team.why) {return}
+    state:=project_sync_state(&mac.s,&mac.team,roots[0])
+    testing.expectf(t,state.sync==.Diverged,"b has its edit and lacks main: %v",state)
+    result,ue:=project_update_folder(&mac.s,&mac.team,roots[0])
+    if !testing.expectf(t,ue==.None,"update: %v %s",ue,mac.team.why) {return}
+    testing.expectf(t,!result.up_to_date && result.conflicts==0,"b updates cleanly: %v",result)
+    c,_:=vcs.change_get(&mac.s,result.revision,context.temp_allocator)
+    testing.expectf(t,len(c.parents)==1 && c.parents[0]==second,"the update is on main alone: %v",c.parents)
+    state=project_sync_state(&mac.s,&mac.team,roots[0])
+    testing.expectf(t,state.sync==.Synced && state.conflicts==0,"b is main, nothing to publish: %v",state)
+
+    // A merge made before updates collapsed: its files are main's.
+    q:Project
+    if !testing.expect_value(t,project_open(&q,roots[1],&mac.s),vcs.Error.None) {return}
+    working:=vcs.repo_working(&q.workspace.repo)
+    _,me:=new_change(&q.workspace,{working,second},"",nil)
+    testing.expect_value(t,me,vcs.Error.None)
+    project_close(&q)
+    state=project_sync_state(&mac.s,&mac.team,roots[1])
+    testing.expectf(t,state.sync==.Synced,"a merge holding main's files alone is synced: %v",state)
 }
 
 // Restoring the pins of the packages takes back packages.mirai and the manifests of

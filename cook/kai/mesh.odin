@@ -21,7 +21,7 @@ import vcs "mirai:kai"
 // builds a project came with reach the machines that pull it.
 
 LABEL_DDC_CACHE :: "kai-1/ddc-cache"
-PEERS_WAIT :: 2*time.Second // a cook waits this long for the org's machines to connect
+PEERS_WAIT :: 5*time.Second // at most, a cook waits this long for the org's nodes to connect (vcs.agent_org_wait)
 // What published, the agent of peers_open waits for the org's nodes to take
 // it: until they ask nothing for DRAIN_IDLE, at most DRAIN_MAX.
 DRAIN_IDLE :: 2*time.Second
@@ -54,49 +54,37 @@ mesh_source :: proc(c:^Mesh_Cache) -> cache.Source {
 
 // What the imports and cooks of the project at root take from and give to
 // its org's machines (cache.Peers_Open): when root is a workspace of an org's
-// repository on the machine of the store at store_root, an agent of this
-// process that dials the org's members. Otherwise no source, and close is
-// nil: the imports and cooks work alone, as without Kai.
-peers_open :: proc(store_root,root:string) -> (source:cache.Source,close:cache.Peers_Close) {
+// repository on the machine of the store s, an agent of this process that
+// dials the org's members, keeping what it takes in s, which it borrows
+// until close: the caller's reads see it at once. It waits for the org's
+// nodes (vcs.agent_org_wait) at most PEERS_WAIT. Otherwise no source, and
+// close is nil: the imports and cooks work alone, as without Kai.
+peers_open :: proc(s:^store.Store,root:string) -> (source:cache.Source,close:cache.Peers_Close) {
     allocator:=context.allocator
-    if store_root=="" || root=="" {return}
+    if s==nil || root=="" {return}
     repo,workspace:=vcs.workspace_repo_of(root)
     if !workspace {return}
     p,pe:=new(Peers,allocator)
     if pe!=nil {return}
     p.allocator=allocator
-    se:store.Error
-    if p.s,se=store.open(store_root,allocator);se!=.None {
-        free(p,allocator)
-        return
-    }
-    if vcs.team_open(&p.team,&p.s,allocator)!=.None {
-        store.close(&p.s)
+    if vcs.team_open(&p.team,s,allocator)!=.None {
         free(p,allocator)
         return
     }
     l,linked:=vcs.team_link_of(&p.team,repo)
     if !linked || vcs.agent_start(&p.agent,&p.team,{port=-1},allocator)!=.None {
         vcs.team_close(&p.team)
-        store.close(&p.s)
         free(p,allocator)
         return
     }
     p.cache={team=&p.team,agent=&p.agent,org=l.org}
-    started:=time.tick_now()
-    for time.tick_since(started)<PEERS_WAIT {
-        peers:=make([dynamic]vcs.Peer_Info,context.temp_allocator)
-        vcs.agent_peers(&p.agent,&peers,context.temp_allocator)
-        if len(peers)>0 {break}
-        time.sleep(20*time.Millisecond)
-    }
+    vcs.agent_org_wait(&p.agent,l.org,PEERS_WAIT)
     return mesh_source(&p.cache),peers_close
 }
 
 @(private="file")
 Peers :: struct {
     cache:Mesh_Cache,
-    s:store.Store,
     team:vcs.Team,
     agent:vcs.Agent,
     allocator:runtime.Allocator,
@@ -109,7 +97,6 @@ peers_close :: proc(source:cache.Source) -> (taken,published:int) {
     if published>0 {vcs.agent_drain(&p.agent,DRAIN_IDLE,DRAIN_MAX)}
     vcs.agent_stop(&p.agent)
     vcs.team_close(&p.team)
-    store.close(&p.s)
     free(p,p.allocator)
     return
 }
@@ -118,12 +105,16 @@ peers_close :: proc(source:cache.Source) -> (taken,published:int) {
 // A record whose output into holds whole under the ref already is passed
 // over: the caller asks for what it lacks, so that result is not one it
 // takes (a build another ingest made under the same key). With no record
-// here that gives it, the connected machines are asked once.
+// here that gives it, the connected machines are asked once: Failed when
+// they could not answer (vcs.Ddc_Answer), Missing when none has it.
 @(private)
-mesh_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
+mesh_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,status:[]cache.Fetch_Status) {
     c:=(^Mesh_Cache)(user)
     s,se:=vcs.team_store(c.team,c.org)
-    if se!=.None {return}
+    if se!=.None {
+        for &x in status {x=.Failed}
+        return
+    }
     records:=make([dynamic]vcs.DDC_Record,context.temp_allocator)
     scratch:[]u8
     for name,k in names {
@@ -141,11 +132,18 @@ mesh_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string
                     for o in objects {whole&&=cache.object_copy(s,into,o,scratch)==.None}
                     if !whole {continue}
                 }
-                if given[k]=store.ref_set(into,namespace,name,objects[0])==.None;given[k] {break}
+                if store.ref_set(into,namespace,name,objects[0])==.None {
+                    status[k]=.Taken
+                    break
+                }
             }
-            if given[k] || asked || !vcs.agent_ddc_ask(c.agent,c.org,key) {break}
+            if status[k]==.Taken || asked {break}
+            // Taken: the records of the set that came are read again.
+            answer:=vcs.agent_ddc_ask(c.agent,c.org,key)
+            if answer==.Failed {status[k]=.Failed}
+            if answer!=.Taken {break}
         }
-        if given[k] {
+        if status[k]==.Taken {
             sync.mutex_lock(&c.lock)
             c.taken+=1
             sync.mutex_unlock(&c.lock)

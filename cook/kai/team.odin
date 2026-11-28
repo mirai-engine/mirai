@@ -437,6 +437,7 @@ Project_Sync_State :: struct {
     can_publish:bool,   // this machine writes in the linked org
     main_here:bool,     // when behind: every object main reaches is here, so an update can start
     size:Maybe(i64),    // total file bytes of the working copy
+    conflicts:u32,      // files in conflict in the working copy: a publish is refused until they are resolved
 }
 
 // Changes a list of projects walks from a working copy or main to tell which
@@ -451,7 +452,7 @@ project_sync_state :: proc(s:^store.Store,t:^vcs.Team,root:string,allocator:=con
     state.kai=bookmark!=""?strings.clone(bookmark,allocator):change_text(change_id,allocator)
     c,ce:=vcs.change_get(s,working,context.temp_allocator)
     if ce==.None {
-        if totals,te:=vcs.tree_totals(s,c.tree);te==.None {state.size=i64(totals.size)}
+        if totals,te:=vcs.tree_totals(s,c.tree);te==.None {state.size,state.conflicts=i64(totals.size),totals.conflicts}
     }
     if t==nil {return}
     l,linked:=vcs.team_link_of(t,repo)
@@ -479,8 +480,12 @@ project_sync_state :: proc(s:^store.Store,t:^vcs.Team,root:string,allocator:=con
     ours:=working_ours(s,working,&c)
     ahead:=false
     if reaches(s,ours,main_target) {
-        // What holds main and is not main is ahead of it.
+        // What holds main and is not main is ahead of it, unless it holds
+        // main's files alone and says nothing more: a publish shares nothing.
         for o in ours {ahead||=o!=main_target}
+        if ahead && c.description=="" && state.conflicts==0 {
+            if m,me:=vcs.change_get(s,main_target,context.temp_allocator);me==.None && m.tree==c.tree {ahead=false}
+        }
         state.sync=ahead?.Ahead:.Synced
         return
     }
@@ -535,6 +540,8 @@ Update_Result :: struct {
 // with the merge of its parents' trees standing for one parent), whose trees
 // merge. Every local change and edit stays: the edits of the working copy
 // close as they are, and a file both sides changed apart is a conflict value.
+// A merge whose tree is main's, of changes none of which is described, is on
+// main alone: the working copy is then main, with nothing to publish.
 // Missing, with t.why, while nobody published main or its objects are not all
 // here yet.
 update_from_main :: proc(p:^Project,t:^vcs.Team,changed:^[dynamic]string) -> (result:Update_Result,error:vcs.Error) {
@@ -574,6 +581,19 @@ update_from_main :: proc(p:^Project,t:^vcs.Team,changed:^[dynamic]string) -> (re
         append(&parents,o)
     }
     append(&parents,target)
+    if len(parents)>1 {
+        main_change:=vcs.change_get(r.s,target,context.temp_allocator) or_return
+        merged:=vcs.parents_tree(r,parents[:]) or_return
+        described:=false
+        for o in parents[:len(parents)-1] {
+            x:=vcs.change_get(r.s,o,context.temp_allocator) or_return
+            described||=x.description!=""
+        }
+        if merged==main_change.tree && !described {
+            parents[0]=target
+            resize(&parents,1)
+        }
+    }
     result.revision=new_change(w,parents[:],"",changed) or_return
     made:=vcs.change_get(r.s,result.revision,context.temp_allocator) or_return
     totals:=vcs.tree_totals(r.s,made.tree) or_return

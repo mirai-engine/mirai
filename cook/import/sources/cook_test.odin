@@ -207,9 +207,9 @@ a_refresh_takes_no_build_that_lacks_assets_of_its_manifest :: proc(t:^testing.T)
         pins,_,_:=asset.packages_load(peer,context.temp_allocator)
         name:=key if namespace==asset.REF_IMPORTS else store.hex(pins.packages[0].manifest,&digits)
         names:=[1]string{name}
-        given:=[1]bool{}
-        from.fetch(from.user,here,namespace,names[:],given[:])
-        testing.expectf(t,given[0],"this machine keeps %s/%s",namespace,name)
+        status:=[1]cache.Fetch_Status{}
+        from.fetch(from.user,here,namespace,names[:],status[:])
+        testing.expectf(t,status[0]==.Taken,"this machine keeps %s/%s",namespace,name)
     }
     alone:=project_refresh(peer,{store=here,root=peer},context.temp_allocator)
     testing.expectf(t,len(alone.missing)==1 && alone.fetched==0,"the build here lacks the texture: %v",alone)
@@ -256,6 +256,64 @@ a_refresh_takes_the_builds_of_a_second_store_without_their_sources :: proc(t:^te
     resolved,resolve_error:=asset.root_packages_in(machine,plugin,context.temp_allocator)
     testing.expectf(t,resolve_error==.None && len(resolved.problems)==0 && len(resolved.listed)==1 && resolved.listed[0].state==.Built,"%v",resolved)
     testing.expect(t,!os.exists(brush),"nothing is written where the source was")
+}
+
+// A source that could not answer for a build (no peer reached, a transfer
+// cut) may hold it: the refresh says so, imports nothing from the source here
+// and keeps no miss of it, so a later refresh takes the build; a source that
+// answered none sends the refresh to the source here.
+@(test)
+a_build_a_source_could_not_answer_for_is_no_miss :: proc(t:^testing.T) {
+    top:=base.test_folder(t,"refresh-failed")
+    if top=="" {return}
+    defer free_all(context.temp_allocator)
+    game:=fmt.tprintf("%s/game",top)
+    os.make_directory_all(fmt.tprintf("%s/assets",game))
+    brush:=fmt.tprintf("%s/assets/soft.png",game)
+    testing.expect(t,os.write_entire_file(brush,png_bytes(8,8,{40,200,40}))==nil)
+    host:=test_store(t,fmt.tprintf("%s/host",top))
+    if host==nil {return}
+    options:=Library_Options{store=host,root=game}
+    report,error:=ingest(brush,options,allocator=context.temp_allocator)
+    if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
+    added:=project_add(game,report.manifest,"",nil,options,context.temp_allocator)
+    if !testing.expectf(t,len(added.failures)==0 && len(added.missing)==0,"%v",added) {return}
+    // A second store holds the build; this one only the package and its source.
+    peer:=test_store(t,fmt.tprintf("%s/peer",top))
+    if peer==nil {return}
+    digits,select_digits:[64]u8
+    key:=store.hex(report.key,&digits)
+    names:=[1]string{key}
+    status:=[1]cache.Fetch_Status{}
+    cache.store_source(host).fetch(host,peer,asset.REF_IMPORTS,names[:],status[:])
+    if !testing.expect_value(t,status[0],cache.Fetch_Status.Taken) {return}
+    p,_:=asset.package_get(host,report.manifest,context.temp_allocator)
+    testing.expect_value(t,store.ref_remove(host,asset.REF_IMPORTS,key),store.Error.None)
+    testing.expect_value(t,store.ref_remove(host,asset.REF_BUILDS,store.hex(asset.build_select(report.manifest,&p),&select_digits)),store.Error.None)
+    testing.expect_value(t,store.commit(host),store.Error.None)
+
+    Answer :: struct {status:cache.Fetch_Status,calls:int}
+    answering :: proc(answer:^Answer) -> cache.Source {
+        return {fetch=proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,status:[]cache.Fetch_Status) {
+            a:=(^Answer)(user)
+            a.calls+=1
+            for &x in status {x=a.status}
+        },user=answer}
+    }
+    failing:=Answer{status=.Failed}
+    cut:=project_refresh(game,{store=host,root=game,source=answering(&failing)},context.temp_allocator)
+    testing.expectf(t,len(cut.failures)==1 && strings.contains(cut.failures[0],"could not be fetched from the org's peers") && cut.ingested==0 && cut.fetched==0,"%v",cut)
+    testing.expectf(t,failing.calls>0,"the source was asked")
+    // Nothing kept a miss: a source that answers gives the build.
+    taken:=project_refresh(game,{store=host,root=game,source=cache.store_source(peer)},context.temp_allocator)
+    testing.expectf(t,taken.fetched==1 && taken.ingested==0 && len(taken.failures)==0 && len(taken.missing)==0,"%v",taken)
+    // One that answers none sends the refresh to the source here.
+    testing.expect_value(t,store.ref_remove(host,asset.REF_IMPORTS,key),store.Error.None)
+    store.ref_remove(host,asset.REF_BUILDS,store.hex(asset.build_select(report.manifest,&p),&select_digits))
+    testing.expect_value(t,store.commit(host),store.Error.None)
+    missing:=Answer{status=.Missing}
+    built:=project_refresh(game,{store=host,root=game,source=answering(&missing)},context.temp_allocator)
+    testing.expectf(t,built.ingested==1 && len(built.failures)==0 && len(built.missing)==0,"%v",built)
 }
 
 @(test)

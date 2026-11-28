@@ -133,7 +133,7 @@ a_cook_ships_package_assets_from_their_objects_and_looks_the_cache_up_once :: pr
     testing.expect_value(t,asset.packages_save(root,&list),asset.Error.None)
     Counted :: struct {calls,names:int}
     counted:Counted
-    fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
+    fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,status:[]cache.Fetch_Status) {
         c:=(^Counted)(user)
         c.calls+=1
         c.names+=len(names)

@@ -548,7 +548,7 @@ Library_State :: struct {
     formats:[]importer.Format,     // FORMATS and those of the plugins, once read
     assets:string,                 // of the project followed
     registry:^asset.Registry,      // its assets, scanned once
-    asked:map[string]bool,         // "<namespace>/<name>" asked of the source, and whether it gave it
+    asked:map[string]cache.Fetch_Status, // "<namespace>/<name>" asked of the source, and what it said: once per call, Failed too
     adding:bool,
     preparing:bool,
     prepared:[dynamic]Prepared_Add,
@@ -571,7 +571,7 @@ library_begin :: proc(l:^Library_State,options:Library_Options,allocator:mem.All
     mem.dynamic_arena_init(&l.scratch,allocator,allocator,block_size=1<<20,out_band_size=1<<20)
     l.temp=base.dynamic_arena_allocator(&l.scratch)
     l.formats=FORMATS[:]
-    l.asked=make(map[string]bool,l.temp)
+    l.asked=make(map[string]cache.Fetch_Status,l.temp)
 }
 
 @(private="file")
@@ -740,14 +740,20 @@ made_from :: proc(p:^asset.Package,top:string) -> []string {
 }
 
 // Asks the source of the library for the ref (namespace, name), once per call
-// of the library.
+// of the library; whether it gave it.
 @(private="file")
 fetch :: proc(l:^Library_State,namespace,name:string) -> bool {
     key:=fmt.tprintf("%s/%s",namespace,name)
-    if given,asked:=l.asked[key];asked {return given}
+    if status,asked:=l.asked[key];asked {return status==.Taken}
     names:=[1]string{name}
     fetch_many(l,namespace,names[:])
-    return l.asked[key]
+    return l.asked[key]==.Taken
+}
+
+// What the source said of the ref (namespace, name); Missing when not asked.
+@(private="file")
+fetch_said :: proc(l:^Library_State,namespace,name:string) -> cache.Fetch_Status {
+    return l.asked[fmt.tprintf("%s/%s",namespace,name)]
 }
 
 // Asks the source for the refs of namespace with names together, but those
@@ -762,13 +768,13 @@ fetch_many :: proc(l:^Library_State,namespace:string,names:[]string) {
         key:=fmt.tprintf("%s/%s",namespace,name)
         if key in l.asked {continue}
         key=strings.clone(key,l.temp)
-        l.asked[key]=false
+        l.asked[key]=.Missing
         append(&asking,name)
         append(&keys,key)
     }
-    given:=make([]bool,len(asking),context.temp_allocator)
-    source.fetch(source.user,l.options.store,namespace,asking[:],given)
-    for key,k in keys {l.asked[key]=given[k]}
+    status:=make([]cache.Fetch_Status,len(asking),context.temp_allocator)
+    source.fetch(source.user,l.options.store,namespace,asking[:],status)
+    for key,k in keys {l.asked[key]=status[k]}
 }
 
 // Asks the source for the builds of the keys (hex of import keys) together:
@@ -787,8 +793,7 @@ fetch_builds :: proc(l:^Library_State,keys:[]string) {
 // Whether the source gave a build of the key (hex of an import key).
 @(private="file")
 build_given :: proc(l:^Library_State,key:string) -> bool {
-    return l.asked[fmt.tprintf("%s/%s",asset.REF_IMPORTS,key)] ||
-        l.asked[fmt.tprintf("%s/%s",asset.REF_IMPORTS_FAST,key)]
+    return fetch_said(l,asset.REF_IMPORTS,key)==.Taken || fetch_said(l,asset.REF_IMPORTS_FAST,key)==.Taken
 }
 
 // What a refresh will ask the source for, asked together before the packages
@@ -947,6 +952,10 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
     #partial switch error {
     case .None:
     case .Not_Found:
+        if fetch_said(l,asset.REF_MANIFESTS,store.hex(entry.manifest,&digits))==.Failed {
+            report_line(&report.failures,"package %s: its manifest %s could not be fetched from the org's peers: none of them could be reached, or the transfer was cut; check the connection to the org's server, then refresh again",id_name,store.hex(entry.manifest,&digits))
+            return
+        }
         report_line(&report.missing,"package %s: neither the store at %s nor %s has its manifest %s, and no peer gave it: restore that file from version control",id_name,s.root,asset.package_file(top,entry.id),store.hex(entry.manifest,&digits))
         return
     case .Hash:
@@ -995,7 +1004,7 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
     // Without its importer, or with none by its key, the build is the one a peer chose for its manifest.
     if !found && fetch(l,asset.REF_BUILDS,select) {f,found=build_found(l,&p,entry.manifest,key,keyed)}
     // The ref of this machine's choice is the one the source gave, not yet followed.
-    chosen_given:=found && f.chosen && l.asked[fmt.tprintf("%s/%s",asset.REF_BUILDS,select)]
+    chosen_given:=found && f.chosen && fetch_said(l,asset.REF_BUILDS,select)==.Taken
     switch {
     case !found:
     case chosen_given || (keyed && !f.chosen && build_given(l,key_name)):
@@ -1021,6 +1030,12 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
         }
     }
     if !found {
+        // A source that could not answer may hold the build: neither the
+        // source here nor the package is the cause, and nothing is imported.
+        if fetch_said(l,asset.REF_IMPORTS,key_name)==.Failed || fetch_said(l,asset.REF_IMPORTS_FAST,key_name)==.Failed || fetch_said(l,asset.REF_BUILDS,select)==.Failed {
+            report_line(&report.failures,"package %s: its build could not be fetched from the org's peers: none of them could be reached, or the transfer was cut; check the connection to the org's server, then refresh again",p.name)
+            return
+        }
         if origin_here {
             // Its source and its manifest are those the project pins: the import makes the objects
             // of the store this machine lacks, and the documents and their pins stay as they are.

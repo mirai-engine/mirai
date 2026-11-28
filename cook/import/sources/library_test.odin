@@ -328,13 +328,13 @@ a_peer_without_sources_lists_and_loads_and_nothing_is_removed_or_built :: proc(t
     if session_store==nil {return}
     session:=Counted{inner=cache.store_source(session_store),order=&order,label="session"}
     counted:=Counted{inner=cache.store_source(here),order=&order,label="mesh"}
-    count :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
+    count :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,status:[]cache.Fetch_Status) {
         c:=(^Counted)(user)
         if namespace==asset.REF_IMPORTS {
             c.calls,c.names=c.calls+1,c.names+len(names)
             append(c.order,c.label)
         }
-        c.inner.fetch(c.inner.user,into,namespace,names,given)
+        c.inner.fetch(c.inner.user,into,namespace,names,status)
     }
     chain:=cache.Chain{first={user=&session,fetch=count},second={user=&counted,fetch=count}}
     fetching:=alone

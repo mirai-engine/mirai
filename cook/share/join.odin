@@ -1043,7 +1043,7 @@ join_packages :: proc(d:^Join_Desc,folder:string,allocator:runtime.Allocator) ->
     work:=Work{folder=folder,allocator=allocator}
     // The session's peers first: they hold what this session offers and answer at once, while the
     // mesh of the project's org waits for its peers on a miss.
-    shared,close:=kai_assets.peers_open(n.s.root,folder)
+    shared,close:=kai_assets.peers_open(n.s,folder)
     defer if close!=nil {close(shared)}
     chain:=cache.Chain{first=node_source(n),second=shared}
     work.options={store=n.s,source=cache.chain_source(&chain),fast_textures=true,root=folder,plugins=d.library,worker=d.worker,gpu=d.gpu,progress=d.output}

@@ -9,7 +9,7 @@ a sync; `mirai:net` gives only the
 ## The handshake
 
 - Noise NNhfs (the KEM extension for hybrid forward secrecy) with X25519 and ML-KEM-768,
-  ChaChaPoly and SHA-256 (`NOISE_PROTOCOL`), prologue `kai/3` (raised with each change of the
+  ChaChaPoly and SHA-256 (`NOISE_PROTOCOL`), prologue `kai/4` (raised with each change of the
   messages, so machines of two versions refuse each other at the handshake):
   `-> e, e1`; `<- e, ee, ekem1` with the responder's key and its signature of the handshake hash;
   `->` the initiator's key, its signature and an invite proof (zero when it joins by none).
@@ -38,7 +38,8 @@ a sync; `mirai:net` gives only the
   authenticate. Every frame after them is a u32 little-endian length and one ChaChaPoly-sealed
   message of at most `FRAME_MAX`, its `Msg` kind first. A length past its bound, a frame that does
   not open or a message that does not parse ends the connection.
-- Messages: `Hello` (names, listening port and the heads this end holds), `Tell` (heads that
+- Messages: `Hello` (names, listening port, the agent's `instance` and the heads this end holds;
+  each end's first, the dialing end's sent before it reads the other's), `Tell` (heads that
   moved: an org record, a verified offline admission, a repository's `Repo_Refs` or a derived data
   set), `Want` (up to `WANT_MAX` chunk addresses of an org), `Chunks` (the chunks asked, in order,
   as the store keeps them, up to `FRAME_FILL`), `Lack`, `Ddc_Ask`, `Join` (with optional signed
@@ -50,13 +51,18 @@ a sync; `mirai:net` gives only the
   connection (`gossip_parse`). A peer that keeps more than
   `REQUESTS_BYTES_MAX` of wants and asks waiting, or tells of more than `TOLD_MAX` heads, ends its
   connection.
-- Of two connections between the same keys, both ends keep the one whose dialing end has the
-  lower key (`peer_unique`); the choice is made under the agent's lock, so two members that dial
-  each other at once (both learned the other's address) keep one.
-- A peer is `Connecting` (an accepted one runs its handshake there), `Hello` once kept to its
-  key, `Live` only once its server and puller run, and `Ended` (`Peer_Phase`, changed under its
-  lock and broadcast on its cond, which a join waits on). A peer that proved an invite may send
-  one `Join`; a second ends its connection, as does a `Welcome` to an end that did not dial.
+- A connection is kept per agent, its key and the random `instance` of its `Hello`: two agents
+  of one device key (the Launcher's and the one `peers_open` starts in `mirai-import`) keep one
+  connection each to a server, and neither ends the other's. Of two connections between the
+  same two agents, both ends keep the one whose dialing end has the lower key, then instance
+  (`peer_unique`, run once both `Hello`s are in); the choice is made under the agent's lock, so
+  two members that dial each other at once keep one
+  (`two_agents_of_one_key_keep_a_connection_each`).
+- A peer is `Connecting` (an accepted one runs its handshake there, and the `Hello`s cross),
+  `Hello` once kept to its agent, `Live` only once its server and puller run, and `Ended`
+  (`Peer_Phase`, changed under its lock and broadcast on its cond, which a join waits on). A peer
+  that proved an invite may send one `Join`; a second ends its connection, as does a `Welcome` to
+  an end that did not dial.
 
 ## The agent
 
@@ -95,8 +101,9 @@ a sync; `mirai:net` gives only the
   reads as complete (`a_closure_is_whole_only_when_every_chunk_is_here`).
 - A head this process wrote reaches the peers at once (`agent_changed`), which also wakes dials
   for newly discovered members; one another process of the machine wrote reaches them within
-  `LOOK_SECONDS`. `agent_sync_now` drops the cooldown of every dial that ended (a running one
-  stays the only one) and forces an immediate sync pass.
+  `LOOK_SECONDS`. The look thread's first turn dials at once. `agent_sync_now` drops the
+  cooldown of every dial that ended (a running one stays the only one) and forces an immediate
+  sync pass.
   `agent_join` and `agent_admit` save the peer's dialed or listening address (`team_peer_seen`)
   after membership holds so peers reconnect across restarts without beacons. When an org's
   record or admissions move, each peer is told every head it reads (a peer a record lists only
@@ -161,9 +168,15 @@ a sync; `mirai:net` gives only the
   writer tells it (`agent_ddc_published`) and drops the oldest past `--ddc-quota`
   (`ddc_quota`).
 - `cook/kai`'s `peers_open` is what a project's imports and cooks take (`cache.Peers_Open`): when
-  the project is a workspace of an org's repository, an agent of the process dials the org's
-  members (waiting up to `PEERS_WAIT`), a miss asks them (`agent_ddc_ask`) and takes the output
-  whole, and what the cache keeps is published and told to the org's nodes. A record whose output
+  the project is a workspace of an org's repository, an agent of the process, over the caller's
+  `^store.Store` (borrowed, so what it takes is read at once), dials the org's members and waits
+  for every node of the org (or, with none, one member) at most `PEERS_WAIT`, less once its first
+  dials ended unconnected (`agent_org_wait`). A miss asks the connected members
+  (`agent_ddc_ask`, a `Ddc_Answer`) and takes the output whole: `Missing` only when every member
+  asked answered none (or the org has no other), `Failed` when none was connected, one did not
+  answer or left, or the transfer was cut, which a refresh reports as such and never imports the
+  source here for (`cache.Fetch_Status`). What the cache keeps is published and told to the
+  org's nodes. A record whose output
   the asking store already holds whole under the ref is passed over (the caller asked because
   that result did not serve it), and with none left the connected machines are asked. A build
   found here that the org has no record of is published too, so the builds a project came with

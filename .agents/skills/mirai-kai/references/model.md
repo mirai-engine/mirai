@@ -149,7 +149,10 @@ bounds of every record are constants of `kai/types.odin`; past one is `Too_Large
   (`cook/kai`): `project.own_path`, which leaves out the generated folder and the folders of
   version control, and not the checkouts of the plugins from git the manifest names (read when the
   workspace opens and after a clone writes its files). Kai has no ignore file: what is not the
-  project's is decided where the project is defined.
+  project's is decided where the project is defined. A file the tree holds that the filter stops
+  tracking stays in the snapshot as it was (`untracked_keep`), as a later ignore leaves a file
+  git tracks; it leaves the changes only with a checked-out tree without it, and a checkout never
+  writes or removes such a path.
 
 ## Surfaces
 

@@ -114,6 +114,56 @@ a_snapshot_rehashes_only_changed_files :: proc(t:^testing.T) {
     testing.expect_value(t,report.files,4)
 }
 
+// A file a workspace's filter stops tracking stays in its changes as it
+// was: a snapshot after the filter leaves it out changes nothing of it, and
+// a checkout of a tree without it takes it out of the changes and leaves the
+// file on disk.
+@(test)
+a_file_the_filter_stops_tracking_stays_in_the_changes :: proc(t:^testing.T) {
+    f,ok:=fixture(t,"kai-untracked");if !ok {return}
+    defer store.close(&f.s)
+    root:=folder_of(&f,"work")
+    write(t,root,"a.txt","alpha")
+    write(t,root,"vendor/lib/x.txt","vendored")
+    Leave :: struct {prefix:string}
+    leave:Leave
+    filter:=Filter{procedure=proc(data:rawptr,path:string) -> bool {
+        p:=(^Leave)(data).prefix
+        return p=="" || !(path==p || strings.has_prefix(path,p) && len(path)>len(p) && path[len(p)]=='/')
+    },data=&leave}
+    w:Workspace
+    testing.expect_value(t,workspace_create(&w,root,&f.s,identity_make(),{filter=filter}),Error.None)
+    defer workspace_close(&w)
+    first:=repo_working(&w.repo)
+    leave.prefix="vendor"
+    write(t,root,"vendor/lib/x.txt","rewritten by its own tool",30*time.Minute)
+    report,e:=workspace_snapshot(&w)
+    testing.expect_value(t,e,Error.None)
+    testing.expect(t,report.revision==first,"what the filter now leaves out is not deleted")
+    write(t,root,"a.txt","alpha two",30*time.Minute)
+    report,_=workspace_snapshot(&w)
+    files:=make([dynamic]File,context.temp_allocator)
+    testing.expect_value(t,tree_files(&f.s,tree_of(t,&f.s,report.revision),&files,context.temp_allocator),Error.None)
+    texts:=make([dynamic]string,context.temp_allocator)
+    for file in files {
+        bytes,_:=file_bytes(&f.s,file.address,context.temp_allocator)
+        append(&texts,file.path,string(bytes))
+    }
+    testing.expectf(t,slice.equal(texts[:],[]string{"a.txt","alpha two","vendor/lib/x.txt","vendored"}),"a tracked file changes, the other stays as it was: %v",texts[:])
+    // A tree without it: the checkout leaves the file, and the changes lose it.
+    alone:=[]File{files[0]}
+    without,te:=tree_build(&f.s,alone)
+    testing.expect_value(t,te,Error.None)
+    c:=Change{id=random_id(Change_Id),tree=without,author=w.repo.identity.key,created=1,written=1,description="no vendor"}
+    revision,ce:=change_put(&f.s,&c,&w.repo.identity)
+    testing.expect_value(t,ce,Error.None)
+    _,ne:=workspace_new(&w,{revision})
+    testing.expect_value(t,ne,Error.None)
+    testing.expect_value(t,read(root,"vendor/lib/x.txt"),"rewritten by its own tool")
+    report,_=workspace_snapshot(&w)
+    testing.expect(t,tree_of(t,&f.s,report.revision)==without,"the changes lose it with the tree checked out")
+}
+
 // A report that is not complete makes the next snapshot scan the folder,
 // whatever complete report comes after it; the snapshot starts over.
 @(test)

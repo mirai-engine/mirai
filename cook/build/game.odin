@@ -69,7 +69,7 @@ job_ship :: proc(job:^Job) -> Failure {
     if job.cook.assets=="" {return .None}
     shared:cache.Source
     close:cache.Peers_Close
-    if job.peers!=nil {shared,close=job.peers(job.store_root,job.root)}
+    if job.peers!=nil && job.cook.store!=nil {shared,close=job.peers(job.cook.store,job.root)}
     if close!=nil {job.cook.cache_source=shared}
     job.result.cook=cook_assets(job.cook)
     if close!=nil {

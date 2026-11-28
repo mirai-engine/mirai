@@ -311,7 +311,7 @@ import_file :: proc(run:^Import_Run,file:string) -> int {
     if root!=run.project {
         import_project_end(run)
         run.project=strings.clone(root)
-        if root!="" {run.shared,run.close=peers_of(run.peers,options.store.root,root)}
+        if root!="" {run.shared,run.close=peers_of(run.peers,options.store,root)}
     }
     formats:=FORMATS[:]
     kind:=source_kind(origin)
@@ -419,7 +419,7 @@ refresh_command :: proc(roots:[]string,options:Library_Options,peers:cache.Peers
         options.progress=output
         // The store of --from first: it is on this machine, and the peers' answers wait on the network.
         chain:=cache.Chain{first=options.source}
-        shared,close:=peers_of(peers,options.store.root,top)
+        shared,close:=peers_of(peers,options.store,top)
         if close!=nil {
             chain.second=shared
             options.source=cache.chain_source(&chain)
@@ -436,9 +436,9 @@ refresh_command :: proc(roots:[]string,options:Library_Options,peers:cache.Peers
 }
 
 @(private="file")
-peers_of :: proc(peers:cache.Peers_Open,store_root,root:string) -> (source:cache.Source,close:cache.Peers_Close) {
+peers_of :: proc(peers:cache.Peers_Open,s:^store.Store,root:string) -> (source:cache.Source,close:cache.Peers_Close) {
     if peers==nil {return}
-    return peers(store_root,root)
+    return peers(s,root)
 }
 
 // Ends what peers_of opened and says what went each way.
