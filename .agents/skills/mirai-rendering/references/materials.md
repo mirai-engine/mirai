@@ -359,7 +359,8 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
 ### Program pipelines
 
 - Startup builds all engine stages, points, and vertex pipelines for listed programs
-  (`programs_listed`, `create_pipelines`) so frame 1 and runtime spawns never fall back.
+  (`programs_listed`, `create_pipelines`) so frame 1 and runtime spawns never fall back; those of
+  features left for later (`Renderer_Desc.later`) come with the feature (`renderer_feature`).
 - With a window or `--surface` (`App_Desc.shown`), `pipeline_thread` (`pipeline_thread.odin`,
   cores - 1) builds edited program pipelines (`program_stages_publish`, `programs_ask`,
   `pipelines_install`) asynchronously; until ready, stages draw material rows

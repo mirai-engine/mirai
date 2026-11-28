@@ -467,7 +467,16 @@ Renderer_Desc :: struct {
 	// thread too.
 	on_pipelines:          proc(user: rawptr, made, total: int),
 	on_pipelines_user:     rawptr,
+	// The optional features whose pipelines, and those of the stages of
+	// Surface programs for them, it does not start with: the first frame or
+	// call that needs one makes them (renderer_feature). {}: every one, as an
+	// editor needs them; a game leaves Tools and what its assets never draw.
+	later:                 Render_Features,
 }
+
+// The optional parts of the renderer (abi.Render_Feature).
+Render_Feature :: abi.Render_Feature
+Render_Features :: abi.Render_Features
 
 // What one frame draws besides the scene.
 // A camera that chooses, in place of the views of the window, the detail
@@ -682,6 +691,10 @@ Renderer :: struct {
 	program_graphics:     [PROGRAM_GRAPHICS_CAPACITY]Program_Graphics, // the raster stages of Surface programs (program_stages.odin)
 	pipeline_thread:      ^Pipeline_Thread, // makes the variants of the stages, and the pipelines of programs with pipelines_async; nil: where they are asked for
 	pipelines_async:      bool, // Renderer_Desc.pipeline_thread
+	later:                Render_Features, // of Renderer_Desc.later, those no frame needed yet (renderer_feature)
+	features_ready:       Render_Features, // whose pipelines a frame needs are made, until the pipelines go
+	features_tried:       Render_Features, // renderer_feature made, ready or not: asked once until the pipelines go
+	pipelines_started:    int, // the pipelines renderer_init made, those of programs included
 	startup:              Startup_Screen, // while renderer_init makes the pipelines (renderer_startup_frame)
 	stats_readback:  [rhi.MAX_FRAMES_IN_FLIGHT]rhi.Buffer,
 	cost:            Cost_State, // the count of a frame by mesh and material a request asked for (cost.odin)
@@ -760,6 +773,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	r.profile = desc.profile
 	pipeline_thread_start(r)
 	r.pipelines_async = desc.pipeline_thread
+	r.later = desc.later
 	textures_init(r)
 	if !scene_ready {set_error(r, "scene tables: out of memory");return false}
 	if assets!=nil && assets.owned {
@@ -822,7 +836,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 			return false
 		}
 	}
-	created := create_pipelines(r, {.Any, tracer_wanted(r, r.settings)}, programs = true, progress = desc.on_pipelines, progress_user = desc.on_pipelines_user)
+	created := create_pipelines(r, {.Any, tracer_wanted(r, r.settings)}, programs = true, progress = desc.on_pipelines, progress_user = desc.on_pipelines_user, started = &r.pipelines_started)
 	startup_screen_destroy(r)
 	if !created || !pipelines_init(r) || !dfg_build(r) || !display_build(r, DISPLAY_SDR) {return false}
 	hardware, made := tracer_settle(r, r.settings, retry = false)
@@ -1326,7 +1340,7 @@ variants_listed :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	pipelines_list(r, &stages)
 	info := rhi.device_info(r.device)
 	for item in stages.items[:stages.count] {
-		if item.target == nil || item.constants != {} || item.graphics && item.rays == .Any || !pipeline_possible(info, item) {continue}
+		if item.target == nil || item.constants != {} || item.graphics && item.rays == .Any || pipeline_later(r, item.id) || !pipeline_possible(info, item) {continue}
 		code := &r.shader_codes[item.shaders[1]]
 		for bits in u32(1) ..< u32(1) << uint(min(len(code.constants), rhi.MAX_SHADER_CONSTANTS)) {
 			if list.count == len(list.items) {break}
@@ -1367,6 +1381,7 @@ pipelines_destroy :: proc(r: ^Renderer) {
 	for p in r.pipelines {if p != 0 {rhi.pipeline_destroy(r.device, p)}}
 	for v in r.variants[:r.variant_count] {if v.pipeline != 0 {rhi.pipeline_destroy(r.device, v.pipeline)}}
 	r.pipelines, r.variant_count, r.pipeline_problem = {}, 0, ""
+	r.features_ready, r.features_tried = {}, {}
 }
 
 @(private)
@@ -1386,12 +1401,19 @@ pipeline_possible :: proc(info: ^rhi.Device_Info, item: Pipeline_Make) -> bool {
 // reports with progress how many are (Renderer_Desc.on_pipelines), after the
 // pipeline of the screen UI, made first so it can draw
 // (renderer_startup_frame). False when one the renderer needs is not there;
-// those of rays traced by hardware are not needed (tracer_missing).
+// those of rays traced by hardware are not needed (tracer_missing). Those of
+// the features left for later are not made (pipeline_later); feature: those
+// of that one alone. started: how many it was to make.
 @(private)
-create_pipelines :: proc(r: ^Renderer, wanted: bit_set[Pipeline_Rays], programs := false, progress: proc(user: rawptr, made, total: int) = nil, progress_user: rawptr = nil) -> bool {
+create_pipelines :: proc(r: ^Renderer, wanted: bit_set[Pipeline_Rays], programs := false, progress: proc(user: rawptr, made, total: int) = nil, progress_user: rawptr = nil, feature: Maybe(Render_Feature) = nil, started: ^int = nil) -> bool {
 	list: Pipeline_List
 	pipelines_list(r, &list)
 	info := rhi.device_info(r.device)
+	// The items it makes: of the feature, or every one not left for later.
+	for &item in list.items[:list.count] {
+		of, optional := pipeline_feature(item.id)
+		if pipeline_later(r, item.id) || feature != nil && (!optional || of != feature.?) {item.target = nil}
+	}
 	if progress != nil && r.pipelines[.Ui] == 0 {
 		for item in list.items[:list.count] {
 			if item.target != &r.pipelines[.Ui] {continue}
@@ -1421,6 +1443,7 @@ create_pipelines :: proc(r: ^Renderer, wanted: bit_set[Pipeline_Rays], programs 
 		set_error(r, "pipelines: out of memory for the list of those of the programs")
 		return false
 	}
+	if started != nil {started^ = len(builds)}
 	slice.sort_by(builds[:], proc(a, b: Pipeline_Build) -> bool {return a.cost > b.cost})
 	// Threads of their own, owned by this call: a reload makes them on a
 	// thread that is not the owner of r.jobs. Each takes the costliest build
@@ -1520,10 +1543,69 @@ tracer_missing :: proc(r: ^Renderer, tracer: Pipeline_Rays) -> string {
 	pipelines_list(r, &list)
 	info := rhi.device_info(r.device)
 	for item in list.items[:list.count] {
-		if item.rays == tracer && item.required && pipeline_possible(info, item) && (item.target == nil || item.target^ == 0) {return pipeline_name(r, item)}
+		if item.rays == tracer && item.required && !pipeline_later(r, item.id) && pipeline_possible(info, item) && (item.target == nil || item.target^ == 0) {return pipeline_name(r, item)}
 	}
 	return ""
 }
+
+// The feature a stage is of; optional false for one every frame may run.
+@(private)
+pipeline_feature :: proc "contextless" (id: Pipeline_Id) -> (feature: Render_Feature, optional: bool) {
+	#partial switch id {
+	case .Thumbnail, .Thumbnail_Values, .Preview_Backdrop, .Debug_Views,
+	     .Cull_Cost, .Raster_Vertices_Cost, .Raster_Vertices_Shadow_Cost, .Shadow_Clusters_Cost, .Cost_Pixels,
+	     .Translucent_Cost, .Glass_Overflow_Cost:
+		return .Tools, true
+	case .Glass_Layer, .Glass_Layer_Layers, .Glass_Filter, .Glass, .Glass_Light, .Glass_Levels, .Glass_Inside, .Glass_Overflow:
+		return .Glass, true
+	case .Decal_Draws, .Decal, .Decal_Emissive:
+		return .Decals, true
+	case .Resolve_Nested, .Resolve_Nested_Plain, .Resolve_Nested_Layers, .Nested_Prime, .Nested_Reflectance:
+		return .Nested, true
+	}
+	return {}, false
+}
+
+// Whether the pipelines of a stage wait for a frame that needs them: those
+// of a feature left for later, and those of the nested views where the
+// shaders in use have none.
+@(private)
+pipeline_later :: proc(r: ^Renderer, id: Pipeline_Id) -> bool {
+	feature, optional := pipeline_feature(id)
+	return optional && (feature in r.later || feature == .Nested && !r.frame_layout.nested)
+}
+
+// Whether a feature can draw: the shaders in use have it and the device made
+// the pipelines it cannot go without, else r.error says which it refused.
+// The first time a frame or a call needs it after the pipelines were made,
+// it makes those it lacks, with those of the stages of every Surface program
+// for it: the pipelines of a feature left for later (Renderer_Desc.later),
+// for which that frame waits for the driver. A transaction that may allocate
+// then; afterwards it only reads.
+renderer_feature :: proc(r: ^Renderer, feature: Render_Feature) -> bool {
+	if feature == .Nested && !r.frame_layout.nested {return false}
+	if feature in r.features_ready {return true}
+	if feature in r.features_tried {return false}
+	r.features_tried += {feature}
+	r.later -= {feature}
+	tracer := Pipeline_Rays.Hardware if r.hardware_rt else .Software
+	create_pipelines(r, {.Any, tracer}, programs = true, feature = feature)
+	r.variants_wanted = true
+	list := new(Pipeline_List, context.temp_allocator)
+	pipelines_list(r, list)
+	info := rhi.device_info(r.device)
+	for item in list.items[:list.count] {
+		of, optional := pipeline_feature(item.id)
+		if !optional || of != feature || !item.required || item.rays != .Any && item.rays != tracer || !pipeline_possible(info, item) {continue}
+		if item.target == nil || item.target^ == 0 {return false}
+	}
+	r.features_ready += {feature}
+	return true
+}
+
+// The pipelines renderer_init made, those of the stages of programs included:
+// fewer with Renderer_Desc.later.
+renderer_pipelines_started :: proc(r: ^Renderer) -> int {return r.pipelines_started}
 
 // The tracer settings ask for: hardware where the device has ray queries
 // that passed the self-test and they do not ask for software.

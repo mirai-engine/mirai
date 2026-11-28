@@ -15,6 +15,7 @@ import "mirai:core"
 import "mirai:platform"
 import "mirai:project"
 import render "mirai:render"
+import "mirai:render/abi"
 import "mirai:rhi"
 import "mirai:std/base"
 import "mirai:std/jobs"
@@ -306,6 +307,17 @@ player_icon_set :: proc(app:^App,file:string) -> bool {
     return platform.window_set_icon(app.platform,pixels[:width*height*4],i32(width),i32(height))
 }
 
+// The features the renderer of a game leaves for a frame that needs them:
+// the tools of the editor, and in a shipped game what its assets never draw
+// (project.RENDER_FEATURES_FILE). A dynamic one still draws, made then.
+@(private)
+player_render_later :: proc(root:string) -> render.Render_Features {
+    later:=render.Render_Features{.Tools}
+    text,read_error:=os.read_entire_file(project.path(root,project.RENDER_FEATURES_FILE,allocator=context.temp_allocator),context.temp_allocator)
+    if read_error==nil {later+={.Glass,.Decals}-abi.render_features_parse(string(text))}
+    return later
+}
+
 // engine_root: the engine the player runs with, whose general settings lie
 // under those of the project; empty in a shipped game, which carries them merged.
 player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]string) -> int {
@@ -385,6 +397,7 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
         // A cooked game carries the pieces of its meshes: it decomposes none.
         collision_cache="" if os.exists(project.path(assets,asset.REGISTRY_INDEX,allocator=context.temp_allocator)) else project.content_cache_path(root,project.COLLISION_CACHE,allocator=context.temp_allocator),
         shaders_root=root,store_root=options.store!=""?project.path_absolute(options.store,context.temp_allocator):"",
+        render_later=player_render_later(root),
     })
     if app==nil {
         fmt.eprintfln("mirai: could not start the application: %v",error)

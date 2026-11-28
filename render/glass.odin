@@ -134,6 +134,8 @@ translucency_in_frustum :: proc(p: ^Pass, f: ^Gpu_Frame) {
 		p.forward_additive ||= entry.additive
 		p.glass_rough ||= entry.glass && !entry.glass_smooth
 	}
+	// Glass the device has no pipelines for is not drawn (renderer_feature says why).
+	p.draw_glass &&= renderer_feature(p.r, .Glass)
 	translucent_before_glass(p, f)
 }
 

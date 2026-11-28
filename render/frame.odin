@@ -1006,7 +1006,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 	if p.reflectance && !ensure_surface_target(r, t) {return false}
 	if p.layered && !ensure_layers_target(r, t) {return false}
 	if p.subsurface && !subsurface_targets(r, t) {return false}
-	p.decals = p.draw && len(s.decals) > 0 || stage_asked(r, .Decal)
+	p.decals = (p.draw && len(s.decals) > 0 || stage_asked(r, .Decal)) && renderer_feature(r, .Decals)
 	p.decal_emission = p.decals && (s.decal_emission || r.decal_emission_asked)
 	if !decal_targets(r, t, p.decals, p.decal_emission) {return false}
 	if r.frame_layout.instance_ids && !ensure_instance_target(r, t) {return false}

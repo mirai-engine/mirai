@@ -6,7 +6,9 @@ import "core:testing"
 import "mirai:asset"
 import "mirai:cook/shaders"
 import "mirai:project"
+import "mirai:render/abi"
 import "mirai:std/base"
+import "mirai:std/serial"
 import "mirai:store"
 
 @(private="file")
@@ -154,24 +156,43 @@ generated_sources_follow_the_pinned_build_without_material_uses :: proc(t:^testi
     testing.expect_value(t,programs[0].text,SOURCE)
 }
 
+// A shipped game carries the catalog, the code of this system and a manifest
+// that keeps every stage of the engine, without the code of those only the
+// tools of an editor run nor what they were compiled for a program as.
 @(test)
-a_game_carries_the_manifest_the_catalog_and_the_code_of_its_system :: proc(t:^testing.T) {
+a_game_carries_the_manifest_the_catalog_and_the_code_of_its_system_but_no_tools :: proc(t:^testing.T) {
     root:=base.test_folder(t,"build-shaders")
     if root=="" {return}
     copies:=make([dynamic]Copy,context.temp_allocator)
-    shaders_copies(&copies,root,"ship",context.temp_allocator)
+    testing.expect(t,shaders_copies(&copies,root,"ship",context.temp_allocator)==nil)
     testing.expect_value(t,len(copies),0)
-    for file in ([]string{"manifest.json","catalog.json","blit.frag.spv","blit.frag.metal","notes.txt","include/surface_programs.slang"}) {
-        shaders_write(t,root,".mirai","shaders",file,text=file)
+    entry :: proc(name:string) -> abi.Shader_Entry {return {id=name,name=name,spv=strings.concatenate({name,".spv"},context.temp_allocator),msl=strings.concatenate({name,".metal"},context.temp_allocator),entry="main0"}}
+    manifest:=abi.Shader_Manifest{
+        shaders=[]abi.Shader_Entry{entry("blit.frag"),entry("thumbnail_values.frag")},
+        program_stages=[]abi.Shader_Entry{entry("thumbnail__Grass_Tall.frag"),entry("thumbnail__Grass_Tall_impostor.frag"),entry("translucent__Grass_Tall_cost.frag")},
     }
-    shaders_copies(&copies,root,"ship",context.temp_allocator)
-    testing.expect_value(t,len(copies),3)
-    CODE :: "blit.frag.metal" when ODIN_OS==.Darwin else "blit.frag.spv"
-    for name in ([]string{"manifest.json","catalog.json",CODE}) {
+    catalog:=abi.Shader_Catalog{programs=[]abi.Program{{id=1,name="Grass_Tall",domain=.Surface}}}
+    manifest_text,_:=serial.text_encode(manifest,.Pretty,context.temp_allocator)
+    catalog_text,_:=serial.text_encode(catalog,.Pretty,context.temp_allocator)
+    shaders_write(t,root,".mirai","shaders","manifest.json",text=string(manifest_text))
+    shaders_write(t,root,".mirai","shaders","catalog.json",text=string(catalog_text))
+    shipped:=shaders_copies(&copies,root,"ship",context.temp_allocator)
+    CODE :: ".metal" when ODIN_OS==.Darwin else ".spv"
+    want:=[]string{"blit.frag"+CODE,"thumbnail__Grass_Tall_impostor.frag"+CODE,"catalog.json"}
+    testing.expect_value(t,len(copies),len(want))
+    for name in want {
         found:=false
         for copy in copies {
             found|=copy.from==project.path(root,".mirai/shaders",name,allocator=context.temp_allocator) && copy.to==project.path("ship/shaders",name,allocator=context.temp_allocator) && !copy.folder
         }
         testing.expect(t,found,name)
     }
+    read:abi.Shader_Manifest
+    testing.expect_value(t,serial.text_decode(string(shipped),&read,context.temp_allocator),"")
+    if !testing.expect_value(t,len(read.shaders),2) || !testing.expect_value(t,len(read.program_stages),1) {return}
+    testing.expect_value(t,read.shaders[0].msl,"blit.frag.metal")
+    testing.expect_value(t,read.shaders[1].name,"thumbnail_values.frag")
+    testing.expect_value(t,read.shaders[1].msl,"")
+    testing.expect_value(t,read.shaders[1].spv,"")
+    testing.expect_value(t,read.program_stages[0].name,"thumbnail__Grass_Tall_impostor.frag")
 }

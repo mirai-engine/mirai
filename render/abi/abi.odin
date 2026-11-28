@@ -1,5 +1,6 @@
 package abi
 
+import "core:strings"
 import "mirai:asset"
 
 // What the renderer and its shaders agree on by value: binding slots, flag
@@ -760,6 +761,62 @@ PROGRAM_USE_NAMES :: [Program_Use]string{.Opaque="opaque",.Blend="blend",.Overla
 program_use_named :: proc(name:string) -> (use:Program_Use,ok:bool) {
     for text,each in PROGRAM_USE_NAMES {if text==name {return each,true}}
     return
+}
+
+// The optional parts of the renderer a game may never draw. A renderer makes
+// their pipelines with those it starts with, unless it is told to leave some
+// for later (render.Renderer_Desc.later): the first frame or call that needs
+// one then makes them and waits for the driver. Tools: what only the tools of
+// an editor draw (thumbnails, material captures, previews, debug views and
+// the counts of the cost of a frame), whose stages a shipped game leaves out
+// (TOOL_STAGES); Glass: transmissive materials; Decals: decal materials and
+// the Decal stage of extensions; Nested: the nested views of extensions,
+// which a generation without them (Frame_Catalog.nested) never draws.
+Render_Feature :: enum u8 {Tools,Glass,Decals,Nested}
+Render_Features :: bit_set[Render_Feature;u8]
+RENDER_FEATURE_NAMES :: [Render_Feature]string{.Tools="tools",.Glass="glass",.Decals="decals",.Nested="nested"}
+
+render_feature_named :: proc(name:string) -> (feature:Render_Feature,ok:bool) {
+    for text,each in RENDER_FEATURE_NAMES {if text==name {return each,true}}
+    return
+}
+
+// The text of project.RENDER_FEATURES_FILE: their names, one a line.
+render_features_text :: proc(features:Render_Features,allocator:=context.allocator) -> string {
+    names:=RENDER_FEATURE_NAMES
+    b:=strings.builder_make(allocator)
+    for feature in features {
+        strings.write_string(&b,names[feature])
+        strings.write_byte(&b,'\n')
+    }
+    return strings.to_string(b)
+}
+
+// The features render_features_text names; a line that names none is skipped.
+render_features_parse :: proc(text:string) -> (features:Render_Features) {
+    rest:=text
+    for line in strings.split_lines_iterator(&rest) {
+        if feature,known:=render_feature_named(strings.trim_space(line));known {features+={feature}}
+    }
+    return
+}
+
+// What a material draws of the optional parts of the renderer by its values,
+// as the renderer takes them (gpu_material_values): a decal is a decal, and a
+// transmissive one that is opaque or blended is glass.
+material_features :: proc "contextless" (m:asset.Material_Info) -> Render_Features {
+    if m.alpha_mode==.Decal {return {.Decals}}
+    if m.transmission>0 && (m.alpha_mode==.Opaque || m.alpha_mode==.Blend) {return {.Glass}}
+    return {}
+}
+
+// The stages of the engine only the tools of an editor run, by their names in
+// the manifest: a shipped game carries neither them nor what they were
+// compiled for a Surface program as (<stem>__<program>[_<variant>]).
+TOOL_STAGES :: [?]string{
+    "thumbnail.frag","thumbnail_values.frag","preview_backdrop.frag","debug_views.comp",
+    "cost_pixels.comp","cull_cost.comp","raster_vertices_cost.comp","raster_vertices_shadow_cost.comp",
+    "shadow_clusters_cost.comp","translucent_cost.frag",
 }
 
 // A stage compiled for each Surface program built for one of its uses, by

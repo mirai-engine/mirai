@@ -205,6 +205,50 @@ glass_filters_the_scene_where_a_coat_covers_it :: proc(t: ^testing.T) {
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
+// A game leaves glass and the tools of the editor for later: its renderer
+// starts with fewer pipelines than an editor's, none of theirs and every one
+// it draws with, and the first frame that sees glass makes those of glass
+// and draws it as an editor does. A tool asked for makes its own.
+@(test)
+glass_left_for_later_is_made_by_the_frame_that_first_sees_it :: proc(t: ^testing.T) {
+	above := Camera{position = {0, 5, 0}, forward = {0, -5, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	seen :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, glass: bool) -> Vec3 {
+		r := f.renderer
+		materials_set(r, {glass_material({1, 0, 0}, 0.6)})
+		sheet := sheet_mesh(r)
+		floor := Instance_Desc{object_id = 1, mesh = sheet, transform = placed({}, {20, 1, 20}), tint = {1, 1, 1}}
+		pane := Instance_Desc{object_id = 2, mesh = sheet, transform = placed({0, 1, 0}, {2, 1, 2}), material = 1, tint = {1, 1, 1}}
+		scene_given(r, {floor, pane} if glass else {floor}, nil, SUN, {})
+		return shown(t, f, camera, {0, 1, 0})
+	}
+	editor: Fixture
+	if !fixture_init(t, &editor, 96, 64, glass_settings(), reference = {.Lights}) {return}
+	started := editor.renderer.pipelines_started
+	want := seen(t, &editor, above, true)
+	fixture_destroy(&editor)
+
+	game: Fixture
+	if !fixture_init(t, &game, 96, 64, glass_settings(), desc = {later = {.Tools, .Glass, .Decals}}, reference = {.Lights}) {return}
+	defer fixture_destroy(&game)
+	r := game.renderer
+	testing.expectf(t, r.pipelines_started > 0 && r.pipelines_started < started, "a game starts with fewer pipelines than an editor: %d of %d", r.pipelines_started, started)
+	for id in ([]Pipeline_Id{.Glass_Layer, .Glass_Filter, .Glass_Levels, .Glass_Overflow, .Decal, .Decal_Draws, .Thumbnail, .Thumbnail_Values, .Preview_Backdrop, .Debug_Views, .Cost_Pixels, .Cull_Cost}) {
+		testing.expectf(t, r.pipelines[id] == 0, "%v waits for a frame that needs it", id)
+	}
+	for id in ([]Pipeline_Id{.Translucent, .Highlight, .Impostor, .Resolve, .Composite}) {
+		testing.expectf(t, r.pipelines[id] != 0, "%v, which a game draws with, is there", id)
+	}
+	seen(t, &game, above, false)
+	testing.expect(t, .Glass in r.later && r.pipelines[.Glass_Layer] == 0, "a scene without glass leaves it for later")
+	got := seen(t, &game, above, true)
+	testing.expect(t, .Glass not_in r.later && r.pipelines[.Glass_Layer] != 0 && r.pipelines[.Glass_Filter] != 0, "the frame that sees glass made its pipelines")
+	testing.expectf(t, abs(got.r - want.r) < 0.01 && abs(got.g - want.g) < 0.01 && abs(got.b - want.b) < 0.01, "and drew it as an editor does: %v, the editor %v", got, want)
+	testing.expect_value(t, renderer_cost_ask(r), "")
+	testing.expect(t, .Tools not_in r.later && r.pipelines[.Cost_Pixels] != 0, "asking for the cost of a frame made the pipelines of the tools")
+	testing.expect(t, .Decals in r.later && r.pipelines[.Decal] == 0, "nothing asked for decals")
+	testing.expectf(t, rhi.device_validation_errors(game.device) == 0, "validation: %s", rhi.device_validation_message(game.device))
+}
+
 // The layers of a glass material lie over it as over an opaque base. Seen
 // where it mirrors the sun, a coated, fuzzy or anisotropic pane over nothing
 // sends what a black opaque surface with the same layers does, since glass

@@ -74,7 +74,7 @@ debug_view_pass_needed :: proc "contextless" (mode: Debug_View) -> bool {
 debug_views_pass :: proc(p: ^Pass) {
 	r, cmd, t := p.r, p.cmd, p.t
 	mode := p.inspection.mode
-	if !debug_view_pass_needed(mode) || r.pipelines[.Debug_Views] == 0 {return}
+	if !debug_view_pass_needed(mode) || !renderer_feature(r, .Tools) || r.pipelines[.Debug_Views] == 0 {return}
 	available, _ := debug_view_status(r, p.plan, mode)
 	source := r.dummy_texture
 	#partial switch mode {

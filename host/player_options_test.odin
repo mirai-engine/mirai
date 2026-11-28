@@ -1,7 +1,11 @@
 package host
 
+import "core:os"
 import "core:strings"
 import "core:testing"
+import "mirai:project"
+import render "mirai:render"
+import "mirai:std/base"
 
 // --frames, --input and --capture run without a window unless --show-window
 // asks for one, and the options that do not go together say so; a server is
@@ -40,4 +44,22 @@ automation_options_imply_no_window_and_what_cannot_combine_says_so :: proc(t:^te
     }
     _,ok:=player_options({"--frames","0"})
     testing.expect(t,!ok,"a number of frames below 1 is not understood")
+}
+
+// A game leaves the tools of the editor for later; a shipped one also what
+// its assets never draw, by the file its build wrote.
+@(test)
+a_game_leaves_for_later_the_tools_and_what_its_shipped_assets_never_draw :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"player-later")
+    if root=="" {return}
+    testing.expect_value(t,player_render_later(root),render.Render_Features{.Tools})
+    file:=project.path(root,project.RENDER_FEATURES_FILE,allocator=context.temp_allocator)
+    for c in ([]struct{text:string,later:render.Render_Features}{
+        {"",{.Tools,.Glass,.Decals}},
+        {"glass\n",{.Tools,.Decals}},
+        {"decals\nglass\nunknown\n",{.Tools}},
+    }) {
+        testing.expect(t,os.write_entire_file(file,c.text)==nil)
+        testing.expectf(t,player_render_later(root)==c.later,"%q: %v",c.text,player_render_later(root))
+    }
 }

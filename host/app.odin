@@ -50,6 +50,7 @@ App_Desc :: struct {
     gpu_message:rhi.Message_Proc,
     gpu_loader_lock:^sync.Mutex,
     render_settings:Maybe(render.Settings),
+    render_later:render.Render_Features, // the features the renderer makes the pipelines of when a frame first needs them (render.Renderer_Desc.later); {}: it starts with all, as the editor
     // The file where the device records a GPU submission that is late
     // (rhi.Device_Desc.late_record); what a run before left in it is read and
     // removed at start (app_gpu_late_before). "": none.

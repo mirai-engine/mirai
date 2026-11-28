@@ -67,6 +67,7 @@ COST_PIPELINES :: [?]Pipeline_Id{.Cull_Cost, .Raster_Vertices_Cost, .Raster_Vert
 renderer_cost_ask :: proc(r: ^Renderer) -> (problem: string) {
 	c := &r.cost
 	if c.phase == .Asked || c.phase == .Recorded {return ""}
+	renderer_feature(r, .Tools)
 	for id in COST_PIPELINES {
 		if r.pipelines[id] == 0 {return "the device did not make the pipelines that count the cost of a frame; a newer GPU driver may make them"}
 	}

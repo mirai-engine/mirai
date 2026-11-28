@@ -205,8 +205,9 @@ shader_assets_load :: proc(directory:string,allocator:=context.allocator)->(asse
         no_name:runtime.Allocator_Error
         if code.name,no_name=strings.clone(item.name,allocator);no_name!=nil {error="out of memory for the name of a shader";break}
         code.stage=rhi.Shader_Stage(u8(item.stage)) // the same members in the same order
-        // A stage of the rays traced by software has no Metal code.
-        if name:=item.msl if rhi.SHADER_FORMAT==.Msl else item.spv;name!="" || SOFTWARE_TRACER {
+        // A stage of the rays traced by software has no Metal code, and one only
+        // the tools of an editor run none in a shipped game (abi.TOOL_STAGES).
+        if name:=item.msl if rhi.SHADER_FORMAT==.Msl else item.spv;name!="" {
             file,_:=filepath.join({directory,name},context.temp_allocator)
             data,problem:=os.read_entire_file(file,allocator);if problem!=nil {error=fmt.tprintf("cannot read %s",file);break}
             rhi.shader_code_set(code,data,"")

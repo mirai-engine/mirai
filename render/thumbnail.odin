@@ -163,6 +163,7 @@ thumbnail_record :: proc(r:^Renderer,cmd:^rhi.Command_List,color,depth:rhi.Textu
 // that the images of a subject that moves share one view; none when empty.
 renderer_thumbnail :: proc(r:^Renderer,state:^Thumbnail_GPU,vertices:[]Thumbnail_Vertex,materials:[]Material_Desc,width,height:u32,pixels:[]u8,fit:=[2]Vec3{})->bool {
     if r==nil || r.device==nil || len(vertices)==0 || len(vertices)%3!=0 || len(materials)==0 || width==0 || height==0 || len(pixels)!=int(width)*int(height)*4 {return false}
+    if !renderer_feature(r,.Tools) || r.pipelines[.Thumbnail]==0 {return false}
     constants,framed:=thumbnail_view(r,vertices,len(materials),width,height,fit)
     if !framed {return false}
     gpu_vertices:=make([]Gpu_Thumbnail_Vertex,len(vertices),context.temp_allocator)
@@ -221,7 +222,7 @@ thumbnail_values_destroy :: proc(device:^rhi.Device,state:^Thumbnail_Values_GPU)
 // materials at each pixel. pixels: width*height RGBA8; values: width*height
 // RGBA32F texels per target. A blocking transaction between frames.
 renderer_thumbnail_values :: proc(r:^Renderer,state:^Thumbnail_Values_GPU,vertices:[]Thumbnail_Vertex,materials:[]Material_Desc,width,height:u32,pixels:[]u8,values:[Thumbnail_Target][][4]f32,fit:=[2]Vec3{})->bool {
-    if r==nil || r.device==nil || r.pipelines[.Thumbnail_Values]==0 || len(vertices)==0 || len(vertices)%3!=0 || len(materials)==0 || width==0 || height==0 || len(pixels)!=int(width)*int(height)*4 {return false}
+    if r==nil || r.device==nil || !renderer_feature(r,.Tools) || r.pipelines[.Thumbnail_Values]==0 || len(vertices)==0 || len(vertices)%3!=0 || len(materials)==0 || width==0 || height==0 || len(pixels)!=int(width)*int(height)*4 {return false}
     for target in values {if len(target)!=int(width)*int(height) {return false}}
     constants,framed:=thumbnail_view(r,vertices,len(materials),width,height,fit)
     if !framed {return false}
@@ -345,6 +346,7 @@ preview_destroy :: proc(device:^rhi.Device,gpu:^Preview_GPU) {
 // one of PREVIEW_CHANNELS.
 renderer_preview :: proc(r:^Renderer,gpu:^Preview_GPU,key:u64,name:string,vertices:[]Thumbnail_Vertex,materials:[]Material_Desc,side:u32,size:[2]u32,background:Vec3,fit:=[2]Vec3{},view:=Preview_View{},light:=Preview_Light{},channel:=Debug_View.None) -> (texture:Texture_Handle,ok:bool) {
     if r==nil || r.device==nil || r.preview_count>=PREVIEW_CAPACITY || len(vertices)==0 || len(vertices)%3!=0 || len(materials)==0 || side==0 || size.x==0 || size.y==0 || size.x>side || size.y>side || channel not_in PREVIEW_CHANNELS {return 0,false}
+    if !renderer_feature(r,.Tools) || r.pipelines[.Thumbnail]==0 || r.pipelines[.Preview_Backdrop]==0 {return 0,false}
     device:=r.device
     width,height:=side,side
     w,h:int

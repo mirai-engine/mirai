@@ -128,4 +128,7 @@ a_game_ships_the_settings_of_the_engine_and_of_its_project_merged :: proc(t:^tes
     shipped:=string(data)
     testing.expect(t,read_error==nil && strings.contains(shipped,`"vsync": false`) && strings.contains(shipped,`"scale": 2`),shipped)
     testing.expect(t,!strings.contains(shipped,`"vsync": true`) && !strings.contains(shipped,`"Net"`),shipped)
+    // Without materials it draws no optional feature: the player starts without them.
+    features,features_error:=os.read_entire_file(project.path(ship,project.RENDER_FEATURES_FILE,allocator=context.temp_allocator),context.temp_allocator)
+    testing.expect(t,features_error==nil && len(features)==0,"a game ships what its assets draw of the optional features of the renderer")
 }

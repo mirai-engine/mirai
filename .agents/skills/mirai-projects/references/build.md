@@ -139,9 +139,15 @@ build.shaders_destroy(job) // waits if still running
 
 `Game` output (`Desc.output` or `.mirai/game`) receives: executable, `project.mirai`, `icon`,
 merged `settings.mirai`, cooked `assets/` (project + `assets/plugins/<name>/`), compiled `shaders/`
-(no Slang sources), SDL3 if needed, and `.mirai/cache` scene capacities. Replaces `assets/`
-cleanly (no raw sources); skips code, `cook.mirai`, and `plugin.mirai`. `mirai play` copies
-nothing.
+(no Slang sources), SDL3 if needed, `.mirai/cache` scene capacities and `render_features`.
+Replaces `assets/` cleanly (no raw sources); skips code, `cook.mirai`, and `plugin.mirai`.
+`mirai play` copies nothing.
+
+- `shaders/` leaves out the code of `abi.TOOL_STAGES` (the manifest keeps their entries without
+  files) and their program stages; the renderer never starts with Tools in a player.
+- `render_features` lists what every material of the project draws of Glass and Decals, with the
+  values scenes give it (`program_uses`, `abi.material_features`); the player starts without the
+  others and makes them in the frame that first needs one (a material made at run time).
 
 ## Dedicated server
 

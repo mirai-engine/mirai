@@ -7,6 +7,7 @@ import "core:slice"
 import "core:strings"
 import "mirai:cook/cache"
 import "mirai:project"
+import "mirai:render/abi"
 import "mirai:std/base"
 
 // What a shipped game carries next to its executable besides its cooked
@@ -45,6 +46,7 @@ game_copies :: proc(p:^project.Project,folder,compiler:string,a:runtime.Allocato
 @(private)
 job_ship :: proc(job:^Job) -> Failure {
     folder:=job.published[:strings.last_index_byte(job.published,'/')]
+    features:string
     if !job.server {
         p,error:=project.open(job.root,job.engine_root,context.temp_allocator)
         if error.code!=.None {return .Shaders}
@@ -56,11 +58,14 @@ job_ship :: proc(job:^Job) -> Failure {
             return .Shaders
         }
         copies:=make([dynamic]Copy,context.temp_allocator)
-        shaders_copies(&copies,job.root,folder,context.temp_allocator)
+        manifest:=shaders_copies(&copies,job.root,folder,context.temp_allocator)
         if !copies_run(copies[:]) {return .Copy_Failed}
+        if manifest!=nil && os.write_entire_file(project.path(folder,project.SHADERS_SHIPPED,abi.SHADER_MANIFEST,allocator=context.temp_allocator),manifest)!=nil {return .Copy_Failed}
+        features=abi.render_features_text(generation.result.features,context.temp_allocator)
     }
     if !copies_run(job.copies) {return .Copy_Failed}
     if os.write_entire_file(project.path(folder,project.SETTINGS_FILE,allocator=context.temp_allocator),job.settings)!=nil {return .Copy_Failed}
+    if !job.server && os.write_entire_file(project.path(folder,project.RENDER_FEATURES_FILE,allocator=context.temp_allocator),features)!=nil {return .Copy_Failed}
     if job.cook.assets=="" {return .None}
     shared:cache.Source
     close:cache.Peers_Close

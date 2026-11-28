@@ -20,8 +20,11 @@ import "mirai:std/base"
 // (project.Asset_Kind) draws so the programs of the materials it depends on,
 // and of those the meshes it depends on name. What a program says of itself
 // (`//! use`) the generation adds. Sorted by program; problem: a plugin
-// names a use that does not exist.
-program_uses :: proc(p:^project.Project,allocator:=context.allocator) -> (uses:[]shaders.Program_Uses_Of,problem:string) {
+// names a use that does not exist. features: what every material of the
+// project draws of the optional features of the renderer, by its values and
+// by those the entities that show it give it (abi.material_features), which
+// a shipped game starts with (project.RENDER_FEATURES_FILE).
+program_uses :: proc(p:^project.Project,allocator:=context.allocator) -> (uses:[]shaders.Program_Uses_Of,features:abi.Render_Features,problem:string) {
     Material :: struct {program:string,info:asset.Material_Info,overlays:[]base.Asset_Id}
     Drawing :: struct {dependencies:[]base.Asset_Id,uses:abi.Program_Uses}
     // An entity whose Material_Values give it overlays or values of its own.
@@ -44,7 +47,7 @@ program_uses :: proc(p:^project.Project,allocator:=context.allocator) -> (uses:[
                 use,known:=abi.program_use_named(word)
                 if !known {
                     names:=abi.PROGRAM_USE_NAMES
-                    return nil,fmt.aprintf("the plugin %s says its %s assets draw programs as %s, which is no use: the uses are %s",base.text_get(plugin.manifest.name[:]),extension,word,strings.join(slice.enumerated_array(&names),", ",context.temp_allocator),allocator=allocator)
+                    return nil,{},fmt.aprintf("the plugin %s says its %s assets draw programs as %s, which is no use: the uses are %s",base.text_get(plugin.manifest.name[:]),extension,word,strings.join(slice.enumerated_array(&names),", ",context.temp_allocator),allocator=allocator)
                 }
                 drawn+={use}
             }
@@ -112,6 +115,7 @@ program_uses :: proc(p:^project.Project,allocator:=context.allocator) -> (uses:[
         if m,known:=materials[id];known && m.program!="" {found[m.program]=found[m.program]+uses}
     }
     for id,m in materials {
+        features+=abi.material_features(m.info)
         add(&found,materials,id,drawn_as(m.info))
         for overlay in m.overlays {add(&found,materials,overlay,{.Overlay})}
     }
@@ -131,12 +135,13 @@ program_uses :: proc(p:^project.Project,allocator:=context.allocator) -> (uses:[
             candidates:=look.renderer.materials[slot:][:1] if look.renderer.materials[slot]!={} else meshes[look.renderer.mesh]
             for id in candidates {
                 m,known:=materials[id]
-                if !known || m.program=="" {continue}
+                if !known {continue}
                 info:=m.info
                 for k in 0..<count {
                     value:=v.values[k]
                     if int(v.slots[k])==slot {asset.material_standard_value(&info,v.names[k],&value,true)}
                 }
+                features+=abi.material_features(info)
                 add(&found,materials,id,drawn_as(info))
             }
         }
@@ -150,7 +155,7 @@ program_uses :: proc(p:^project.Project,allocator:=context.allocator) -> (uses:[
     list:=make([dynamic]shaders.Program_Uses_Of,0,len(found),allocator)
     for name,drawn in found {append(&list,shaders.Program_Uses_Of{strings.clone(name,allocator),drawn})}
     slice.sort_by(list[:],proc(a,b:shaders.Program_Uses_Of) -> bool {return a.program<b.program})
-    return list[:],""
+    return list[:],features,""
 }
 
 // The fields of the Mesh_Renderer and the Material_Values of engine/render

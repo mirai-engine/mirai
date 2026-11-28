@@ -482,7 +482,7 @@ stage_pipelines_destroy :: proc(r: ^Renderer) {
 pass_nested_add :: proc(s: ^Stage_Pass, nested: Nested_View) -> u32 {
 	p := s.pass
 	t := p.t
-	if p.view == nil || !p.r.frame_layout.nested || p.nested_count >= NESTED_VIEW_CAPACITY || p.r.pipelines[.Resolve_Nested] == 0 {return 0}
+	if p.view == nil || p.nested_count >= NESTED_VIEW_CAPACITY || !renderer_feature(p.r, .Nested) {return 0}
 	if p.nested_count == 0 {
 		if !target(p.r, nil, &t.views, t.width, t.height, .R8_Uint, {.Color_Target, .Sampled}, "nested views", shared = true) {return 0}
 		clear_textures(p.cmd, t.views)

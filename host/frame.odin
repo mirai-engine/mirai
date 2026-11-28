@@ -134,6 +134,7 @@ app_gpu_create :: proc(app:^App,desc:App_Desc) -> App_Error {
         // Zeroed until a recording or a request reserves its rings: it records nothing until then.
         profile=&app.profiler.profile,
         on_pipelines=pipelines_wait_report if desc.window else pipelines_log_report,on_pipelines_user=&wait,
+        later=desc.render_later,
     })
     pipelines_wait_end(&wait)
     if !initialized {

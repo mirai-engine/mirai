@@ -19,7 +19,8 @@ uses_write :: proc(t:^testing.T,parts:..string,text:="") {
 // A material draws its program by its alpha mode, the material of an overlay
 // of another as an overlay, an entity of a scene the materials it gives
 // overlays and those its values make blended or opaque, and an asset of a kind whose plugin declares
-// program_uses so the program of the material it depends on.
+// program_uses so the program of the material it depends on. A transmissive
+// material draws glass, without a program too; a decal, decals.
 @(test)
 program_uses_are_what_the_assets_draw_each_program_as :: proc(t:^testing.T) {
     root:=base.test_folder(t,"build-uses")
@@ -40,9 +41,9 @@ program_uses_are_what_the_assets_draw_each_program_as :: proc(t:^testing.T) {
     types:asset.Types
     asset.types_init(&types,context.temp_allocator)
     GLASS,STONE,MOSS,EMBER,PLAIN,RUNE,TILE :: base.Asset_Id{1,1},base.Asset_Id{1,2},base.Asset_Id{1,3},base.Asset_Id{1,4},base.Asset_Id{1,5},base.Asset_Id{1,6},base.Asset_Id{1,7}
-    material :: proc(t:^testing.T,types:^asset.Types,path:string,id:base.Asset_Id,program:string,alpha:asset.Alpha_Mode,overlays:[]asset.Material_Overlay={}) {
+    material :: proc(t:^testing.T,types:^asset.Types,path:string,id:base.Asset_Id,program:string,alpha:asset.Alpha_Mode,overlays:[]asset.Material_Overlay={},transmission:f32=0) {
         info:=asset.MATERIAL_DEFAULTS
-        info.alpha_mode=alpha
+        info.alpha_mode,info.transmission=alpha,transmission
         base.text_set(info.program[:],program)
         uses_write(t,path,text="")
         testing.expect_value(t,asset.material_save(path,types,{id=id,info=info,overlays=overlays}),asset.Error.None)
@@ -52,7 +53,8 @@ program_uses_are_what_the_assets_draw_each_program_as :: proc(t:^testing.T) {
     material(t,&types,project.path(assets,"stone.mat",allocator=context.temp_allocator),STONE,"Stone",.Opaque,{{id=1,material=MOSS,enabled=true}})
     material(t,&types,project.path(assets,"moss.mat",allocator=context.temp_allocator),MOSS,"Moss",.Mask)
     material(t,&types,project.path(assets,"ember.mat",allocator=context.temp_allocator),EMBER,"Ember",.Opaque)
-    material(t,&types,project.path(assets,"plain.mat",allocator=context.temp_allocator),PLAIN,"",.Blend)
+    material(t,&types,project.path(assets,"plain.mat",allocator=context.temp_allocator),PLAIN,"",.Blend,transmission=0.5)
+    material(t,&types,project.path(assets,"stain.mat",allocator=context.temp_allocator),base.Asset_Id{1,10},"",.Decal)
     material(t,&types,project.path(assets,"rune.mat",allocator=context.temp_allocator),RUNE,"Rune",.Opaque)
     material(t,&types,project.path(assets,"tile.mat",allocator=context.temp_allocator),TILE,"Tile",.Opaque)
     // One entity lays rune over a cube; another shows tile blended.
@@ -101,8 +103,9 @@ program_uses_are_what_the_assets_draw_each_program_as :: proc(t:^testing.T) {
     p,error:=project.open(root,"")
     defer project.close(&p)
     testing.expect_value(t,error.code,project.Error_Code.None)
-    uses,problem:=program_uses(&p,context.temp_allocator)
+    uses,features,problem:=program_uses(&p,context.temp_allocator)
     testing.expect_value(t,problem,"")
+    testing.expect_value(t,features,abi.Render_Features{.Glass,.Decals})
     want:=[]struct{program:string,uses:abi.Program_Uses}{{"Ember",{.Opaque,.Particle_Sprite}},{"Glass",{.Blend}},{"Moss",{.Opaque,.Overlay}},{"Rune",{.Opaque,.Overlay}},{"Stone",{.Opaque}},{"Tile",{.Opaque,.Blend}}}
     testing.expect_value(t,len(uses),len(want))
     for each,i in want {

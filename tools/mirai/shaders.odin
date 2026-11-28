@@ -111,7 +111,7 @@ project_shader_sources :: proc(folder,root,who:string) -> (
     if error.code!=.None {fmt.eprintfln("%s: could not open the project %s",who,folder);return}
     sources,_=build.shader_sources(&p,context.temp_allocator)
     problem:string
-    if uses,problem=build.shaders_uses(&p,nil,context.temp_allocator);problem!="" {fmt.eprintfln("%s: %s",who,problem);return}
+    if uses,_,problem=build.shaders_uses(&p,nil,context.temp_allocator);problem!="" {fmt.eprintfln("%s: %s",who,problem);return}
     roots=build.shaders_package_roots(&p,context.temp_allocator)
     return p.root,sources,uses,roots,true
 }

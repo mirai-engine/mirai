@@ -12,7 +12,9 @@ import "core:time"
 import "mirai:asset"
 import "mirai:cook/shaders"
 import "mirai:project"
+import "mirai:render/abi"
 import "mirai:std/base"
+import "mirai:std/serial"
 import "mirai:store"
 
 // The shader generation of a project: the shaders of the engine compiled
@@ -42,6 +44,7 @@ Shaders_Result :: struct {
     message:string,      // Failed: the tool that is missing or what a compiler answered. Otherwise the warnings
     refused:string,      // the programs left out of the generation and why, one a line
     diagnostics:[]shaders.Diagnostic, // Failed: what the compiler said of the stage that failed, by its sources
+    features:abi.Render_Features, // what the assets of the project draw of the optional features of the renderer (program_uses)
 }
 
 Shaders_Job :: struct {
@@ -113,8 +116,9 @@ shaders_start :: proc(
     sources,own:=shader_sources(p,a)
     job.package_roots=shaders_package_roots(p,a)
     job.own=own
-    uses,problem:=shaders_uses(p,previews,a)
+    uses,features,problem:=shaders_uses(p,previews,a)
     if problem!="" {return finish(job,.Failed,problem)}
+    job.result.features=features
     if !own && len(sources)==0 && len(job.package_roots)==0 && !shaders_have_generated(uses) {
         if os.is_file(project.path(job.result.output,project.SHADERS_MANIFEST,allocator=context.temp_allocator)) {
             if base.remove_all(job.result.output)!=nil {return finish(job,.Failed,"the generation of an earlier build could not be removed")}
@@ -153,7 +157,7 @@ shaders_start :: proc(
 shaders_current :: proc(p:^project.Project,previews:[]string={},store_root:="") -> bool {
     sources,own:=shader_sources(p,context.temp_allocator)
     output:=project.shader_generation(p.root,context.temp_allocator)
-    uses,problem:=shaders_uses(p,previews,context.temp_allocator)
+    uses,_,problem:=shaders_uses(p,previews,context.temp_allocator)
     if problem!="" {return false}
     roots:=shaders_package_roots(p,context.temp_allocator)
     generated,reason:=shaders_generated(uses,store_root,roots,context.temp_allocator)
@@ -243,9 +247,10 @@ shaders_generated :: proc(
 // What the generation of a project compiles its Surface programs for: what
 // its assets draw them as (program_uses) and, for the programs named, the
 // previews of the editor, which compiles them when it first shows one.
-shaders_uses :: proc(p:^project.Project,previews:[]string,allocator:=context.allocator) -> (uses:[]shaders.Program_Uses_Of,problem:string) {
+// features: what the assets draw of the optional features of the renderer.
+shaders_uses :: proc(p:^project.Project,previews:[]string,allocator:=context.allocator) -> (uses:[]shaders.Program_Uses_Of,features:abi.Render_Features,problem:string) {
     drawn:[]shaders.Program_Uses_Of
-    if drawn,problem=program_uses(p,context.temp_allocator);problem!="" {return nil,strings.clone(problem,allocator)}
+    if drawn,features,problem=program_uses(p,context.temp_allocator);problem!="" {return nil,{},strings.clone(problem,allocator)}
     list:=make([dynamic]shaders.Program_Uses_Of,0,len(drawn)+len(previews),allocator)
     for each in drawn {append(&list,shaders.Program_Uses_Of{strings.clone(each.program,allocator),each.uses})}
     outer: for name in previews {
@@ -253,7 +258,7 @@ shaders_uses :: proc(p:^project.Project,previews:[]string,allocator:=context.all
         append(&list,shaders.Program_Uses_Of{strings.clone(name,allocator),{.Preview}})
     }
     slice.sort_by(list[:],proc(a,b:shaders.Program_Uses_Of) -> bool {return a.program<b.program})
-    return list[:],""
+    return list[:],features,""
 }
 
 @(private)
@@ -350,21 +355,53 @@ shaders_destroy :: proc(job:^Shaders_Job) {
     free(job,job.allocator)
 }
 
-// What a shipped game carries of the generation of the project: its manifest,
-// its catalog and the code of this system. Nothing without a generation.
+// What a shipped game carries of the generation of the project: its catalog,
+// the code of this system and its manifest, which it returns to write beside
+// them. Neither the code of the stages only the tools of an editor run
+// (abi.TOOL_STAGES), whose entries the manifest keeps without it, nor what
+// they were compiled for each Surface program as, which it leaves out.
+// Nothing without a generation, or with one whose manifest does not read.
 @(private)
-shaders_copies :: proc(copies:^[dynamic]Copy,root,folder:string,a:runtime.Allocator) {
+shaders_copies :: proc(copies:^[dynamic]Copy,root,folder:string,a:runtime.Allocator) -> (manifest:[]u8) {
     built:=project.shader_generation(root,context.temp_allocator)
-    if !os.is_file(project.path(built,project.SHADERS_MANIFEST,allocator=context.temp_allocator)) {return}
-    entries,error:=os.read_all_directory_by_path(built,context.temp_allocator)
-    if error!=nil {return}
-    CODE :: ".metal" when ODIN_OS==.Darwin else ".spv"
-    for entry in entries {
-        if entry.type!=.Regular {continue}
-        if entry.name!=project.SHADERS_MANIFEST && entry.name!="catalog.json" && !strings.has_suffix(entry.name,CODE) {continue}
-        append(copies,Copy{
-            from=project.path(built,entry.name,allocator=a),
-            to=project.path(folder,project.SHADERS_SHIPPED,entry.name,allocator=a),
-        })
+    text,read_error:=os.read_entire_file(project.path(built,abi.SHADER_MANIFEST,allocator=context.temp_allocator),context.temp_allocator)
+    m:abi.Shader_Manifest
+    if read_error!=nil || serial.text_decode(string(text),&m,context.temp_allocator)!="" {return nil}
+    catalog:abi.Shader_Catalog
+    if text,error:=os.read_entire_file(project.path(built,abi.SHADER_CATALOG,allocator=context.temp_allocator),context.temp_allocator);error==nil {
+        _=serial.text_decode(string(text),&catalog,context.temp_allocator,skip_unknown=true)
     }
+    // A stage of a program is <stem>__<program>[_<variant>] of <stem>[_<variant>] (render.program_stage).
+    tools:=make(map[string]bool,context.temp_allocator)
+    for stage in abi.TOOL_STAGES {
+        tools[stage]=true
+        dot:=strings.index_byte(stage,'.')
+        name,suffix:=stage[:dot],stage[dot:]
+        for cut:=len(name);cut>0;cut-=1 {
+            if cut<len(name) && name[cut]!='_' {continue}
+            for program in catalog.programs {
+                if program.domain==.Surface {tools[fmt.tprintf("%s__%s%s%s",name[:cut],program.name,name[cut:],suffix)]=true}
+            }
+        }
+    }
+    ship :: proc(copies:^[dynamic]Copy,built,folder:string,entry:abi.Shader_Entry,a:runtime.Allocator) {
+        file:=entry.msl if ODIN_OS==.Darwin else entry.spv
+        if file=="" {return}
+        append(copies,Copy{from=project.path(built,file,allocator=a),to=project.path(folder,project.SHADERS_SHIPPED,file,allocator=a)})
+    }
+    for &entry in m.shaders {
+        if tools[entry.name] {entry.spv,entry.msl,entry.entry="","",""} else {ship(copies,built,folder,entry,a)}
+    }
+    kept:=make([dynamic]abi.Shader_Entry,0,len(m.program_stages),context.temp_allocator)
+    for entry in m.program_stages {
+        if tools[entry.name] {continue}
+        append(&kept,entry)
+        ship(copies,built,folder,entry,a)
+    }
+    m.program_stages=kept[:]
+    for entry in m.extensions {ship(copies,built,folder,entry,a)}
+    m.tests=nil
+    append(copies,Copy{from=project.path(built,abi.SHADER_CATALOG,allocator=a),to=project.path(folder,project.SHADERS_SHIPPED,abi.SHADER_CATALOG,allocator=a)})
+    manifest,_=serial.text_encode(m,.Pretty,a)
+    return
 }

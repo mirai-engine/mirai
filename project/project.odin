@@ -40,6 +40,7 @@ COLLISION_CACHE :: "collision"  // in it: the convex pieces of meshes, by their 
 FAR_CACHE :: "far"             // in it: the far meshes of scenes the editor made, by what they are made of (asset.far_key)
 FAR_PREFIX :: "mirai-far"      // where the registry of a project that is not cooked mounts the far cache
 CAPACITY_CACHE :: "capacities" // a file: what the lists of the renderer asked for in each scene (host/capacities.odin); a game ships the one of its project
+RENDER_FEATURES_FILE :: "render_features" // a file of a shipped game, beside its manifest: the optional features of the renderer its assets draw (render/abi render_features_text), which it starts with
 THUMBNAIL_FOLDER :: "thumbs"   // beside it: the views of scenes the editor took
 
 Plugin :: struct {
