@@ -2153,10 +2153,13 @@ assets_postprocess :: proc(a:^Assets,id:base.Asset_Id) -> (effect:render.Postpro
 
 // The sky a material whose program is a Sky one draws, with the parameters
 // it stores; for any other material, why it draws none.
-assets_sky :: proc(a:^Assets,id:base.Asset_Id) -> (sky:render.Sky_Program,problem:Material_Program_Problem) {
+assets_sky :: proc(a:^Assets,id:base.Asset_Id,sky:^render.Sky_Program) -> Material_Program_Problem {
     program,params,why:=assets_material_program_values(a,id,.Sky)
-    if program==nil {return {},why}
-    return {program=program.id,params=params},.None
+    if program==nil {return why}
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    sky.program=program.id
+    sky.params=params
+    return .None
 }
 
 // Why a material gives no program of a domain: it does not load, it names no

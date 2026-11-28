@@ -190,7 +190,10 @@ sky_bakes_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 			offset += u64(max(u32(SKY_BAKE_WIDTH) >> level, 1)) * u64(max(u32(SKY_BAKE_HEIGHT) >> level, 1))
 		}
 		rhi.cmd_barrier_texture(cmd, bake.texture, .Shader_Read)
-		bake.key, bake.held, bake.stale = {sky, sun}, true, false
+		// One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+		bake.key.sky = sky
+		bake.key.sun = sun
+		bake.held, bake.stale = true, false
 		scene_relit(&r.scene)
 	}
 	return true

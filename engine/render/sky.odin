@@ -217,12 +217,12 @@ sky_environment :: proc(e:core.Entity,sky:Sky,found,sunlit:bool,worlds:^core.Tab
 // or without assets. One that draws none is a problem of the sky that says
 // why; the sky shows its image or its gradient instead.
 @(private)
-sky_program :: proc(a:^host.Assets,e:core.Entity,material:base.Asset_Id,problems:^core.Problems) -> gpu.Sky_Program {
-    if material=={} || a==nil {return {}}
-    sky,problem:=host.assets_sky(a,material)
+sky_program :: proc(a:^host.Assets,e:core.Entity,material:base.Asset_Id,problems:^core.Problems) -> (sky:gpu.Sky_Program) {
+    if material=={} || a==nil {return}
+    problem:=host.assets_sky(a,material,&sky)
     buffer:[base.ASSET_ID_TEXT]u8
     switch problem {
-    case .None: return sky
+    case .None: return
     case .Material:
         core.report(problems,e,"render.sky_material","the material %s of the Sky does not load (engine.diagnostics says why), so it draws no sky; give the Sky a material that loads",host.assets_name(a,material,&buffer))
     case .No_Program:
@@ -232,7 +232,7 @@ sky_program :: proc(a:^host.Assets,e:core.Entity,material:base.Asset_Id,problems
         if m:=host.assets_material(a,material);m!=nil {program=base.text_get(m.info.program[:])}
         core.report(problems,e,"render.sky_material","the material %s of the Sky names %q, which is not a Sky program of the project, so it draws no sky; declare it with `//! mirai sky %s` and build the shaders, or name one that is",host.assets_name(a,material,&buffer),program,program)
     }
-    return {}
+    return
 }
 
 // The texture of an image asset, loaded if it was not: 0 for none, for one
