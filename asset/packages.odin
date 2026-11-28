@@ -139,9 +139,9 @@ import_key :: proc(identity:store.Hash,versions:[]u64) -> (key:store.Hash,ok:boo
 }
 
 // The name of the build of the manifest with hash manifest that a program
-// reads: the version of each kind of the cache its assets are of, as this
-// program reads it. The refresh of a project names its choice so; a program
-// without importers finds it by the same name.
+// reads: the version of each engine kind its assets are of, cached and
+// documents alike, as this program reads them. The refresh of a project names
+// its choice so; a program without importers finds it by the same name.
 build_select :: proc(manifest:store.Hash,p:^Package) -> store.Hash {
     TAG :: "mirai build select"
     bytes:[len(TAG)+size_of(store.Hash)+2+6*len(KINDS)]u8
@@ -150,7 +150,6 @@ build_select :: proc(manifest:store.Hash,p:^Package) -> store.Hash {
     manifest:=manifest
     n+=copy(bytes[n:],manifest[:])
     for info in KINDS {
-        if !import_cached(info.kind) {continue}
         for &a in p.assets {
             if a.kind!=info.kind {continue}
             n+=word_put(bytes[n:],u64(info.kind),4)

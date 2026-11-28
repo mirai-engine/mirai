@@ -230,6 +230,14 @@ packages_resolve_lists_the_objects_of_what_a_project_uses :: proc(t:^testing.T) 
     first,_:=import_key(p.identity,{1,2})
     second,_:=import_key(p.identity,{1,3})
     testing.expect(t,first!=second && first!=build_select(manifest,&p),"keys of other versions differ")
+    // Document kinds (materials, skeletons, animations) are read by documents_follow
+    // at their engine version, so they enter build_select alongside cached kinds.
+    without_doc:=p
+    without_doc.assets=make([dynamic]Package_Asset,context.temp_allocator)
+    for a in p.assets {
+        if import_cached(a.kind) {append(&without_doc.assets,a)}
+    }
+    testing.expect(t,build_select(manifest,&p)!=build_select(manifest,&without_doc),"build_select includes document kind versions")
     buffer:[store.NAME_MAX]u8
     testing.expect_value(t,cache_namespace("textures",&buffer),"cache-textures")
     testing.expect_value(t,cache_namespace(strings.repeat("x",store.NAME_MAX,context.temp_allocator),&buffer),"")
