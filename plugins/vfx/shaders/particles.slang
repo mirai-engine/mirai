@@ -78,7 +78,8 @@ struct Particle_Emitter {
     uint4 ribbons[2];     // the ribbon each group of births joins
     float4 light;         // of its Particle_Light: color (0: that of each particle), intensity (cd)
     float4 light_reach;   // its range and radius (m), fraction (0: every particle), shares (light_shares_bits)
-    uint4 light_limit;    // lights of the emitter at once (0: as many as the world shows)
+    uint4 light_limit;    // lights of the emitter at once (0: as many as the world shows), cutout_count (0 or 3..8), 0, 0
+    float4 cutout[4];     // pairs of UV-space sprite cutout polygon vertices (xy, zw)
 };
 
 struct Particle_State {

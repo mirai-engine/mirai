@@ -151,6 +151,15 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         uv = float2(corner.x, t);
         light = (particle_emitters[slot].range.w & PARTICLE_FLAG_LIT) != 0u ? particle_light(p) : emission_render_units(float3(1.0), (particle_emitters[slot].range.w & PARTICLE_FLAG_RELATIVE) != 0u);
     } else {
+        uint cutout_n = particle_emitters[params.emitter].light_limit.y;
+        if (cutout_n >= 3u) {
+            uint tri = vertex_id / 3u;
+            uint corner_in_tri = vertex_id - tri * 3u;
+            uint vi = corner_in_tri == 0u ? 0u : min(tri + corner_in_tri, cutout_n - 1u);
+            float4 pair = particle_emitters[params.emitter].cutout[vi >> 1u];
+            uv = (vi & 1u) == 0u ? pair.xy : pair.zw;
+            c = float2(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0);
+        }
         index = particle_drawn(params.emitter, instance_id);
         p = particles[index];
         look = particle_draw_look(params.emitter, index);
