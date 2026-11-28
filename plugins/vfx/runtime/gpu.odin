@@ -171,9 +171,10 @@ Gpu_Emitter :: struct {
     ribbons:[2][4]u32,  // the ribbon each group of births joins
     light:[4]f32,       // of effect.Particle_Light: its color (0: that of each particle), intensity (cd)
     light_reach:[4]f32, // its range and radius (m), fraction (0: every particle), shares (erender.light_shares)
-    light_limit:[4]u32, // lights of the emitter at once (0: as many as the world shows), 0, 0, 0
+    light_limit:[4]u32, // lights of the emitter at once (0: as many as the world shows), cutout_count (0 or 3..8), 0, 0
+    cutout:[effect.PARTICLE_CUTOUT_VERTICES/2][4]f32, // pairs of UV-space cutout polygon vertices (xy, zw)
 }
-#assert(size_of(Gpu_Emitter)==1024)
+#assert(size_of(Gpu_Emitter)==1088)
 
 // What the emitters of a frame share, first in its rows (particle_frame of particles.slang).
 Gpu_Frame :: struct {
@@ -946,7 +947,12 @@ emitter_row :: proc(g:^Gpu_Emitter,s:^Pool_Slot,capacity:u32) {
     light:=m.light
     g.light={max(light.color.r,0),max(light.color.g,0),max(light.color.b,0),max(light.intensity,0)}
     g.light_reach={max(light.range,0),max(light.radius,0),clamp(light.fraction,0,1),erender.light_shares(light.indirect,light.scattering)}
-    g.light_limit={u32(light.max_lights),0,0,0}
+    cutout_count:=m.cutout_count if m.cutout_count>=3 && m.cutout_count<=effect.PARTICLE_CUTOUT_VERTICES && (m.render==.Billboard || m.render==.Velocity || m.render==.Horizontal) else 0
+    g.light_limit={u32(light.max_lights),cutout_count,0,0}
+    g.cutout={}
+    for i in 0..<int(cutout_count) {
+        if i&1==0 {g.cutout[i/2].x,g.cutout[i/2].y=m.cutout[i].x,m.cutout[i].y} else {g.cutout[i/2].z,g.cutout[i/2].w=m.cutout[i].x,m.cutout[i].y}
+    }
 }
 
 // Whether the particles of an emitter give lights: those of a Light layer,
@@ -1543,7 +1549,13 @@ particles_sprites :: proc(pass:^erender.Pass,user:rawptr) {
             if pipeline==0 {continue}
             erender.pass_pipeline(pass,pipeline)
             erender.pass_params(pass,&params,size_of(params))
-            erender.pass_draw_indexed_indirect(pass,state,u64(draw.slot)*size_of(Gpu_State)+u64(offset_of(Gpu_State,draw)))
+            offset:=u64(draw.slot)*size_of(Gpu_State)+u64(offset_of(Gpu_State,draw))
+            if desc.info.cutout_count>=3 && desc.info.cutout_count<=effect.PARTICLE_CUTOUT_VERTICES &&
+               (desc.info.render==.Billboard || desc.info.render==.Velocity || desc.info.render==.Horizontal) {
+                erender.pass_draw_indirect(pass,state,offset)
+            } else {
+                erender.pass_draw_indexed_indirect(pass,state,offset)
+            }
             continue
         }
         for choice,c in desc.meshes[:min(desc.mesh_count,effect.PARTICLE_MESHES)] {

@@ -41,7 +41,9 @@ void main(uint3 id : SV_DispatchThreadID) {
             particle_queue[words + 3u] = 0u;
         }
     } else {
-        particle_states[slot].index_count = 6u;
+        uint cutout_n = particle_emitters[slot].light_limit.y;
+        bool has_cutout = cutout_n >= 3u && !ribbon && kind != PARTICLE_RENDER_BEAM && kind != PARTICLE_RENDER_LIGHT;
+        particle_states[slot].index_count = has_cutout ? (cutout_n - 2u) * 3u : 6u;
         // A Light particle draws nothing.
         particle_states[slot].instance_count = ribbon || kind == PARTICLE_RENDER_LIGHT ? 0u : (kind == PARTICLE_RENDER_BEAM ? alive * BEAM_PIECES : alive);
         particle_states[slot].first_index = 0u;

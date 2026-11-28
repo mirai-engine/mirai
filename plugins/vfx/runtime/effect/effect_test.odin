@@ -16,6 +16,8 @@ particle_effects_keep_their_values_parameters_hidden_fields_and_assets :: proc(t
     info.velocity={{-1,2,0},{1,3,0}}
     info.size_over_life.values[1]=0.25
     info.light={color={1,0.5,0.2},intensity=400,range=8,radius=0.1,fraction=0.5,max_lights=12,indirect=1,scattering=0.5}
+    info.cutout_count=4
+    info.cutout[0],info.cutout[1],info.cutout[2],info.cutout[3]={0.5,0},{1,0.5},{0.5,1},{0,0.5}
     base.text_set(info.program[:],"Swirl")
     hidden:[2]Particle_Field
     base.text_set(hidden[0].name[:],"noise")
@@ -142,6 +144,10 @@ invalid_effects_say_which_field_and_how_to_correct_it :: proc(t:^testing.T) {
         {proc(p:^Particle_Info) {p.light.intensity=math.nan_f32()},"light"},
         {proc(p:^Particle_Info) {p.light.fraction=1.5},"light"},
         {proc(p:^Particle_Info) {p.light.fraction=-0.1},"light"},
+        {proc(p:^Particle_Info) {p.cutout_count=2},"cutout_count"},
+        {proc(p:^Particle_Info) {p.cutout_count=9},"cutout_count"},
+        {proc(p:^Particle_Info) {p.cutout_count=4;p.cutout[2]={1.2,0.5}},"cutout"},
+        {proc(p:^Particle_Info) {p.cutout_count=4;p.cutout[1]={math.nan_f32(),0.5}},"cutout"},
         {proc(p:^Particle_Info) {p.render=Particle_Render(7)},"render"},
     }
     for c in cases {
