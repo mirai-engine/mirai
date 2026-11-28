@@ -365,10 +365,46 @@ body_type :: proc(w:^World,h:Body_Handle) -> Body_Type {
     return body==nil?.Static:body.type
 }
 
-// Changing the type discards the contacts of the body; they are found again at the next step.
+// The type the body has when nothing holds it (body_hold).
+body_own_type :: proc(w:^World,h:Body_Handle) -> Body_Type {
+    body,_:=body_read(w,h)
+    return body==nil?.Static:body.holds>0?body.own:body.type
+}
+
+// Changing the type discards the contacts of the body; they are found again at the next step. A held body
+// (body_hold) stays kinematic and takes the type when the last hold lets it go.
 body_set_type :: proc(w:^World,h:Body_Handle,type:Body_Type) {
     body,index:=body_get(w,h)
-    if body==nil || body.type==type {return}
+    if body==nil {return}
+    if body.holds>0 {
+        body.own=type
+        return
+    }
+    body_type_change(w,h,index,type)
+}
+
+// Holds the body as kinematic, or lets go of one hold: each one that holds bodies (the replay of a
+// breakable, what steers an entity) holds and lets go apart, and the body has its own type again when the
+// last one lets go, with its velocity when dynamic. Letting go of a body nothing holds does nothing.
+body_hold :: proc(w:^World,h:Body_Handle,hold:bool) {
+    body,index:=body_get(w,h)
+    if body==nil {return}
+    if hold {
+        if body.holds==0 {
+            body.own=body.type
+            body_type_change(w,h,index,.Kinematic)
+        }
+        body.holds+=1
+    } else if body.holds>0 {
+        body.holds-=1
+        if body.holds==0 {body_type_change(w,h,index,body.own)}
+    }
+}
+
+@(private)
+body_type_change :: proc(w:^World,h:Body_Handle,index:i32,type:Body_Type) {
+    body:=&w.bodies[index]
+    if body.type==type {return}
     if type==.Static {body_clear_twin(w,h)}
     w.grounds_stale=true
     body_wake_touching(w,index)

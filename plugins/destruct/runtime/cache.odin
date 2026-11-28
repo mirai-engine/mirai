@@ -47,6 +47,7 @@ Scratch_Group :: struct {
     entity:core.Entity, // that has it already
     debris:bool,
     first,count:int, // in flat
+    members:u64,     // Destructible_Group.members of its pieces
 }
 
 // The pieces a mesh is cut into. A job writes it while counter is pending;

@@ -660,3 +660,65 @@ a_recording_of_a_destructible_plays_back_tick_by_tick_in_place_and_goes_on_when_
     testing.expect_value(t,len(f.cache.meshes),0)
     testing.expect_value(t,f.problems.count,0)
 }
+
+// A state that undoes a cut and makes another one in the same piece slots, as a server that corrects a
+// misprediction does, draws each group as it collides: the halves keep their ids, not their geometry, and
+// each group gets a mesh of the pieces it has now, the one the first cut gave it.
+@(test)
+a_state_that_cuts_again_into_the_same_slots_draws_each_group_as_it_collides :: proc(t:^testing.T) {
+    f:Destruct_Test
+    if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-recut"),anchor_first=false)) {return}
+    defer destruct_test_destroy(&f)
+    config:=destructible();config.fracture={1,2}
+    e:=destruct_test_entity(&f,config,gravity_scale=0)
+    view:=Destruct_View{core.ref(&f.physics),core.read(&f.states),core.read(&f.groups)}
+    destruct_test_step(&f);destruct_test_step(&f)
+    Drawn :: struct {entity:core.Entity,group:u32,members:u64,mesh:base.Asset_Id}
+    drawn :: proc(f:^Destruct_Test,owner:core.Entity,out:[]Drawn) -> int {
+        count:=0
+        for row in 0..<core.count(&f.groups) {
+            group:=f.groups.values[row]
+            mesh,has:=core.get(&f.meshes,f.groups.entities[row])
+            if group.owner!=owner || !has || count==len(out) {continue}
+            out[count]={f.groups.entities[row],group.group,group.members,mesh.mesh}
+            count+=1
+        }
+        return count
+    }
+    cut :: proc(f:^Destruct_Test,e:core.Entity,x:f32) {
+        slice(&f.requests,e,{x,0,0},{1,0,0})
+        destruct_test_tick(f)
+        destruct_test_tick(f)
+    }
+    whole:=make([]u8,state_size(view,e))
+    defer delete(whole)
+    testing.expect_value(t,state_write(view,e,whole),len(whole))
+    cut(&f,e,0.7)
+    first:[4]Drawn
+    first_count:=drawn(&f,e,first[:])
+    cut_state:=make([]u8,state_size(view,e))
+    defer delete(cut_state)
+    testing.expect_value(t,state_write(view,e,cut_state),len(cut_state))
+    // Whole again, then cut elsewhere: the halves take the slots of the first ones.
+    state_replay(&f.requests,e,whole)
+    destruct_test_tick(&f)
+    cut(&f,e,0.3)
+    other:[4]Drawn
+    other_count:=drawn(&f,e,other[:])
+    // The first cut again, in place: the groups keep their entities.
+    state_replay(&f.requests,e,cut_state)
+    destruct_test_tick(&f)
+    now:[4]Drawn
+    if !testing.expect(t,first_count>=2 && other_count==first_count && drawn(&f,e,now[:])==first_count,"each cut leaves the same groups") {return}
+    for group in now[:first_count] {
+        for want in first[:first_count] {
+            if want.group==group.group {testing.expectf(t,group.members==want.members,"group %v has the pieces the first cut gave it",group.group)}
+        }
+        for was in other[:other_count] {
+            if was.group!=group.group {continue}
+            testing.expect(t,was.entity==group.entity,"a group both cuts have keeps its entity")
+            testing.expectf(t,group.members!=was.members && group.mesh!=was.mesh && group.mesh!={},"group %v is drawn anew, not with the pieces of the second cut",group.group)
+        }
+    }
+    testing.expect_value(t,f.problems.count,0)
+}

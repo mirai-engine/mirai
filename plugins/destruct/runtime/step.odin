@@ -375,6 +375,10 @@ mirror :: proc(c:^Ctx,e:core.Entity,st:^Destructible_State,entry:^Entry,revision
         group:=&cache.groups[cache.group_of[base.handle_index(base.Handle(piece.body))]]
         cache.flat[group.first+group.count]=piece.id
         group.count+=1
+        // A slot a state gave to another half keeps its id: its center and volume tell, as in visual_cut.
+        group.members=base.hash_combine(group.members,u64(piece.id))
+        group.members=base.hash_combine(group.members,u64(transmute(u32)piece.volume))
+        for axis in piece.center {group.members=base.hash_combine(group.members,u64(transmute(u32)axis))}
     }
 
     // The entities of bodies that are gone end; those of the others are kept.
@@ -409,8 +413,7 @@ mirror :: proc(c:^Ctx,e:core.Entity,st:^Destructible_State,entry:^Entry,revision
 group_sync :: proc(c:^Ctx,owner:core.Entity,entry:^Entry,group:^Scratch_Group) {
     cache:=c.cache
     members:=cache.flat[group.first:][:group.count]
-    hash:=u64(len(members))
-    for member in members {hash=base.hash_combine(hash,u64(member))}
+    hash:=base.hash_combine(group.members,u64(len(members)))
     created:=group.entity==core.NONE || !core.alive(c.es,group.entity)
     row:Destructible_Group
     if created {

@@ -84,7 +84,7 @@ Destructible_Group :: struct {
     group:u32 `mirai:"transient,readonly"`,         // physics.Piece_Info.group: the same on every end of a network session
     debris:bool `mirai:"transient,readonly"`,       // cosmetic: of this world alone
     mesh:base.Asset_Id `mirai:"transient,readonly,hidden"`, // generated for its pieces, which its Mesh_Renderer shows
-    members:u64 `mirai:"transient,readonly,hidden"`,        // hash of the ids of the pieces mesh was made of
+    members:u64 `mirai:"transient,readonly,hidden"`,        // hash of the ids, centers and volumes of the pieces mesh was made of
 }
 
 // What is asked of a destructible, or of one body that broke off it: the event each of its bodies gets.

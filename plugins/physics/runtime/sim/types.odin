@@ -124,8 +124,10 @@ Body :: struct {
     flags:Body_Flags,
     gravity:Vec3, // m/s2, with Own_Gravity
     awake_prev,awake_next:i32, // neighbors in the list of the awake bodies, while Awake
+    holds:u32,    // of body_hold: kinematic while any holds it
+    own:Body_Type, // while held, the type it takes back when the last hold lets go
 }
-#assert(size_of(Body)==288)
+#assert(size_of(Body)==296)
 
 // Dynamic bodies that touching contacts and joints connect, directly or not, fall asleep and wake together as
 // an island. A kinematic body is an island of its own; a static body has none.

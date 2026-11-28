@@ -131,8 +131,7 @@ Bond :: struct {
 
 @(private) Breakable_Flag :: enum u32 {
     Anchored,Remove_On_Sleep,Passive_Removal,Impact_Damage,
-    Kinematic, // made kinematic: the body it was created as stays so when it is let go
-    Held,      // its bodies are kinematic and neither take hits nor expire (breakable_poses_apply)
+    Held, // it holds each body that is not static (break_hold): they neither take hits nor expire
 }
 @(private) Breakable_Flags :: bit_set[Breakable_Flag;u32]
 
@@ -161,7 +160,7 @@ Breakable :: struct {
 #assert(size_of(Breakable)==232)
 
 Piece_Info :: struct {
-    id:i32,             // stable while the breakable lives
+    id:i32,             // its slot, stable while it lives: a state that undoes its cut gives the slot to another piece
     body:Body_Handle,   // null once the piece is gone
     shape:Shape_Handle,
     center:Vec3,        // in the frame of the body
@@ -527,23 +526,33 @@ break_changed :: proc(w:^World,body:Body_Handle) {
     s.changed_count+=1
 }
 
-// A new body for a group that leaves a body at xf: kinematic while the breakable is held.
+// A new body for a group that leaves a body at xf, held while the breakable is.
 @(private)
-break_body_desc :: proc(d:^Breakable,xf:Transform,debris:bool) -> Body_Desc {
+break_body_create :: proc(w:^World,d:^Breakable,xf:Transform,debris:bool) -> Body_Handle {
     desc:=BODY_DESC_DEFAULT
-    desc.type=.Held in d.flags?.Kinematic:.Dynamic
     desc.gravity_scale=d.gravity_scale
     desc.position,desc.rotation,desc.user_data=xf.p,xf.q,d.user_data
     desc.debris=debris
-    return desc
+    body:=body_create(w,desc)
+    if .Held in d.flags {body_hold(w,body,true)}
+    return body
 }
 
-// The type a body of the breakable has when it is not held.
+// Holds, at rest, or lets go of every body of the breakable that is not static, once each: the one it
+// was created as, with pieces or not, and those of its pieces. What else holds them holds them apart.
 @(private)
-break_nature :: proc(w:^World,d:^Breakable,body:Body_Handle) -> Body_Type {
-    type:=body_type(w,body)
-    if type==.Kinematic && .Held in d.flags && (body!=d.body || .Kinematic not_in d.flags) {return .Dynamic}
-    return type
+break_hold :: proc(w:^World,d:^Breakable,hold:bool) {
+    s:=&w.breaking
+    mark:=break_mark(s)
+    take :: proc(w:^World,s:^Break_Scratch,mark:u32,body:Body_Handle,hold:bool) {
+        if !body_valid(w,body) || s.marks[body_slot(body)]==mark {return}
+        s.marks[body_slot(body)]=mark
+        if body_own_type(w,body)==.Static {return}
+        body_hold(w,body,hold)
+        if hold {body_set_velocity(w,body,{},{})}
+    }
+    take(w,s,mark,d.body,hold)
+    for slot:=d.piece_list;slot>=0;slot=w.pieces[slot].next {take(w,s,mark,shape_body(w,w.pieces[slot].shape),hold)}
 }
 
 // A new mark for the bodies taken in a pass over the scratch.
@@ -733,7 +742,6 @@ breakable_create :: proc(w:^World,desc:Breakable_Desc) -> (handle:Breakable_Hand
         filter=desc.filter,anchor_count=i32(len(desc.anchors)),generation=d.generation+1,next_free=-1,
     }
     if desc.impact_damage {d.flags+={.Impact_Damage}}
-    if desc.kinematic {d.flags+={.Kinematic}}
     copy(d.anchors[:],desc.anchors)
     slots,slots_error:=make([]i32,count,w.allocator)
     cluster_slots,clusters_error:=make([]i32,len(desc.clusters),w.allocator)
@@ -1048,9 +1056,9 @@ breakable_regroup :: proc(w:^World,index:i32,event:^Break_Event) {
         from:=s.body[slot]
         if from=={} || .Debris in piece.flags {continue}
         root:=union_find(s.parent,slot)
-        if break_nature(w,d,from)!=.Dynamic && .Anchored in d.flags?s.anchored[root]:s.keeper[body_slot(from)]==root {continue}
+        if body_own_type(w,from)!=.Dynamic && .Anchored in d.flags?s.anchored[root]:s.keeper[body_slot(from)]==root {continue}
         if s.group[root]==-1 {
-            created:=body_create(w,break_body_desc(d,body_transform(w,from),s.volume[root]<d.debris_volume))
+            created:=break_body_create(w,d,body_transform(w,from),s.volume[root]<d.debris_volume)
             if created=={} {
                 w.stats.breakable_capacity_exhausted+=1
                 s.refused[index]+={.Bodies}

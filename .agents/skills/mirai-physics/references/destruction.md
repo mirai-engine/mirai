@@ -197,10 +197,11 @@ Poses and playback (`breakable_poses/poses_apply/poses_blend`):
 - `breakable_poses_apply` places each body by group (a static one stays) and sets the remaining
   life of a group that expires (`max` leaves it as it is); a body without a pose stays as it is.
   Hand-made poses start from `breakable_poses`: a zero `remaining` expires the group at once.
-- `hold` keeps it held until a call without it: its dynamic bodies, and those it makes meanwhile,
-  are kinematic at rest, take no hits and do not expire, so the next poses move them. Let go,
-  they are dynamic again with the velocities of the poses; a root made kinematic stays so. The
-  hold travels in copies of the state.
+- `hold` keeps it held until a call without it: each body that is not static, and those it makes
+  meanwhile, takes one `body_hold` (kinematic at rest), takes no hits and does not expire, so the
+  next poses move them. Let go, each has its own type again with the velocities of the poses,
+  unless another hold (a section, a manipulation) still keeps it kinematic. The hold travels in
+  copies of the state.
 - `breakable_poses_blend` gives the poses between two lists at `t` by group (slerp, `remaining`
   interpolated): a recording kept at a lower rate plays back at every step.
 - A playback of a recording applies each state where it changed and the poses of every step,

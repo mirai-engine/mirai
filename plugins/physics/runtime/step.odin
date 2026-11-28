@@ -691,8 +691,8 @@ body_sync :: proc(s:^Sync,e:core.Entity,l:^Link,rigid:Rigid_Body,has_rigid,rigid
         }
         target_made(s,l,e)
     } else {
-        // A body held as kinematic keeps that type until the last one that holds it so lets go.
-        if h:=held_of(state,e);sim.body_type(w,l.body)!=type && (h==nil || !held_kinematic(h^)) {
+        // A body held as kinematic takes the type when the last one that holds it lets go.
+        if sim.body_own_type(w,l.body)!=type {
             sim.body_set_type(w,l.body,type)
             mass_changed=true
         }
@@ -1370,23 +1370,29 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
             rotation=linalg.normalize(quaternion(x=rotation.x/qscale,y=rotation.y/qscale,z=rotation.z/qscale,w=rotation.w/qscale))
             h:=held_take(state,e)
             if h==nil {memory_problem(s.problems,e,"what physics holds, so the manipulation does not take the body");continue}
-            // Another link of the same body hands over its manipulation, the type the body had and its spring.
+            was:=held_kinematic(h^)
+            // Another link of the same body hands over its manipulation and its spring; the holds it ends
+            // let go once this one holds.
+            ended:=0
             for &other,at in state.held.values {
                 if &other==h || .Manipulation not_in other.by {continue}
                 if by:=link_find(state,state.held.entities[at]);by==nil || by.body!=l.body {continue}
+                other_was:=held_kinematic(other)
                 if h.by=={} {
-                    h.type_before,h.follow,h.pull=other.type_before,other.follow,other.pull
+                    h.pull=other.pull
                     h.by+={.Manipulation}
                 } else if sim.joint_valid(w,other.pull) {sim.joint_destroy(w,other.pull)}
                 other.by-={.Manipulation}
                 other.release,other.pull=false,{}
+                if other_was && !held_kinematic(other) {ended+=1}
             }
-            was:=held_kinematic(h^)
-            h.follow=request.override || (was?h.type_before:sim.body_type(w,l.body))!=.Dynamic
+            h.follow=request.override || sim.body_own_type(w,l.body)!=.Dynamic
             h.by+={.Manipulation}
             h.pose[.Manipulation]={request.position,rotation}
             h.release=false
-            if !hold_type(state,h,l,e,was,s.rigids) {
+            pulled:=hold_type(state,h,l,e,was,s.rigids)
+            for _ in 0..<ended {sim.body_hold(w,l.body,false)}
+            if !pulled {
                 core.report(s.problems,e,"physics.joints","a manipulation does not pull it: the %d joints of Physics_Settings.joints are in use; raise joints, or remove joints",w.desc.joint_capacity)
                 hold_end(state,h,l,e,.Manipulation,s.rigids)
                 continue
@@ -1553,8 +1559,9 @@ hold_end :: proc(state:^Physics_State,h:^Held,l:^Link,e:core.Entity,source:Hold_
 }
 
 // Gives the body the type its holds ask (was: whether they held it as kinematic before) and the spring of a
-// manipulation that pulls. Held as kinematic, it keeps the type it had; let go, it has its own again: moving
-// as it was when it is dynamic, else at rest. false when no joint is left for the spring.
+// manipulation that pulls. Held as kinematic, it holds the body once (sim.body_hold); let go, the body has
+// its own type again unless something else holds it: moving as it was when it is dynamic, else at rest.
+// false when no joint is left for the spring.
 @(private)
 hold_type :: proc(state:^Physics_State,h:^Held,l:^Link,e:core.Entity,was:bool,rigids:^core.Table(Rigid_Body,.Read)) -> bool {
     w:=&state.world
@@ -1565,14 +1572,14 @@ hold_type :: proc(state:^Physics_State,h:^Held,l:^Link,e:core.Entity,was:bool,ri
     if !sim.body_valid(w,l.body) {return true}
     now:=held_kinematic(h^)
     if now && !was {
-        h.type_before=sim.body_type(w,l.body)
-        sim.body_set_type(w,l.body,.Kinematic)
+        sim.body_hold(w,l.body,true)
     } else if was && !now {
-        rigid,has_rigid:=core.get(rigids,e)
-        type:=l.kind==.Proxy?h.type_before:(has_rigid?rigid.type:Body_Type.Static)
-        if type!=.Dynamic {sim.body_set_velocity(w,l.body,{},{})}
-        sim.body_set_type(w,l.body,type)
-        if l.kind!=.Proxy {body_mass_update(w,l.body,rigid,has_rigid)}
+        sim.body_hold(w,l.body,false)
+        if sim.body_type(w,l.body)!=.Dynamic {sim.body_set_velocity(w,l.body,{},{})}
+        if l.kind!=.Proxy {
+            rigid,has_rigid:=core.get(rigids,e)
+            body_mass_update(w,l.body,rigid,has_rigid)
+        }
     }
     if !now && .Manipulation in h.by {return pull_set(state,h,l)}
     if sim.joint_valid(w,h.pull) {sim.joint_destroy(w,h.pull)}

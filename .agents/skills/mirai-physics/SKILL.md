@@ -174,6 +174,9 @@ tables and is the only package that imports it. The game and the other plugins, 
 - A manipulation keeps a dynamic body dynamic and pulls it with a spring of bounded force; only a
   pose by design (a following pose target, `follow` of the animated ragdoll) holds a body as
   kinematic.
+- Whoever holds a body as kinematic (the holds of an entity, the replay of a breakable) calls
+  `sim.body_hold` once to hold and once to let go: the body counts its holds and takes its own type
+  back when the last one lets go; `body_set_type` on a held body sets only that type.
 - A tool that moves bodies uses `manipulation_target`/`manipulation_end`; a preview that only needs
   physics uses `step_world`
   ([requests](references/engine.md#requests),

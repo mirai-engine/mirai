@@ -2,6 +2,7 @@ package physics
 
 import "core:testing"
 import "mirai:core"
+import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
 import "mirai:std/geom"
 import "mirai:std/jobs"
@@ -159,4 +160,61 @@ the_breakables_of_a_simulation_that_is_not_ready_or_of_stale_handles_are_refused
     testing.expect(t,!breakable_body_name(&ready,ball,core.Entity(3)) && !breakable_body_name(&missing,ball,core.Entity(3)) && !breakable_body_name(&ready,{},core.Entity(3)))
     _,posed:=body_pose(core.ref(&missing),ball)
     testing.expect(t,!posed && breakable_valid(core.ref(&ready),wall) && breakable_revision(core.ref(&ready),wall)==0)
+}
+
+// The body of a breakable that stands for an entity (a proxy, as a Destructible's) is held as kinematic by
+// its section and by a replay of the breakable: each lets go apart, in either order, and the body falls
+// only once neither holds it.
+@(test)
+a_breakable_body_its_section_and_a_replay_hold_falls_once_both_let_go :: proc(t:^testing.T) {
+    f:Physics_Test
+    if !physics_test_init(t,&f) {return}
+    defer physics_test_destroy(&f)
+    f.settings={bodies=16,shapes=32,contacts=128,joints=1,hulls=16,events=16,breakables=1,pieces=8,bonds=32}
+    f.gravity={0,-9.81,0}
+    physics_test_step(&f,0)
+    mesh:geom.Mesh_Buffer
+    geom.mesh_buffer_init(&mesh)
+    defer geom.mesh_buffer_destroy(&mesh)
+    geom.cube_build(&mesh,{1,1,1})
+    sites:[4][3]f32
+    geom.sites_generate(sites[:],{pattern=.Uniform,seed=3,lo={-0.5,-0.5,-0.5},hi={0.5,0.5,0.5}})
+    desc:=BREAKABLE_DESC_DEFAULT
+    desc.mesh,desc.sites,desc.position=geom.mesh_buffer_view(&mesh),sites[:],{0,5,0}
+    crate,error:=breakable_create(&f.state,desc)
+    if !testing.expect_value(t,error,Breakable_Error.None) {return}
+    body:=breakable_body(core.ref(&f.state),crate)
+    e:=core.create(&f.entities)
+    core.add(&f.transforms,e,core.Transform{{0,5,0},1,{1,1,1}})
+    if !testing.expect(t,proxy_set(&f.state,e,body)) {return}
+    step :: proc(f:^Physics_Test,ticks:int) {
+        for _ in 0..<ticks {
+            physics_test_settle(f)
+            physics_section_holds(&f.state,core.read(&f.section_held),core.read(&f.rigids))
+            physics_test_step(f)
+        }
+    }
+    section :: proc(f:^Physics_Test,e:core.Entity,hold:bool) {
+        if hold {core.add(&f.section_held,e,scene.Section_Held{})} else {core.remove(&f.section_held,e)}
+    }
+    for replay_first in ([2]bool{false,true}) {
+        sim.body_set_transform(&f.state.world,body,{0,5,0},sim.QUAT_IDENTITY)
+        if replay_first {
+            testing.expect(t,breakable_poses_apply(&f.state,crate,nil,true))
+            step(&f,1)
+            section(&f,e,true)
+        } else {
+            section(&f,e,true)
+            step(&f,1)
+            testing.expect(t,breakable_poses_apply(&f.state,crate,nil,true))
+        }
+        step(&f,1)
+        testing.expect_value(t,sim.body_type(&f.state.world,body),sim.Body_Type.Kinematic)
+        if replay_first {testing.expect(t,breakable_poses_apply(&f.state,crate,nil,false))} else {section(&f,e,false)}
+        step(&f,20)
+        testing.expectf(t,sim.body_type(&f.state.world,body)==.Kinematic && sim.body_position(&f.state.world,body).y==5,"replay first %v: one lets go and the other still holds it: %v at %v",replay_first,sim.body_type(&f.state.world,body),sim.body_position(&f.state.world,body))
+        if replay_first {section(&f,e,false)} else {testing.expect(t,breakable_poses_apply(&f.state,crate,nil,false))}
+        step(&f,20)
+        testing.expectf(t,sim.body_type(&f.state.world,body)==.Dynamic && sim.body_position(&f.state.world,body).y<4.5,"replay first %v: both let go and it falls: %v at %v",replay_first,sim.body_type(&f.state.world,body),sim.body_position(&f.state.world,body))
+    }
 }

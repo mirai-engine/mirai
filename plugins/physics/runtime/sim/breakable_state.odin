@@ -128,14 +128,13 @@ breakable_state_write :: proc(w:^World,h:Breakable_Handle,out:[]u8,debris:=false
     d,_:=breakable_read(w,h)
     size:=breakable_state_size(w,h)
     if d==nil || len(out)<size {return 0}
-    w.breaking.tick=w.tick
     ordinals:=piece_ordinals(w,d)
     header:=Break_State_Header{pieces=u32(d.piece_count),connections=u32(d.bond_count),revision=d.revision}
     at:=size_of(Break_State_Header)
     for slot:=d.piece_list;slot>=0;slot=w.pieces[slot].next {
         piece:=&w.pieces[slot]
         origin:=w.piece_origins[slot]
-        remaining:=piece.expire==max(u64)?max(u64):piece.expire>w.breaking.tick?piece.expire-w.breaking.tick:0
+        remaining:=piece.expire==max(u64)?max(u64):piece.expire>w.tick?piece.expire-w.tick:0
         record:=Break_State_Piece{remaining=remaining,parent=-1,group=piece.group,flags=piece.flags,front=u32(origin.front),normal=origin.plane,offset=origin.offset,cluster=cluster_ordinal(w,d,piece.cluster)}
         if origin.parent>=0 {record.parent=ordinals[origin.parent]} else {header.original+=1}
         if !shape_valid(w,piece.shape) || .Debris in piece.flags && !debris {record.flags+={.Gone}}
@@ -189,7 +188,7 @@ breakable_state_apply :: proc(w:^World,h:Breakable_Handle,state:[]u8) -> bool {
     for at in 0..<connections {
         record:=bond_record(state,pieces,at)
         is_cluster:=.Cluster in record.flags
-        if record.a<0 || int(record.a)>=pieces || !is_cluster && (record.b<0 || int(record.b)>=pieces) || is_cluster && record.b!=-1 ||
+        if record.flags-{.Broken,.Cluster}!={} || record.a<0 || int(record.a)>=pieces || !is_cluster && (record.b<0 || int(record.b)>=pieces) || is_cluster && record.b!=-1 ||
            record.cluster < -1 || int(record.cluster)>=clusters || !finite(record.area,record.strain,record.strength,record.center.x,record.center.y,record.center.z) ||
            record.area<0 || record.strain<0 || record.strength<0 || is_cluster && (at!=clusters || clusters>=len(s.ids)) {return false}
         clusters+=int(is_cluster)
@@ -307,7 +306,7 @@ breakable_state_apply :: proc(w:^World,h:Breakable_Handle,state:[]u8) -> bool {
         for group,k in wanted[:groups] {
             if group!=i32(record.group) {continue}
             if to[k]=={} {
-                if to[k]=body_create(w,break_body_desc(d,xf,.Debris in record.flags));to[k]=={} {
+                if to[k]=break_body_create(w,d,xf,.Debris in record.flags);to[k]=={} {
                     w.stats.breakable_capacity_exhausted+=1
                     s.refused[index]+={.Bodies}
                     return false
@@ -380,9 +379,10 @@ breakable_poses :: proc(w:^World,h:Breakable_Handle,out:[]Breakable_Pose) -> int
 
 // Puts each body of the breakable where the pose of its group says, with its velocities, and the pieces
 // of a group that expires that many steps from their end; a body without a pose, or static, stays as it
-// is. hold keeps them there from now on: kinematic and at rest, taking no hits and not expiring, for the
-// next poses to move them, as a replay of a recording of the breakable does; let go, they are dynamic
-// again, with the velocities of these poses. False, with nothing changed, for a value that is not finite.
+// is. hold keeps them there from now on: held (body_hold) at rest, taking no hits and not expiring, for
+// the next poses to move them, as a replay of a recording of the breakable does; let go, they have their
+// own type again, with the velocities of these poses, unless something else holds them. False, with
+// nothing changed, for a value that is not finite.
 breakable_poses_apply :: proc(w:^World,h:Breakable_Handle,poses:[]Breakable_Pose,hold:bool) -> bool {
     d,_:=breakable_get(w,h)
     if d==nil {return false}
@@ -391,20 +391,8 @@ breakable_poses_apply :: proc(w:^World,h:Breakable_Handle,poses:[]Breakable_Pose
     }
     s:=&w.breaking
     if hold!=(.Held in d.flags) {
-        mark:=break_mark(s)
-        if hold {d.flags+={.Held}}
-        for slot:=d.piece_list;slot>=0;slot=w.pieces[slot].next {
-            body:=shape_body(w,w.pieces[slot].shape)
-            if body=={} || s.marks[body_slot(body)]==mark {continue}
-            s.marks[body_slot(body)]=mark
-            if hold && body_type(w,body)==.Dynamic {
-                body_set_type(w,body,.Kinematic)
-                body_set_velocity(w,body,{},{})
-            } else if !hold && body_type(w,body)!=break_nature(w,d,body) {
-                body_set_type(w,body,.Dynamic)
-            }
-        }
-        if !hold {d.flags-={.Held}}
+        break_hold(w,d,hold)
+        if hold {d.flags+={.Held}} else {d.flags-={.Held}}
     }
     mark:=break_mark(s)
     for slot:=d.piece_list;slot>=0;slot=w.pieces[slot].next {
@@ -419,8 +407,9 @@ breakable_poses_apply :: proc(w:^World,h:Breakable_Handle,poses:[]Breakable_Pose
             }
             if k:=s.keeper[at];k>=0 && body_type(w,body)!=.Static {
                 p:=poses[k]
+                moving:=!hold && body_type(w,body)==body_own_type(w,body) // what else holds it keeps it at rest
                 body_set_transform(w,body,p.position,p.rotation==0?QUAT_IDENTITY:p.rotation)
-                body_set_velocity(w,body,hold?Vec3{}:p.linear,hold?Vec3{}:p.angular)
+                body_set_velocity(w,body,moving?p.linear:{},moving?p.angular:{})
             }
         }
         if k:=s.keeper[at];k>=0 && piece.group!=0 && piece.expire!=max(u64) && poses[k].remaining!=max(u32) {

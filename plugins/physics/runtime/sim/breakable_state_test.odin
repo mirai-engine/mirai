@@ -1,5 +1,6 @@
 package mirai_physics
 
+import "core:math/rand"
 import "core:mem"
 import "core:testing"
 import "mirai:std/geom"
@@ -248,6 +249,45 @@ test_debris_wall :: proc(w:^World) -> (Breakable_Handle,Breakable_Error) {
     return test_destructible(w,{4,2,0.4},{0,1,0},64,true,desc)
 }
 
+// Debris a state carries expires in the world that takes it as many steps later as it does in the world
+// that wrote it, whatever the tick of either.
+@(test)
+debris_a_state_carries_expires_after_the_steps_it_had_left :: proc(t:^testing.T) {
+    a,b:World
+    testing.expect(t,test_destruct_world(&a) && test_destruct_world(&b))
+    defer world_destroy(&a)
+    defer world_destroy(&b)
+    walls:[2]Breakable_Handle
+    for w,i in ([2]^World{&a,&b}) {
+        test_ground(w)
+        wall,error:=test_debris_wall(w)
+        if !testing.expect_value(t,error,Breakable_Error.None) {return}
+        walls[i]=wall
+    }
+    test_steps(&b,7)
+    _,broke:=breakable_damage(&a,walls[0],{0.3,1.5,0.2},1.2,{0,0,-6000})
+    testing.expect(t,broke)
+    test_steps(&a,3)
+    state:=make([]u8,breakable_state_size(&a,walls[0]))
+    defer delete(state)
+    testing.expect_value(t,breakable_state_write(&a,walls[0],state,true),len(state))
+    testing.expect(t,breakable_state_apply(&b,walls[1],state))
+    left :: proc(w:^World,h:Breakable_Handle) -> int {
+        pieces:[256]Piece_Info
+        count:=0
+        for piece in pieces[:breakable_pieces(w,h,pieces[:])] {count+=int(.Debris in piece.flags && .Gone not_in piece.flags)}
+        return count
+    }
+    had:=left(&a,walls[0])
+    testing.expect(t,had>0 && left(&b,walls[1])==had,"the state carries the debris")
+    for step in 0..<30 {
+        test_steps(&a,1)
+        test_steps(&b,1)
+        if !testing.expectf(t,left(&a,walls[0])==left(&b,walls[1]),"step %v: %v pieces of debris here, %v there",step,left(&a,walls[0]),left(&b,walls[1])) {return}
+    }
+    testing.expect_value(t,left(&b,walls[1]),0)
+}
+
 @(test)
 a_broken_breakable_takes_back_each_recorded_state_in_place_and_without_allocating :: proc(t:^testing.T) {
     w:World
@@ -450,4 +490,90 @@ poses_and_states_that_are_not_of_the_breakable_change_nothing :: proc(t:^testing
     (^Break_State_Piece)(&bad[size_of(Break_State_Header)])^.flags+=transmute(Piece_Flags)u32(1<<12)
     for refused in ([][]u8{state[:size-1],state[:3],alien[:alien_size],bad[:size]}) {testing.expect(t,!breakable_state_apply(&w,wall,refused))}
     testing.expect_value(t,world_hash(&w),hash)
+}
+
+// What a breakable holds is whole as data: its lists end where their counts say, each piece and bond is
+// of it with flags it knows, and each piece in the world has a shape on a body of the world.
+@(private="file")
+test_breakable_intact :: proc(w:^World,h:Breakable_Handle) -> bool {
+    d,index:=breakable_read(w,h)
+    if d==nil {return false}
+    of :: proc(w:^World,index,slot:i32) -> bool {return slot>=0 && int(slot)<len(w.pieces) && w.pieces[slot].breakable==index}
+    count:=0
+    for slot:=d.piece_list;slot>=0;slot=w.pieces[slot].next {
+        if !of(w,index,slot) || count>len(w.pieces) {return false}
+        piece:=&w.pieces[slot]
+        if piece.flags-{.Anchor,.Debris,.Gone}!={} || shape_valid(w,piece.shape) && (.Gone in piece.flags || !body_valid(w,shape_body(w,piece.shape))) {return false}
+        count+=1
+    }
+    bonds:=0
+    for slot:=d.bond_list;slot>=0;slot=w.bonds[slot].next {
+        c:=&w.bonds[slot]
+        if bonds>len(w.bonds) || c.flags-{.Broken,.Cluster}!={} || !of(w,index,c.a) || .Cluster not_in c.flags && !of(w,index,c.b) {return false}
+        bonds+=1
+    }
+    return count==int(d.piece_count) && bonds==int(d.bond_count)
+}
+
+// Bytes from the network: a written state with bytes changed, words set to extremes, cut short or grown
+// never reads out of bounds nor leaves a breakable that is not whole as data. One refused leaves it only
+// good for breakable_destroy, and the world steps on after either.
+@(test)
+a_state_of_hostile_bytes_is_taken_or_refused_without_harm :: proc(t:^testing.T) {
+    w:World
+    testing.expect(t,test_destruct_world(&w))
+    defer world_destroy(&w)
+    test_ground(&w)
+    broken :: proc(w:^World) -> Breakable_Handle {
+        h,_:=test_destructible(w,{2,1,0.4},{0,0.5,0},12,true)
+        _,_=breakable_damage(w,h,{0.3,0.8,0.2},0.8,{0,0,-3000})
+        _,_=breakable_slice(w,h,{-0.4,0.5,0},{1,0.2,0})
+        return h
+    }
+    wall:=broken(&w)
+    test_steps(&w,2)
+    source:=make([]u8,breakable_state_size(&w,wall))
+    defer delete(source)
+    if !testing.expect_value(t,breakable_state_write(&w,wall,source,true),len(source)) {return}
+    rng:=rand.create(0x7e57)
+    gen:=rand.default_random_generator(&rng)
+    hostile:=make([dynamic]u8)
+    defer delete(hostile)
+    extremes:=[?]u32{0,1,max(u32),0x7fffffff,0x80000000,0x7fc00000,0xff800000,0x7f800000}
+    taken,refused:=0,0
+    for trial in 0..<400 {
+        resize(&hostile,len(source))
+        copy(hostile[:],source)
+        switch rand.int_max(4,gen) {
+        case 0:
+            for _ in 0..<1+rand.int_max(8,gen) {hostile[rand.int_max(len(hostile),gen)]=u8(rand.uint32(gen))}
+        case 1:
+            for _ in 0..<1+rand.int_max(3,gen) {
+                at:=rand.int_max(len(hostile)/4,gen)*4
+                value:=extremes[rand.int_max(len(extremes),gen)]
+                mem.copy(&hostile[at],&value,4)
+            }
+        case 2:
+            resize(&hostile,rand.int_max(len(source),gen))
+        case 3:
+            for _ in 0..<1+rand.int_max(256,gen) {append(&hostile,u8(rand.uint32(gen)))}
+            hostile[rand.int_max(len(hostile),gen)]=u8(rand.uint32(gen))
+        }
+        if breakable_state_apply(&w,wall,hostile[:]) {
+            taken+=1
+            if !testing.expectf(t,test_breakable_intact(&w,wall),"trial %v leaves a breakable that is not whole",trial) {return}
+            // It goes on breaking from there.
+            if taken%4==0 {
+                _,_=breakable_damage(&w,wall,{0.3,0.8,0.2},0.8,{0,0,-3000})
+                if !testing.expectf(t,test_breakable_intact(&w,wall),"trial %v breaks into a breakable that is not whole",trial) {return}
+            }
+        } else {
+            refused+=1
+            breakable_destroy(&w,wall)
+            wall=broken(&w)
+            if !testing.expectf(t,breakable_valid(&w,wall),"trial %v: a breakable is made again",trial) {return}
+        }
+        test_steps(&w,1)
+    }
+    testing.expectf(t,taken>0 && refused>0,"%v taken and %v refused",taken,refused)
 }

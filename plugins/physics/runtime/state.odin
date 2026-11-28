@@ -133,8 +133,7 @@ Hold_Source :: enum u8 {Manipulation,Target,Section}
 // What steers a body or a character: the sources that hold it, and the pose target it took.
 @(private)
 Held :: struct {
-    by:bit_set[Hold_Source;u8],
-    type_before:Body_Type, // what the body was before it was held as kinematic
+    by:bit_set[Hold_Source;u8], // held as kinematic (held_kinematic), they hold the body once (sim.body_hold)
     release:bool,          // the following manipulation lets go once its pose is reached
     follow:bool,           // the manipulation holds the body as kinematic; else a spring pulls it
     placed:u32,            // the core.Pose_Target.placed it took
