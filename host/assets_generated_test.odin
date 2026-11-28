@@ -1,6 +1,7 @@
 package host
 
 import "core:testing"
+import "mirai:asset"
 import "mirai:std/base"
 import "mirai:std/geom"
 
@@ -164,4 +165,21 @@ a_far_mesh_made_ahead_is_published_and_released :: proc(t:^testing.T) {
     entry:=assets_mesh(&assets,id)
     testing.expect(t,entry!=nil && entry.bounds_max==[3]f32{2,0,2} && entry.index_count==6 && entry.vertex_count>=4)
     testing.expect(t,assets_mesh_release(&assets,id) && !assets_mesh_generated(&assets,id))
+}
+
+// A writable generated texture is refused for what no renderer would make,
+// a block format or srgb past RGBA8, whether or not a renderer is there.
+@(test)
+generated_writable_textures_refuse_what_a_renderer_refuses :: proc(t:^testing.T) {
+    assets:Assets
+    if !testing.expect(t,assets_init(&assets,{root="assets",capacity=4})) {return}
+    defer assets_destroy(&assets)
+    cases:=[?]struct{format:asset.Texture_Format,srgb:bool,made:bool}{
+        {.RGBA8,true,true},{.R8,false,true},{.RGBA16F,false,true},
+        {.BC7,false,false},{.R8,true,false},{.RGBA16F,true,false},
+    }
+    for c in cases {
+        _,made:=assets_texture_generate(&assets,nil,4,4,srgb=c.srgb,format=c.format,writable=true)
+        testing.expectf(t,made==c.made,"a writable %v texture with srgb %v is made: %v",c.format,c.srgb,made)
+    }
 }

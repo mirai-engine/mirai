@@ -1536,12 +1536,12 @@ assets_arrivals_settle :: proc(a:^Assets) -> (changed:bool) {
 // of zeros without pixels. It lives until assets_texture_release; each id is
 // a version that is never used again. A transaction: between frames. False,
 // with nothing made, for a size of zero or pixels that do not hold width by
-// height, a format other than RGBA8 that is not writable, and without room
-// for another texture.
+// height, a format other than RGBA8 that is not writable, a writable one of
+// another format or srgb past RGBA8, and without room for another texture.
 assets_texture_generate :: proc(a:^Assets,pixels:[]u8,width,height:int,srgb:=true,name:="generated texture",texels:=false,format:=asset.Texture_Format.RGBA8,writable:=false) -> (id:base.Asset_Id,ok:bool) {
     if width<=0 || height<=0 || width>asset.TEXTURE_MAX_SIZE || height>asset.TEXTURE_MAX_SIZE {return}
     if !writable && (format!=.RGBA8 || len(pixels)!=width*height*4) {return}
-    if writable && pixels!=nil && len(pixels)!=asset.texture_level_size(format,width,height) {return}
+    if writable && render.texture_dynamic_check(u32(width),u32(height),asset.TEXTURE_MAX_SIZE,format,srgb,pixels)!=.None {return}
     a.generated_next+=1
     id={ASSETS_GENERATED_TAG,a.generated_next}
     entry:=assets_texture_entry(a,id)

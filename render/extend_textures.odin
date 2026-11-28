@@ -19,7 +19,7 @@ pass_texture_copy :: proc(s: ^Stage_Pass, buffer: Extension_Buffer_Desc, offset:
 	if count == 0 || first >= height || count > height - first {return false}
 	source := extension_buffer_find(r, s.world, buffer)
 	bytes := u64(width) * u64(count) * u64(rhi.format_size(state.dynamic_format[index]))
-	if source == nil || offset % 16 != 0 || offset + bytes > source.size {return false}
+	if source == nil || offset % 16 != 0 || offset > source.size || bytes > source.size - offset {return false}
 	texture := state.textures[index]
 	rhi.cmd_copy_buffer_to_texture(s.pass.cmd, source.buffer, offset, texture, 0, {0, first, width, count})
 	rhi.cmd_barrier_texture(s.pass.cmd, texture, .Shader_Read)

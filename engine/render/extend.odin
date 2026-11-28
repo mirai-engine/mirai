@@ -671,8 +671,9 @@ texture_add_dynamic :: proc(renderer:^Renderer,width,height:u32,format:asset.Tex
 // how many, zero all of them, texels tightly packed from the top and kept until
 // the frame is drawn. False, with the error of the renderer saying why, for an
 // id that is not a dynamic texture, rows past its bottom, texels that are not
-// width * rows * texel size bytes, an RGBA16F half float that is not finite, or
-// no room for another write in the frame (host.FRAME_TEXTURE_WRITES).
+// width * rows * texel size bytes or an RGBA16F half float that is not finite;
+// false without it, counted in host.Frame_Extras.dropped, without room for
+// another write in the frame (host.FRAME_TEXTURE_WRITES).
 texture_write :: proc(extras:^host.Frame_Extras,a:^host.Assets,id:base.Asset_Id,texels:[]u8,rows:=[2]u32{}) -> bool {
     if extras==nil || a==nil || a.renderer==nil {return false}
     write:=gpu.Texture_Write{host.assets_texture_generated(a,id),texels,rows}

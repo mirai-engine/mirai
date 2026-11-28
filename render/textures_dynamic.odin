@@ -92,7 +92,7 @@ texture_dynamic_error :: proc(r: ^Renderer, problem: Texture_Dynamic_Problem, na
 	case .Srgb:        set_error(r, "dynamic texture %s: only RGBA8 is stored as sRGB; pass srgb=false or make it RGBA8", name)
 	case .Gone:        set_error(r, "texture write: texture %d is gone; make a new one with texture_add_dynamic", handle)
 	case .Not_Dynamic: set_error(r, "texture write: texture %d was not made by texture_add_dynamic, so only a load replaces it", handle)
-	case .Rows:        set_error(r, "texture write to %d: rows %d to %d lie past its %d rows", handle, rows[0], rows[0] + rows[1], r.textures.sizes[handle - 1].y)
+	case .Rows:        set_error(r, "texture write to %d: rows %d to %d lie past its %d rows", handle, rows[0], u64(rows[0]) + u64(rows[1]), r.textures.sizes[handle - 1].y)
 	case .Bytes:       set_error(r, "%s: %d bytes are not width * rows * texel size; give tightly packed rows from the top", name, bytes)
 	case .Not_Finite:  set_error(r, "%s: a half float is infinite or not a number; write finite values", name)
 	}

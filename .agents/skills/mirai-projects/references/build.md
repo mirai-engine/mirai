@@ -147,7 +147,11 @@ Replaces `assets/` cleanly (no raw sources); skips code, `cook.mirai`, and `plug
   files) and their program stages; the renderer never starts with Tools in a player.
 - `render_features` lists what every material of the project draws of Glass and Decals, with the
   values scenes give it (`program_uses`, `abi.material_features`); the player starts without the
-  others and makes them in the frame that first needs one (a material made at run time).
+  others and makes them in the frame that first needs one (a material made at run time). `Decal`
+  entities of the `decals` plugin draw no decal material and are not counted: a game whose only
+  decals are those makes the decal pipelines in the first frame that shows one.
+- A game without `.mirai/shaders/manifest.json` runs the shaders embedded in its executable, and
+  still leaves the pipelines of Tools for later (`Renderer_Desc.later`).
 
 ## Dedicated server
 

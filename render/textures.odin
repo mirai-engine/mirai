@@ -337,6 +337,7 @@ texture_add_data :: proc(r: ^Renderer, data: Texture_Data, name: string, key:u64
 	}
 	state.textures[index] = texture
 	state.keys[index]=key
+	state.dynamic_format[index] = .Undefined
 	state.sizes[index]={data.width,data.height}
 	state.stored[index]=bytes
 	texture_stream_set(&state.residency.streams[index], data, first)
@@ -391,6 +392,7 @@ texture_add_shared :: proc(r: ^Renderer, shared: rhi.Shared_Texture, width, heig
 	}
 	state.textures[index] = texture
 	state.keys[index] = 0
+	state.dynamic_format[index] = .Undefined
 	state.sizes[index] = {width, height}
 	texture_stream_forget(state, index)
 	state.count = max(state.count, index + 1)
@@ -458,6 +460,7 @@ written_texture :: proc(r: ^Renderer, width, height, levels: u32, format: rhi.Fo
 	}
 	state.textures[index] = texture
 	state.keys[index] = 0
+	state.dynamic_format[index] = .Undefined
 	state.sizes[index] = {int(width), int(height)}
 	state.count = max(state.count, index + 1)
 	return texture, Texture_Handle(index + 1)
